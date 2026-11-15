@@ -1,0 +1,25 @@
+.domino/
+__pycache__/
+mihomo-release.json
+.venv/
+dist/
+build/
+*.egg-info/
+.coverage
+.test-resources/
+*.tar.gz
+
+# Local credentials, private exports, and machine-specific files
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+id_rsa
+id_ed25519
+secrets/
+private/
+.claude/settings.local.json
+.DS_Store
+.pytest_cache/
+*.whl

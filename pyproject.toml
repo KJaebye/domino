@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "domino"
+version = "0.13"
+description = "Deploy independent proxy access over SSH and manage local or remote Domino services"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = ["prompt-toolkit>=3.0.48,<4", "PyYAML>=6"]
+
+[project.optional-dependencies]
+yaml = ["PyYAML>=6"]
+
+[project.scripts]
+domino = "domino_cli:main"
+domino-install = "domino_install:main"
+
+[tool.setuptools]
+py-modules = ["domino_cli", "install_domino", "domino_macos", "domino_tui", "domino_subscriptions", "domino_install", "domino_model", "domino_store", "domino_service", "domino_resources", "domino_logs", "domino_agent", "domino_agent_backend", "domino_shell", "domino_sources"]
