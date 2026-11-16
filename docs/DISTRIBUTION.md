@@ -58,26 +58,24 @@ apt/
 
 ## pip / pipx
 
-已准备好 pip 环境时，可用一条命令安装管理工具并初始化本机代理服务：
-
-```bash
-pip install domino-proxy && domino-install
-```
-
-`&&` 表示 pip 安装成功后才运行初始化；前面不加 `sudo`。仅向远端部署时，使用 `pip install domino-proxy` 即可，无需初始化本机服务。已有本机服务时，再次初始化会保留已有配置并重启服务；日常只升级 CLI 时，不必再次运行 `domino-install`。
-
-从 PyPI 安装，包名为 `domino-proxy`：
+推荐使用 venv 安装，包名为 `domino-proxy`，避免依赖全局 `pip` 命令或向系统 Python 写入：
 
 ```bash
 python3 -m venv ~/.venvs/domino
 source ~/.venvs/domino/bin/activate
 python -m pip install --upgrade domino-proxy
 domino --version
-# 仅需要本机服务时运行：
+```
+
+pip 安装 CLI 及其 Python 依赖，发行包**不包含 Mihomo 内核**。首次在本机使用代理时，以普通用户运行：
+
+```bash
 domino-install
 ```
 
-`pip install` 会解析 UI/YAML 依赖，因此除已准备离线 wheelhouse 外需要网络。Ubuntu 系统 Python 可能限制全局 pip 写入，优先 venv 或 pipx，不使用 `sudo pip`、`--break-system-packages`。
+安装器会联网下载对应系统和架构的 Mihomo 并配置后台服务，可复用符合条件且校验通过的缓存。仅管理远端时不必运行此命令；已有本机服务时，日常升级 CLI 也不必再次初始化。重复初始化会保留已有配置并重启服务。
+
+`python -m pip install` 会下载包及 UI/YAML 依赖，除已准备离线 wheelhouse 外需要网络。Ubuntu 缺少 venv 时，先运行 `sudo apt-get update && sudo apt-get install -y python3-venv python3-pip curl`；不使用 `sudo pip`、`--break-system-packages`。
 
 每次新开终端，先运行 `source ~/.venvs/domino/bin/activate`；也可以直接使用 `~/.venvs/domino/bin/domino`。若希望无需激活环境即可使用命令，可在安装好 pipx 后运行：
 

@@ -25,10 +25,21 @@ domino user@192.168.1.10
 ### 1. 安装
 
 ```bash
-pip install domino-proxy && domino-install
+python3 -m venv ~/.venvs/domino
+source ~/.venvs/domino/bin/activate
+python -m pip install --upgrade domino-proxy
+domino --version
 ```
 
-以普通用户运行，安装管理命令、Mihomo 内核和后台服务。[详细安装说明](docs/DISTRIBUTION.md)
+pip 安装 CLI 和 Python 依赖，**不包含 Mihomo 内核**。首次在本机使用代理时，再运行：
+
+```bash
+domino-install
+```
+
+安装器会联网下载对应系统和架构的 Mihomo，并配置后台服务。仅管理远端时可跳过这一步。
+
+新开终端后先执行 `source ~/.venvs/domino/bin/activate`，再使用 `domino`。[详细安装说明](docs/DISTRIBUTION.md)
 
 ### 2. 准备配置
 
@@ -118,7 +129,8 @@ domino [USER@IP] COMMAND [ARGS] [options]
 卸载本机运行环境，并移除 pip 安装的管理命令：
 
 ```bash
-domino uninstall && pip uninstall domino-proxy
+source ~/.venvs/domino/bin/activate
+domino uninstall && python -m pip uninstall domino-proxy
 ```
 
 卸载远端使用 `domino USER@IP uninstall`；可先加 `--dry-run` 预览。卸载会确认删除内核、配置库和部署备份，并清理 `.bashrc` / `.zshrc` 中 Domino 的接入记录。完成后重新打开终端或重新 SSH 登录。更多说明见 [卸载指南](docs/USAGE.md#卸载与清理)。

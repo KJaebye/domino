@@ -11,10 +11,21 @@ Domino 读取兼容的 Clash/Mihomo 配置，通过 SSH 把节点、规则和必
 ## 安装
 
 ```bash
-pip install domino-proxy && domino-install
+python3 -m venv ~/.venvs/domino
+source ~/.venvs/domino/bin/activate
+python -m pip install --upgrade domino-proxy
+domino --version
 ```
 
-以普通用户运行，安装管理命令、Mihomo 内核和后台服务。
+pip 安装 CLI 和 Python 依赖，**不包含 Mihomo 内核**。首次在本机使用代理时，再运行：
+
+```bash
+domino-install
+```
+
+安装器会联网下载对应系统和架构的 Mihomo，并配置后台服务。仅管理远端时可跳过这一步。
+
+新开终端后先执行 `source ~/.venvs/domino/bin/activate`，再使用 `domino`。
 
 ## 使用
 
@@ -25,10 +36,9 @@ domino switch '配置名'
 domino start
 ```
 
-仅管理远端时，只需安装管理工具，不必初始化本机服务：
+仅管理远端时，完成上面的 venv 和 pip 安装即可：
 
 ```bash
-pip install domino-proxy
 domino user@192.168.1.10
 domino user@192.168.1.10 status
 domino ui
@@ -38,15 +48,21 @@ domino ui
 
 ## 升级
 
-在同一 Python 环境中执行 `python -m pip install --upgrade domino-proxy`。包升级更新 CLI，运行内核与服务由用户单独管理。
+```bash
+source ~/.venvs/domino/bin/activate
+python -m pip install --upgrade domino-proxy
+```
+
+包升级更新 CLI；已有本机服务时不必再次运行 `domino-install`。
 
 ## 卸载
 
 ```bash
-domino uninstall && pip uninstall domino-proxy
+source ~/.venvs/domino/bin/activate
+domino uninstall && python -m pip uninstall domino-proxy
 ```
 
-前一步会确认清理本机服务、内核、配置库、部署备份及终端接入记录，后一步删除 Python 包。远端使用 `domino USER@IP uninstall`；加 `--dry-run` 可先预览。pip 自身没有卸载钩子，单独 `pip uninstall` 不会清理运行环境。完成后重新打开终端或重新 SSH 登录。
+`domino uninstall` 会确认清理本机服务、内核、配置库、部署备份及终端接入记录，`python -m pip uninstall` 删除 Python 包。远端使用 `domino USER@IP uninstall`；加 `--dry-run` 可先预览。pip 自身没有卸载钩子，单独卸载 Python 包不会清理运行环境。完成后重新打开终端或重新 SSH 登录。
 
 [项目首页](https://github.com/KJaebye/domino) · [完整使用指南](https://github.com/KJaebye/domino/blob/main/docs/USAGE.md) · [macOS / Ubuntu 支持](https://github.com/KJaebye/domino/blob/main/docs/PLATFORMS.md) · [分发与迁移](https://github.com/KJaebye/domino/blob/main/docs/DISTRIBUTION.md) · [问题反馈](https://github.com/KJaebye/domino/issues)
 
