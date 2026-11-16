@@ -21,6 +21,8 @@
 
 上表中的公开包名仍为计划入口，正式发布前使用本地 wheel、tap 或 deb 验收。`domino update` 更新代理配置，不升级 CLI；内核、配置库与 CLI 包的版本分别管理。
 
+Tab 补全：Homebrew 配方使用 `zsh_completion` / `bash_completion` 安装标准文件，deb 分别安装到 `/usr/share/zsh/vendor-completions/_domino` 和 `/usr/share/bash-completion/completions/domino`，不写用户 rc。pip / 独立 CLI 可运行 `eval "$(domino completion zsh)"` 或 bash 对应命令；永久接入由用户将该行加入 rc。详见[使用指南](USAGE.md#tab-补全)。
+
 ## 构建与本地验收
 
 ```bash

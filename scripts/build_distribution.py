@@ -121,7 +121,11 @@ def payload(runtime):
     for name, content in runtime.items():
         if name.startswith('bin/'):
             continue
-        if name.startswith('cli/'):
+        if name == 'cli/completion.zsh':
+            target = 'usr/share/zsh/vendor-completions/_domino'
+        elif name == 'cli/completion.bash':
+            target = 'usr/share/bash-completion/completions/domino'
+        elif name.startswith('cli/'):
             if name.endswith(('.so', '.dylib', '.dll', '.pyc')):
                 raise ValueError('Architecture-independent package contains binary code')
             target = 'usr/lib/domino/' + name

@@ -48,6 +48,8 @@ class DistributionTests(unittest.TestCase):
         self.release.mkdir()
         self.output = self.root / 'distribution'
         files = {'cli/domino_install.py': b'# package entry points\n',
+                 'cli/completion.zsh': b'#compdef domino\n',
+                 'cli/completion.bash': b'# bash completion\n',
                  'cli/domino_cli.py': b'# synthetic CLI\n',
                  'cli/_vendor/yaml/__init__.py': b'# synthetic dependency\n',
                  'NOTICE': b'Third party notices\n', 'README.md': b'Example documentation\n'}
@@ -84,6 +86,8 @@ class DistributionTests(unittest.TestCase):
         self.assertEqual(data['usr/bin/domino'][1], 0o755)
         self.assertIn(b'package_cli', data['usr/bin/domino'][0])
         self.assertIn('usr/lib/domino/cli/_vendor/yaml/__init__.py', data)
+        self.assertIn('usr/share/zsh/vendor-completions/_domino', data)
+        self.assertIn('usr/share/bash-completion/completions/domino', data)
         self.assertFalse(any('/home/' in name or name.startswith(('etc/', 'lib/systemd/')) for name in data))
         for line in controls['md5sums'][0].decode().splitlines():
             checksum, name = line.split('  ')

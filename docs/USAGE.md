@@ -12,6 +12,21 @@ domino catch    # 选择外部配置，保存到 Domino 配置库
 domino user@192.168.1.10 deploy    # 将翻墙能力复制到指定电脑
 ```
 
+## Tab 补全
+
+支持 zsh（macOS 常用）和 bash（Ubuntu 常用）。例如输入 `domino sh` 后按 Tab 补成 `shell`，`domino shell ` 后按 Tab 查看 `on/off/status`；`domino test `、`domino switch ` 可补本机配置名，`domino select ` 可补节点和策略组。补全会处理名称中的空格和方括号。
+
+源码初始化会随已有终端加载器接入；已有终端重新打开或重新加载更新后的 `~/.config/domino/proxy.env`。Homebrew / apt 提供标准补全文件，需要 shell 自身的补全机制已启用。pip 安装或独立使用 CLI 时，在当前终端运行对应一行：
+
+```bash
+# zsh
+eval "$(domino completion zsh)"
+# bash
+eval "$(domino completion bash)"
+```
+
+如需永久启用，将对应一行加入 `~/.zshrc` 或 `~/.bashrc`；命令本身只输出脚本，不自动修改 rc 文件。`domino USER@IP ` 也可补命令和选项，但不连接远端获取配置或节点；本机节点来自已保存配置及已有 provider 缓存，不触发刷新或测速。
+
 当前版本自动发现 Mac 的 Clash Verge 配置，以及 Domino 已部署在本机的配置，也支持 `--source` 指定 Clash/Mihomo 配置，或 `--subscription` 提供完整配置订阅。本机 macOS（Apple Silicon / Intel）和使用 systemd 的 Linux（ARM64 / x86_64）通过 `./install.sh` 一次安装管理程序、内核和后台服务。通过 SSH 部署的目标仍支持使用 systemd 的 Linux ARM64 和 x86_64。这里迁移的是兼容的节点配置；不支持直接克隆专用隧道客户端的登录状态或设备证书，不接管目标系统的默认路由。
 
 保留源配置的规则模式或全局模式，以及可获取的当前节点选择。源客户端处于 `direct` 模式时停止迁移，避免将直连误当作已开启的代理。
