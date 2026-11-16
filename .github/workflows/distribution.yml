@@ -108,6 +108,8 @@ jobs:
           temporary_home="$(mktemp -d)"
           test "$(HOME="$temporary_home" "$(brew --prefix domino-ci/local/domino)/bin/domino" --version)" = 0.17.5
           test -z "$(ls -A "$temporary_home")"
+          # Establish Homebrew's own trust store before taking the HOME baseline.
+          HOME="$temporary_home" HOMEBREW_CACHE=/tmp/domino-brew-cache HOMEBREW_LOGS=/tmp/domino-brew-logs brew trust --formula domino-ci/local/domino
           python scripts/package_home.py seed "$temporary_home" /tmp/domino-home.json
           cp /tmp/domino-upgrade.rb "$(brew --repository domino-ci/local)/Formula/domino.rb"
           HOME="$temporary_home" HOMEBREW_CACHE=/tmp/domino-brew-cache HOMEBREW_LOGS=/tmp/domino-brew-logs HOMEBREW_NO_AUTO_UPDATE=1 brew upgrade domino-ci/local/domino
