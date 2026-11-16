@@ -93,6 +93,8 @@ pipx ensurepath
 
 工作流使用短期 OIDC 凭据，不在仓库保存 PyPI token。参考 [PyPA 官方发布指南](https://packaging.python.org/en/latest/guides/publishing-package-distribution-releases-using-github-actions-ci-cd-workflows/)。工作流文件的存在不会自动发布；普通 push 不触发上传。
 
+日常 push、PR 和标签推送也不自动执行完整平台测试。发版前按需在 Actions 中手动运行 `Release artifacts`（先完整验证再构建）或 `Verify`；发布时进入 **Actions → Publish to PyPI → Run workflow**，选择对应版本的 `v0.x.y` 标签。保留仓库的 Actions 功能及现有 Trusted Publisher 绑定即可。
+
 ## Homebrew
 
 `build_release.py` 生成 `domino.rb.in`，包含 runtime 的固定版本及 SHA-256。省略 `post_install`，安装不执行初始化；`caveats` 提示普通用户运行 `domino-install`。

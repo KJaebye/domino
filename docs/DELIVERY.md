@@ -104,7 +104,9 @@ python3 scripts/build_resources.py --base-url https://你的域名/domino/ \
 
 ## 平台验证
 
-`scripts/verify.py` 输出 `dist/verification.json`，记录系统、架构、Python、测试数和跳过项。`DOMINO_TEST_CORE` 可指定临时校验内核。GitHub Actions 覆盖 Linux/macOS 与 Python 3.9/3.13/3.14 的自动回归，真实执行结果以 CI 为准，未运行的矩阵不能记为通过。
+`scripts/verify.py` 输出 `dist/verification.json`，记录系统、架构、Python、测试数和跳过项。`DOMINO_TEST_CORE` 可指定临时校验内核。GitHub Actions 的 `Verify` 保留 macOS / Ubuntu × Python 版本矩阵，仅通过 `workflow_dispatch` 手动运行或由 `Release artifacts` 调用；日常 push、PR 和标签推送不自动触发完整测试。真实执行结果以 CI 为准，未运行的矩阵不能记为通过。
+
+需要发新版时，在 GitHub 的 **Actions → Release artifacts → Run workflow** 选择对应分支或版本标签，执行完整验证并构建下载产物；若只需单独验证，可手动运行 `Verify`。确认版本与产物后，在 **Actions → Publish to PyPI → Run workflow** 选择与源码版本一致的 `v0.x.y` 标签，使用已配置的 Trusted Publisher 发布。`Distribution smoke tests` 同样只手动运行，供分发渠道验收使用。不要在仓库设置中关闭所有 Actions，否则这些手动入口也不可用。
 
 `scripts/verify_ssh.py` 仅监听回环地址，临时生成测试密钥并启动用户级 sshd，使用临时 HOME 执行写操作，结束后停止进程和清理目录；某些系统不允许普通用户启动 sshd 时返回未验证状态，不修改系统 Remote Login。
 
