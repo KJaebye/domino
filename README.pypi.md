@@ -8,15 +8,15 @@ Domino 读取兼容的 Clash/Mihomo 配置，通过 SSH 把节点、规则和必
 
 需要 Python 3.9+。本机服务支持 macOS 与使用 systemd 的 Ubuntu；远端部署需要 SSH、Python、curl，以及普通用户的 sudo 权限。
 
-## 安装与使用
-
-首次在本机使用代理，以普通用户运行：
+## 安装
 
 ```bash
 pip install domino-proxy && domino-install
 ```
 
-这条命令先安装管理工具，成功后下载 Mihomo 内核并安装后台服务。已有配置时会保留配置并重启服务。然后准备代理配置：
+以普通用户运行，安装管理命令、Mihomo 内核和后台服务。
+
+## 使用
 
 ```bash
 domino catch

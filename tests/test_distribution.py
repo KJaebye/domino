@@ -71,6 +71,22 @@ class DistributionTests(unittest.TestCase):
         sums['release.json'] = distro.digest(path.read_bytes())
         (self.release / 'SHA256SUMS').write_text(''.join(checksum + '  ' + name + '\n' for name, checksum in sums.items()))
 
+    def test_stable_one_major_release_builds_versioned_debian_package(self):
+        _, files = distro.load_runtime(self.release)
+        self.runtime = self.release / 'domino-runtime-1.0.0.tar.gz'
+        self.runtime.write_bytes(distro.tar_bytes({'domino-1.0.0/' + name: (data, 0o644)
+                                                  for name, data in files.items()}, 0))
+        self.formula.write_text(build_release.formula_text(self.runtime.name, '1.0.0',
+            distro.digest(self.runtime.read_bytes()), 'https://example.invalid'))
+        self.manifest.update(version='1.0.0', files=[
+            {'name': path.name, 'sha256': distro.digest(path.read_bytes()), 'bytes': path.stat().st_size}
+            for path in [self.runtime, self.formula]])
+        self.write_manifest()
+        report = distro.build(self.release, self.output)
+        self.assertEqual(report['version'], '1.0.0')
+        control = tar_members(ar_members((self.output / report['deb']).read_bytes())['control.tar.gz'])
+        self.assertIn('Version: 1.0.0-1\n', control['control'][0].decode())
+
     def test_deb_and_repository_are_consistent_and_install_cli_only(self):
         report = distro.build(self.release, self.output)
         deb = self.output / report['deb']

@@ -232,11 +232,19 @@ class ReleaseTests(unittest.TestCase):
         self.wheel.assert_not_called()
 
     def test_big_and_small_update_versions_are_supported(self):
-        for version in ['0.13.0', '0.13.1', '0.14.0', '0.14.2']:
+        for version in ['0.13.0', '0.13.1', '0.14.0', '0.14.2', '1.0.0', '1.0.1', '1.1.0', '2.0.0']:
             with self.subTest(version=version), patch.object(build_release.cli, 'VERSION', version):
                 inputs = {'src/domino_cli.py': ('VERSION = ' + repr(version)).encode(),
                           'pyproject.toml': ('[project]\nversion="' + version + '"\n').encode()}
                 self.assertEqual(build_release.source_version(inputs), version)
+
+    def test_noncanonical_release_versions_are_rejected_even_when_declarations_match(self):
+        for version in ['01.0.0', '1.00.0', '1.0.01', '1.0.0rc1', '1.0', '-1.0.0']:
+            with self.subTest(version=version), patch.object(build_release.cli, 'VERSION', version):
+                inputs = {'src/domino_cli.py': ('VERSION = ' + repr(version)).encode(),
+                          'pyproject.toml': ('[project]\nversion="' + version + '"\n').encode()}
+                with self.assertRaises(ValueError):
+                    build_release.source_version(inputs)
 
     def test_checked_in_versions_match(self):
         root = Path(build_release.__file__).resolve().parents[1]

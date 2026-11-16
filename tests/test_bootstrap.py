@@ -198,6 +198,7 @@ class BootstrapTests(unittest.TestCase):
             self.assertTrue((root/'cli/_vendor/licenses/prompt_toolkit-LICENSE').exists())
             self.assertFalse((root/'cli/old_module.py').exists())
             self.assertFalse((root/'cli/domino_clients.py').exists())
+            self.assertTrue((root/'cli/domino_client_sources.py').is_file())
 
     def test_subscription_uses_downloaded_configuration_without_assuming_a_running_client(self):
         with tempfile.TemporaryDirectory() as directory:

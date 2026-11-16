@@ -2,7 +2,7 @@
 
 ## 版本规则
 
-- 统一采用三段版本号 `0.x.y`；功能版本使用 `0.13.0`、`0.14.0`，小更新/debug 修复使用 `0.13.1`、`0.13.2`，保留末尾 `.0`。
+- 用户已指定 `1.0.0` 为正式发布版本，采用三段版本号 `X.Y.Z`；兼容修复递增补丁号，兼容功能递增次版本号，破坏性变更递增主版本号。保留末尾 `.0`，历史 `0.x.y` 版本不改写。
 - 每批可交付代码变更更新 `src/domino_cli.py` / `pyproject.toml` 的版本与 `CHANGELOG.md`。中间调试不反复编号；完成后验证并构建，不把不同代码长期放在同一已交付版本下。
 - 本次将此前未逐次编号的功能与修复归档为 `0.13.0`；旧 `0.12.0` 产物保留，不编造中间发布记录。软件版本不等于 Mihomo 内核版本。
 - 源码、构建、安装版同步、服务重启和公共发布是独立动作；构建不会修改用户安装。真实安装同步仍需明确授权。
@@ -106,7 +106,7 @@ python3 scripts/build_resources.py --base-url https://你的域名/domino/ \
 
 `scripts/verify.py` 输出 `dist/verification.json`，记录系统、架构、Python、测试数和跳过项。`DOMINO_TEST_CORE` 可指定临时校验内核。GitHub Actions 的 `Verify` 保留 macOS / Ubuntu × Python 版本矩阵，仅通过 `workflow_dispatch` 手动运行或由 `Release artifacts` 调用；日常 push、PR 和标签推送不自动触发完整测试。真实执行结果以 CI 为准，未运行的矩阵不能记为通过。
 
-需要发新版时，在 GitHub 的 **Actions → Release artifacts → Run workflow** 选择对应分支或版本标签，执行完整验证并构建下载产物；若只需单独验证，可手动运行 `Verify`。确认版本与产物后，在 **Actions → Publish to PyPI → Run workflow** 选择与源码版本一致的 `v0.x.y` 标签，使用已配置的 Trusted Publisher 发布。`Distribution smoke tests` 同样只手动运行，供分发渠道验收使用。不要在仓库设置中关闭所有 Actions，否则这些手动入口也不可用。
+需要发新版时，在 GitHub 的 **Actions → Release artifacts → Run workflow** 选择对应分支或版本标签，执行完整验证并构建下载产物；若只需单独验证，可手动运行 `Verify`。确认版本与产物后，在 **Actions → Publish to PyPI → Run workflow** 选择与源码版本一致的 `vX.Y.Z` 标签（本次为 `v1.0.0`），使用已配置的 Trusted Publisher 发布。`Distribution smoke tests` 同样只手动运行，供分发渠道验收使用。不要在仓库设置中关闭所有 Actions，否则这些手动入口也不可用。
 
 `scripts/verify_ssh.py` 仅监听回环地址，临时生成测试密钥并启动用户级 sshd，使用临时 HOME 执行写操作，结束后停止进程和清理目录；某些系统不允许普通用户启动 sshd 时返回未验证状态，不修改系统 Remote Login。
 

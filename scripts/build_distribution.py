@@ -67,7 +67,7 @@ def load_runtime(release):
     raw = (release / 'release.json').read_bytes()
     manifest = json.loads(raw)
     version = manifest['version']
-    if not re.fullmatch(r'0\.\d+\.\d+', version):
+    if not re.fullmatch(r'(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)', version):
         raise ValueError('Invalid runtime version')
     sums = {}
     for line in (release / 'SHA256SUMS').read_text().splitlines():

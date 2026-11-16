@@ -31,7 +31,7 @@ from urllib.parse import urlsplit
 from urllib.request import getproxies
 from domino_model import DomainError
 
-VERSION = '0.17.11'
+VERSION = '1.0.0'
 PACKAGE_MANAGED = False
 DESCRIPTION = '捕获本机代理，并一键部署到指定 IP 的设备上，让翻墙像 domino 一样简单。'
 SUBSCRIPTION_USER_AGENT = 'clash.meta'
@@ -41,7 +41,7 @@ RELEASE_API = 'https://api.github.com/repos/MetaCubeX/mihomo/releases/latest'
 REMOTE_SCRIPT = Path(__file__).with_name('install_domino.py')
 CLI_MODULES = ('domino_cli.py','install_domino.py','domino_macos.py','domino_linux.py','domino_tui.py',
                'domino_subscriptions.py','domino_install.py','domino_model.py',
-               'domino_store.py','domino_service.py','domino_resources.py','domino_logs.py','domino_agent.py','domino_agent_backend.py','domino_shell.py','domino_sources.py','domino_completion.py','domino_uninstall.py')
+               'domino_store.py','domino_service.py','domino_resources.py','domino_logs.py','domino_agent.py','domino_agent_backend.py','domino_shell.py','domino_sources.py','domino_completion.py','domino_uninstall.py','domino_client_sources.py')
 DEFAULT_CLASH = Path.home() / 'Library/Application Support/io.github.clash-verge-rev.clash-verge-rev'
 DEFAULT_SOCKET = Path('/tmp/verge/verge-mihomo.sock')
 
@@ -199,13 +199,34 @@ def load_yaml(path):
         raise ToolError('Clash YAML 配置解析失败；配置内容未输出。') from None
 
 
+def xdg_directory(variable, fallback):
+    value = Path(os.environ.get(variable) or fallback)
+    return value if value.is_absolute() else Path.home() / fallback
+
+
+def verge_roots():
+    app_id = 'io.github.clash-verge-rev.clash-verge-rev'
+    return [Path.home() / 'Library/Application Support' / app_id,
+            xdg_directory('XDG_DATA_HOME', '.local/share') / app_id,
+            xdg_directory('XDG_CONFIG_HOME', '.config') / 'clash-verge']
+
+
+def verge_source_root(path):
+    resolved = Path(path).resolve()
+    return next((root for root in verge_roots()
+                 if resolved == (root / 'clash-verge.yaml').resolve()
+                 or resolved.is_relative_to((root / 'profiles').resolve())), None)
+
+
 def discover_sources():
+    from domino_client_sources import discover
     candidates = [Path.home() / '.local/share/domino/data/config.json',
                   Path.home() / '.local/share/robot-clash/data/config.json',
-                  Path.home() / 'Library/Application Support/io.github.clash-verge-rev.clash-verge-rev/clash-verge.yaml',
-                  Path.home() / '.config/clash/config.yaml',
-                  Path.home() / '.config/mihomo/config.yaml']
-    return [p for p in candidates if p.is_file()]
+                  *(root / 'clash-verge.yaml' for root in verge_roots()),
+                  *(xdg_directory('XDG_CONFIG_HOME', '.config') / client / filename
+                    for client in ('clash', 'mihomo') for filename in ('config.yaml', 'config.yml')),
+                  *discover()]
+    return list(dict.fromkeys(p for p in candidates if p.is_file()))
 
 
 def discover_source():
@@ -214,7 +235,15 @@ def discover_source():
 
 def read_verge_profiles():
     """Read saved configuration identities only; never execute client transforms."""
-    root = Path.home() / 'Library/Application Support/io.github.clash-verge-rev.clash-verge-rev'
+    profiles, warnings = {}, []
+    for root in verge_roots():
+        saved, notes = read_verge_index(root)
+        profiles.update(saved)
+        warnings.extend(notes)
+    return profiles, list(dict.fromkeys(warnings))
+
+
+def read_verge_index(root):
     index = root / 'profiles.yaml'
     profiles, warnings = {}, []
     if not index.exists() and not index.is_symlink():
@@ -273,15 +302,33 @@ def read_verge_profiles():
 
 def source_identity(path, *, profiles=None):
     try:
+        from domino_client_sources import identity
+        client = identity(path)
+        if client:
+            return client
         resolved = Path(path).resolve()
         if profiles is None:
-            directory = (Path.home() / 'Library/Application Support/io.github.clash-verge-rev.clash-verge-rev/profiles').resolve()
-            if not resolved.is_relative_to(directory):
+            root = verge_source_root(resolved)
+            if root is None or not resolved.is_relative_to((root / 'profiles').resolve()):
                 return {}
             profiles, _ = read_verge_profiles()
         return dict(profiles.get(resolved, {}))
     except (OSError, ValueError, RuntimeError):
         return {}
+
+
+def load_source(path):
+    from domino_client_sources import load
+    converted = load(path)
+    return converted if converted is not None else load_yaml(path)
+
+
+def source_name(path, identity):
+    from domino_client_sources import client_name
+    client = client_name(path)
+    if identity:
+        return (client or 'Clash Verge') + ' · ' + identity['profile_name']
+    return client
 
 
 def source_config(args):
@@ -297,7 +344,7 @@ def source_config(args):
         from domino_sources import read_source
         raw, _ = read_source(path.parent)
     else:
-        raw = load_yaml(path)
+        raw = load_source(path)
     if not isinstance(raw, dict) or not (raw.get('proxies') or raw.get('proxy-providers')):
         raise ToolError('源文件不是包含节点的 Clash/Mihomo 配置。')
     if args.command == 'init' and path.parent == Path.home() / '.local/share/domino/data':
@@ -366,7 +413,13 @@ def source_details(path, *, identity=None):
         from domino_sources import read_source
         raw, _ = read_source(path.parent)
     else:
-        raw = load_yaml(path)
+        try:
+            raw = load_source(path)
+        except DomainError as error:
+            if error.code != 'UNSUPPORTED_CLIENT_CONFIG':
+                raise
+            result['config_error'] = str(error)
+            return result
     if isinstance(raw, dict) and (raw.get('proxies') or raw.get('proxy-providers')):
         try:
             sanitize_profile(raw, {}, DEFAULT_PROXY_PORT, DEFAULT_API_PORT)
@@ -419,8 +472,8 @@ def collect_sources():
     sources = []
     for resolved, path in candidates.items():
         identity = source_identity(path, profiles=profiles)
-        if identity:
-            name = 'Clash Verge · ' + identity['profile_name']
+        if source_name(path, identity):
+            name = source_name(path, identity)
         elif path.parent.parent.name in ['domino', 'robot-clash']:
             name = 'Domino' if path.parent.parent.name == 'domino' else 'robot-clash'
         elif path.name == 'clash-verge.yaml':
@@ -475,9 +528,16 @@ def profile_status(item):
 
 def source_display_groups(sources):
     """Group related files for humans only; collected machine records stay intact."""
-    root = Path.home() / 'Library/Application Support/io.github.clash-verge-rev.clash-verge-rev'
+    grouped = sources
+    for root in verge_roots():
+        grouped = verge_display_group(grouped, root)
+    return grouped
+
+
+def verge_display_group(sources, root):
     current = [item for item in sources if item.get('source_kind') == 'profile'
-               and item.get('client_current') is True and item.get('compatible_config_found')]
+               and item.get('client_current') is True and item.get('compatible_config_found')
+               and Path(item['config']).resolve().is_relative_to((root / 'profiles').resolve())]
     runtime = [item for item in sources if item.get('source_kind') != 'profile'
                and Path(item['config']).resolve() == (root / 'clash-verge.yaml').resolve()]
     if len(current) != 1 or len(runtime) != 1:
@@ -628,7 +688,8 @@ def inspect_source(args):
             compatible = result['compatible_config_found']
             output.human_header('部署来源','● 找到兼容节点配置' if compatible else '○ 未找到可独立部署的节点配置','32' if compatible else '33')
             kinds={'domino':'Domino 配置','clash-config':'Clash/Mihomo 配置','local-proxy':'仅有本机代理入口','unknown':'未发现'}
-            output.human_row('配置来源', 'Clash Verge · ' + result['profile_name'] if result.get('source_kind') == 'profile' else kinds.get(result['source'],result['source']))
+            label = source_name(Path(result['config']), result if result.get('source_kind') == 'profile' else {}) if result['config'] else None
+            output.human_row('配置来源', label or kinds.get(result['source'],result['source']))
             if result.get('source_kind') == 'profile':
                 output.human_row('配置选择', profile_status(result))
                 output.human_row('入口出网', '未检查（保存配置）')
@@ -1108,6 +1169,21 @@ def remote_source(source):
     return ''.join(lines)
 
 
+def compact_remote_source(source):
+    import ast
+    stripped = remote_source(source)
+    tree = ast.parse(stripped)
+    compact = ast.unparse(tree) + '\n'
+    try:
+        restored = ast.parse(compact, feature_version=(3, 9))
+    except SyntaxError:
+        return stripped
+    if ast.dump(tree, include_attributes=False) != ast.dump(restored, include_attributes=False):
+        raise ToolError('远端源码压缩校验失败，未执行远端操作。')
+    headers = [line for line in stripped.splitlines() if line.startswith(('# SPDX', '# Copyright'))]
+    return '\n'.join(headers) + '\n' + compact
+
+
 
 class SSH:
     def __init__(self, args):
@@ -1153,9 +1229,9 @@ class SSH:
         if action == 'uninstall': names += ['domino_uninstall']
         if action == 'proxy': names += ['domino_macos', 'domino_linux']
         if action == 'traffic': names += ['domino_tui']
-        if action in ['agent','scan','configs','rollback','delay','cli','catch-options']: names += ['domino_subscriptions','domino_macos','domino_linux','domino_cli','domino_store','domino_service','domino_resources','domino_logs','domino_tui','domino_install','domino_agent','domino_agent_backend','domino_sources','domino_completion','domino_uninstall']
-        modules={name:remote_source(Path(__file__).with_name(name+'.py').read_text()) for name in names}
-        backend = remote_source(REMOTE_SCRIPT.read_text())
+        if action in ['agent','scan','configs','rollback','delay','cli','catch-options']: names += ['domino_subscriptions','domino_macos','domino_linux','domino_cli','domino_store','domino_service','domino_resources','domino_logs','domino_tui','domino_install','domino_agent','domino_agent_backend','domino_sources','domino_completion','domino_uninstall','domino_client_sources']
+        modules={name:compact_remote_source(Path(__file__).with_name(name+'.py').read_text()) for name in names}
+        backend = compact_remote_source(REMOTE_SCRIPT.read_text())
         code = ('import sys,types;from pathlib import Path\n'
                 '__domino_sources='+json.dumps(modules,ensure_ascii=False,separators=(',',':'))+'\n__domino_backend='+json.dumps(backend,ensure_ascii=False)+'\n'
                 'for name,source in __domino_sources.items():\n'
@@ -1806,8 +1882,8 @@ def capture_choices(paths, *, allow_all=True):
         for index, path in enumerate(paths, 1):
             if index > 1: print()
             identity = source_identity(path)
-            if identity:
-                name = 'Clash Verge · ' + identity['profile_name']
+            if source_name(path, identity):
+                name = source_name(path, identity)
             elif path.name == 'clash-verge.yaml':
                 name = 'Clash Verge · 运行配置'
             else:
@@ -1815,6 +1891,8 @@ def capture_choices(paths, *, allow_all=True):
             output.human_row(str(index), (name, '1'), wrap=True)
             if identity:
                 output.human_row('配置选择', (profile_status(identity), '2'), wrap=True)
+                if identity.get('check_note') and source_name(path, identity).startswith('v2rayN'):
+                    output.human_row('捕获范围', (identity['check_note'], '2'), wrap=True)
             try: display = '~/' + str(path.relative_to(Path.home()))
             except ValueError: display = str(path)
             output.human_row('配置文件', (display, '2'), wrap=True)
@@ -1866,6 +1944,8 @@ def catch(args):
         with output.human_output():
             output.human_header('捕获配置到 Domino', f'{len(paths)} 个来源 · 重复项跳过')
             output.human_row('运行影响', '仅保存到配置库；保留当前配置、节点、服务和系统/终端代理状态。', wrap=True)
+            if any(source_name(path, {}).startswith('v2rayN') for path in paths if source_name(path, {})):
+                output.human_row('捕获范围', 'v2rayN 仅导入节点快照，不迁移其分流、DNS 或客户端设置。', wrap=True)
         if not args.yes and capture_input('确认捕获', '[y/N] ').lower() not in ('y', 'yes'):
             capture_cancelled()
             return 0
@@ -1947,6 +2027,8 @@ def _install_capture(args):
     with output.human_output():
         output.human_header('捕获本机代理配置', '确认后安装或替换当前用户的 Domino 独立服务')
         output.human_row('来源文件', (str(source).replace(str(Path.home()) + '/', '~/', 1), '2'), wrap=True)
+        if source_name(source, {}) == 'v2rayN':
+            output.human_row('捕获范围', source_identity(source)['check_note'], wrap=True)
         output.human_row('目标电脑', '本机 · 当前用户')
         output.human_row('节点选择', f'已读取 {len(selections)} 个手动选择' if selections else '使用配置默认节点（未读取到手动选择）')
         output.human_row('配置模式', str(raw.get('mode', 'rule')))

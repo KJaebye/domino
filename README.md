@@ -20,19 +20,15 @@ domino user@192.168.1.10
 
 ## 快速开始
 
-需要 **Python 3.9+**。本机代理服务支持 macOS 与使用 systemd 的 Ubuntu，还需要 curl；Ubuntu 初始化服务时需要普通用户的 sudo 权限（[平台依赖与差异](docs/PLATFORMS.md)）。
+支持 **macOS / Ubuntu**，需要 **Python 3.9+**。
 
 ### 1. 安装
-
-从 [PyPI](https://pypi.org/project/domino-proxy/) 安装管理命令，并初始化本机代理服务：
 
 ```bash
 pip install domino-proxy && domino-install
 ```
 
-以普通用户运行，前面不加 `sudo`。安装成功后会下载 Mihomo 内核并安装后台服务；已有配置时会保留配置并重启服务。仅向其他电脑部署时，只需 `pip install domino-proxy`，然后进入第 3 步。
-
-虚拟环境、pipx、升级及 Homebrew / apt 进展见 [分发指南](docs/DISTRIBUTION.md)；Tab 补全见 [补全设置](docs/USAGE.md#tab-补全)；源码安装见 [安装与部署](docs/USAGE.md#开始使用)。
+以普通用户运行，安装管理命令、Mihomo 内核和后台服务。[详细安装说明](docs/DISTRIBUTION.md)
 
 ### 2. 准备配置
 

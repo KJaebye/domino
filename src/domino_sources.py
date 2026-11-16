@@ -47,17 +47,23 @@ def origin_info(raw, source: Path, *, subscription=None):
                 'parsed_digest': digest}
         identity = {'kind': info['capture_kind'], 'digest': digest}
         if not subscription:
+            from domino_client_sources import client_name, identity as client_identity
+            client = client_name(source)
+            if client:
+                details = client_identity(source)
+                info.update(origin_label=client + ' 配置快照',
+                            profile_name=_label(details.get('profile_name') or source.stem, '配置快照'))
             info['original_path'] = str(source.resolve())
             identity = {'kind': 'file', 'path': str(source.resolve())}
             if source.name == 'config.json' and source.parent.name == 'data' and source.parent.parent.name in ('domino', 'robot-clash'):
                 info.update(capture_kind='legacy-runtime-snapshot', origin_label='旧版运行配置快照')
                 identity = {'kind': 'legacy-runtime-snapshot', 'digest': digest}
             import domino_cli as tool
-            verge_root = (Path.home() / 'Library/Application Support/io.github.clash-verge-rev.clash-verge-rev').resolve()
             resolved = source.resolve()
+            verge_root = tool.verge_source_root(resolved)
             profiles = {}
-            runtime = resolved == verge_root / 'clash-verge.yaml'
-            if runtime or resolved.is_relative_to(verge_root / 'profiles'):
+            runtime = verge_root is not None and resolved == (verge_root / 'clash-verge.yaml').resolve()
+            if verge_root is not None:
                 profiles, _ = tool.read_verge_profiles()
             profiles = {Path(p).resolve(): v for p, v in profiles.items()}
             selected = profiles.get(resolved)
@@ -161,9 +167,9 @@ class ResourceResolver:
     def __init__(self, source, directories=()):
         source = Path(source).expanduser().absolute()
         roots = [source.parent]
-        verge = Path.home() / 'Library/Application Support/io.github.clash-verge-rev.clash-verge-rev'
-        if (source.resolve().is_relative_to((verge / 'profiles').resolve())
-                or source.resolve() == (verge / 'clash-verge.yaml').resolve()):
+        from domino_cli import verge_source_root
+        verge = verge_source_root(source)
+        if verge is not None:
             roots.append(verge)
         roots.extend(Path(path).expanduser().absolute() for path in directories)
         self.roots = list(dict.fromkeys(roots))

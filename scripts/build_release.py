@@ -23,6 +23,7 @@ import domino_cli as cli
 
 DISTRIBUTION = 'domino-proxy'
 WHEEL_NAME = DISTRIBUTION.replace('-', '_')
+VERSION_PATTERN = r'(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)'
 
 def wheel_name(version, distribution=DISTRIBUTION):
     return distribution.replace('-', '_') + f'-{version}-py3-none-any.whl'
@@ -45,11 +46,11 @@ def source_version(inputs):
     sections = re.split(r'(?m)^\[project\][ \t]*(?:#.*)?$', inputs['pyproject.toml'].decode('utf-8'))
     project = re.split(r'(?m)^\s*\[', sections[1], maxsplit=1)[0] if len(sections) == 2 else ''
     declared = re.findall(r'(?m)^version[ \t]*=[ \t]*(.*)$', project)
-    package = re.fullmatch(r'''(["'])(0\.\d+\.\d+)\1[ \t]*(?:#.*)?''', declared[0]) if len(declared) == 1 else None
+    package = re.fullmatch(r'''(["'])(''' + VERSION_PATTERN + r''')\1[ \t]*(?:#.*)?''', declared[0]) if len(declared) == 1 else None
     if (len(versions) != 1 or not isinstance(versions[0], str)
-            or not re.fullmatch(r'0\.\d+\.\d+', versions[0]) or package is None
+            or not re.fullmatch(VERSION_PATTERN, versions[0]) or package is None
             or versions[0] != package[2] or versions[0] != cli.VERSION):
-        raise ValueError('CLI VERSION and [project] version must match and use 0.x.y')
+        raise ValueError('CLI VERSION and [project] version must match and use X.Y.Z')
     return versions[0]
 
 
@@ -168,7 +169,7 @@ def previous_release(output):
         raise ValueError('release.json must be a regular file')
     data = json.loads(manifest.read_text())
     version = data.get('version', '')
-    if not isinstance(version, str) or not re.fullmatch(r'0\.\d+(?:\.\d+)?', version):
+    if not isinstance(version, str) or not re.fullmatch(VERSION_PATTERN + r'|0\.\d+', version):
         raise ValueError('Invalid previous release version')
     expected = {wheel_name(version, data.get('distribution', 'domino')), f'domino-runtime-{version}.tar.gz'}
     entries = data.get('files', [])
