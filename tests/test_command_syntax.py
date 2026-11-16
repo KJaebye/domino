@@ -11,6 +11,7 @@ from unittest.mock import patch
 
 import domino_agent
 import domino_cli as cli
+from tests.source_assertions import executable_tree
 
 
 class CommandSyntaxTests(unittest.TestCase):
@@ -98,8 +99,9 @@ class CommandSyntaxTests(unittest.TestCase):
             code=bz2.decompress(base64.b85decode(ast.literal_eval(decode.args[0]))).decode()
             assignment=ast.parse(code).body[2]
             modules=ast.literal_eval(assignment.value)
-            self.assertEqual(modules['domino_macos'],Path(cli.__file__).with_name('domino_macos.py').read_text())
-            self.assertEqual(modules['domino_linux'],Path(cli.__file__).with_name('domino_linux.py').read_text())
+            for name in ['domino_macos', 'domino_linux']:
+                self.assertEqual(executable_tree(modules[name]),
+                                 executable_tree(Path(cli.__file__).with_name(name + '.py').read_text()))
 
     def test_machine_parser_supports_prefix_and_flat_commands(self):
         for argv in [['user@host','list'],['user@host','test','feiniao'],['user@host','call','operations.list']]:

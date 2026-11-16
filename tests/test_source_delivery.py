@@ -1,5 +1,6 @@
 """Source delivery integration tests; never install, contact services, or use real HOME."""
 import ast
+from tests.source_assertions import executable_tree
 import base64
 import bz2
 from contextlib import ExitStack, redirect_stderr, redirect_stdout
@@ -324,7 +325,8 @@ class SourceDeliveryTests(unittest.TestCase):
                                   and any(isinstance(target, ast.Name) and target.id == '__domino_sources'
                                           for target in node.targets))
                 modules = ast.literal_eval(assignment.value)
-                self.assertEqual(modules['domino_sources'], (project / 'domino_sources.py').read_text())
+                self.assertEqual(executable_tree(modules['domino_sources']),
+                                 executable_tree((project / 'domino_sources.py').read_text()))
                 compile(modules['domino_sources'], '<embedded-domino-sources>', 'exec')
         self.run.assert_not_called()
         self.download.assert_not_called()

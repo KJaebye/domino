@@ -313,6 +313,11 @@ _domino_shell_sync() {
 _domino_shell_sync auto
 case $- in
   *i*)
+    if [ -n "${ZSH_VERSION-}" ]; then
+      [ ! -r ''' + shlex.quote(str(app / 'cli/completion.zsh')) + ''' ] || . ''' + shlex.quote(str(app / 'cli/completion.zsh')) + '''
+    elif [ -n "${BASH_VERSION-}" ]; then
+      [ ! -r ''' + shlex.quote(str(app / 'cli/completion.bash')) + ''' ] || . ''' + shlex.quote(str(app / 'cli/completion.bash')) + '''
+    fi
     domino() {
       local _domino_rc _domino_intent=auto _domino_show_status=
       local _domino_action=status _domino_safe=1 _domino_json= _domino_target= _domino_argument

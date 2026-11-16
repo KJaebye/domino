@@ -69,6 +69,8 @@ def formula_text(archive, version, digest, base):
 
   def install
     libexec.install "cli"
+    zsh_completion.install libexec/"cli/completion.zsh" => "_domino"
+    bash_completion.install libexec/"cli/completion.bash" => "domino"
     { "domino" => "package_cli", "domino-install" => "package_install" }.each do |name, entry|
       (bin/name).write <<~EOS
         #!#{Formula["python@3.13"].opt_bin}/python3.13
