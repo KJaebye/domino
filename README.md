@@ -24,19 +24,13 @@ domino user@192.168.1.10
 
 ### 1. 安装
 
-从 [PyPI](https://pypi.org/project/domino-proxy/) 安装，包名是 **`domino-proxy`**，安装后的命令是 **`domino`**：
+从 [PyPI](https://pypi.org/project/domino-proxy/) 安装管理命令，并初始化本机代理服务：
 
 ```bash
-pip install domino-proxy
+pip install domino-proxy && domino-install
 ```
 
-安装包只提供管理命令；**需要本机代理服务时**，以普通用户运行：
-
-```bash
-domino-install
-```
-
-它安装 Mihomo 内核和后台服务。仅部署到其他电脑时，可以跳过本机初始化，直接进入第 3 步。
+以普通用户运行，前面不加 `sudo`。安装成功后会下载 Mihomo 内核并安装后台服务；已有配置时会保留配置并重启服务。仅向其他电脑部署时，只需 `pip install domino-proxy`，然后进入第 3 步。
 
 虚拟环境、pipx、升级及 Homebrew / apt 进展见 [分发指南](docs/DISTRIBUTION.md)；Tab 补全见 [补全设置](docs/USAGE.md#tab-补全)；源码安装见 [安装与部署](docs/USAGE.md#开始使用)。
 

@@ -10,28 +10,28 @@ Domino 读取兼容的 Clash/Mihomo 配置，通过 SSH 把节点、规则和必
 
 ## 安装与使用
 
+首次在本机使用代理，以普通用户运行：
+
 ```bash
-python3 -m venv ~/.venvs/domino
-~/.venvs/domino/bin/python -m pip install domino-proxy
-~/.venvs/domino/bin/domino --help
+pip install domino-proxy && domino-install
 ```
 
-包安装只提供 CLI，不启动服务、不更改系统或终端代理。需要本机代理时，以普通用户显式初始化：
+这条命令先安装管理工具，成功后下载 Mihomo 内核并安装后台服务。已有配置时会保留配置并重启服务。然后准备代理配置：
 
 ```bash
-~/.venvs/domino/bin/domino-install
-~/.venvs/domino/bin/domino catch
-~/.venvs/domino/bin/domino list
-~/.venvs/domino/bin/domino switch '配置名'
-~/.venvs/domino/bin/domino start
+domino catch
+domino list
+domino switch '配置名'
+domino start
 ```
 
-仅管理远端时不必初始化本机服务：
+仅管理远端时，只需安装管理工具，不必初始化本机服务：
 
 ```bash
-~/.venvs/domino/bin/domino user@192.168.1.10
-~/.venvs/domino/bin/domino user@192.168.1.10 status
-~/.venvs/domino/bin/domino ui
+pip install domino-proxy
+domino user@192.168.1.10
+domino user@192.168.1.10 status
+domino ui
 ```
 
 `ui` 提供交互式配置管理、节点选择与检测。`scan` 扫描可导入配置，`test` 并行检测配置的节点连通情况，`traffic` 显示动态流量面板。
