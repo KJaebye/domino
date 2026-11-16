@@ -47,13 +47,17 @@ class IndependentBundleTests(unittest.TestCase):
                 processes.append(process)
                 opener=urllib.request.build_opener(urllib.request.ProxyHandler({}))
                 for _ in range(100):
+                    if process.poll() is not None:
+                        self.fail('Disposable core exited before loading the profile')
                     try:
                         request=urllib.request.Request('http://'+config['external-controller']+'/proxies',headers={'Authorization':'Bearer '+config['secret']})
                         with opener.open(request,timeout=.2) as response: proxies=json.load(response)['proxies']
-                        self.assertIn('fixture-node',proxies['出口']['all'])
-                        return process
-                    except OSError: time.sleep(.05)
-                self.fail('Disposable core failed to start')
+                        if 'fixture-node' in proxies.get('出口',{}).get('all',[]):
+                            return process
+                    except OSError:
+                        pass
+                    time.sleep(.05)
+                self.fail('Disposable core did not load its provider and selector before the deadline')
             class Handler(BaseHTTPRequestHandler):
                 def log_message(self,*args): pass
                 def do_GET(self):
