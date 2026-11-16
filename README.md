@@ -1,6 +1,6 @@
 <p align="center">
   <a href="assets/domino-logo.png" title="查看静态 Logo">
-    <img src="assets/domino-logo.gif" alt="DOMINO 像素字母从左到右像多米诺骨牌一样依次倒下，再重新立起" width="760">
+    <img src="assets/domino-logo.gif" alt="DOMINO 像素字母从左到右像多米诺骨牌一样依次倒下，再重新立起" width="420">
   </a>
 </p>
 

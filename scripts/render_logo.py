@@ -11,16 +11,16 @@ import ast
 import math
 from pathlib import Path
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageChops, ImageDraw
 
 ROOT = Path(__file__).resolve().parents[1]
-SIZE = (960, 280)
-BACKGROUND = (33, 39, 49)
+SIZE = (640, 188)
+BACKGROUND = (255, 255, 255)
 INK = (123, 201, 204)
-SIDE = (66, 120, 128)
-SHADOW = (25, 30, 38)
-PIXEL = 24
-BASE = 200
+SIDE = (87, 157, 163)
+SHADOW = (223, 232, 233)
+PIXEL = 16
+BASE = 134
 FPS = 25
 CYCLE = 5.2
 BOUNDS = ((0, 3), (4, 7), (8, 13), (14, 15), (16, 20), (21, 24))
@@ -76,7 +76,7 @@ def frame(time, letters):
             return ((pivot + x * cosine - y * sine + dx) * scale,
                     (BASE + x * sine + y * cosine + dy) * scale)
 
-        for dx, dy, color in ((5, 7, SHADOW), (3, 3, SIDE), (0, 0, INK)):
+        for dx, dy, color in ((PIXEL * 5 / 24, PIXEL * 7 / 24, SHADOW), (PIXEL / 8, PIXEL / 8, SIDE), (0, 0, INK)):
             for column, row in cells:
                 x = (column - (right - left)) * PIXEL
                 y = (row - 5) * PIXEL
@@ -92,15 +92,21 @@ def render(output):
     still.save(output / 'domino-logo.png', optimize=True)
     frames = [frame(index / FPS, letters) for index in range(round(CYCLE * FPS))]
     # A shared palette avoids color flicker between animation frames.
-    palette = Image.new('RGB', (256, 1))
     samples = [BACKGROUND, INK, SIDE, SHADOW]
     for foreground in (INK, SIDE, SHADOW):
         for index in range(1, 63):
             alpha = index / 63
             samples.append(tuple(round(a * (1-alpha) + b * alpha) for a, b in zip(BACKGROUND, foreground)))
-    palette.putdata((samples + [BACKGROUND] * 256)[:256])
-    palette = palette.quantize(colors=256)
-    indexed = [item.quantize(palette=palette, dither=Image.Dither.NONE) for item in frames]
+    palette = Image.new('P', (1, 1))
+    palette.putpalette([channel for color in (samples + [BACKGROUND] * 256)[:256] for channel in color])
+    indexed = []
+    background = Image.new('RGB', SIZE, BACKGROUND)
+    for item in frames:
+        converted = item.quantize(palette=palette, dither=Image.Dither.NONE)
+        # Quantizer color caching can otherwise turn pure white into near-white.
+        mask = ImageChops.difference(item, background).convert('L').point(lambda value: 255 if value == 0 else 0)
+        converted.paste(0, mask=mask)
+        indexed.append(converted)
     indexed[0].save(output / 'domino-logo.gif', save_all=True, append_images=indexed[1:],
                     duration=1000 // FPS, loop=0, disposal=1, optimize=True)
     return frames
