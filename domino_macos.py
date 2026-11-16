@@ -68,7 +68,7 @@ def start(home):
         launch('kickstart', domain() + '/' + LABEL)
 
 
-def snapshot(ctx, kind='deploy'):
+def snapshot(ctx, kind='deploy', *, preserve_cli=False):
     ctx.BACKUPS.mkdir(parents=True, exist_ok=True, mode=0o700)
     backup = ctx.BACKUPS / (time.strftime('%Y%m%d-%H%M%S') + '-' + uuid.uuid4().hex[:8])
     backup.mkdir(mode=0o700)
@@ -81,6 +81,9 @@ def snapshot(ctx, kind='deploy'):
         shutil.copytree(ctx.APP, backup / 'app', symlinks=True)
     for index, name in enumerate(files):
         path = ctx.HOME / name
+        if preserve_cli and name == '.local/bin/domino':
+            meta['files'][name] = {'preserved': True}
+            continue
         if path.is_symlink():
             raise ctx.InstallError('受管理的文件不能是符号链接。')
         item = {'exists': path.exists(), 'index': index}
@@ -124,6 +127,8 @@ def _restore_installation(ctx, backup):
     if meta['had_app']:
         shutil.copytree(backup / 'app', ctx.APP, symlinks=True)
     for name, item in meta['files'].items():
+        if item.get('preserved'):
+            continue
         path = ctx.HOME / name
         if path.is_symlink():
             raise ctx.InstallError('受管理的文件不能是符号链接。')
@@ -155,7 +160,7 @@ def install(ctx, bundle):
         raise ctx.InstallError('安装包的监听或 TUN 设置不符合预期。')
     import domino_subscriptions
     domino_subscriptions.validate_install_registration(ctx, bundle)
-    if not ctx.owned_cli(ctx.HOME / '.local/bin/domino'):
+    if not manifest.get('package_managed_cli') and not ctx.owned_cli(ctx.HOME / '.local/bin/domino'):
         raise ctx.InstallError('~/.local/bin/domino 已被其他程序使用。')
     for name in ['.zshrc', '.bashrc', '.config/domino/proxy.env']:
         path = ctx.HOME / name
@@ -177,7 +182,7 @@ def install(ctx, bundle):
             capture_output=True, text=True, timeout=60)
     pending = manifest.get('awaiting_subscription') and not (config.get('proxies') or config.get('proxy-providers'))
     shell_state = ctx.prepare_shell_policy(ctx.APP, ctx.HOME, system='darwin', shell_env=manifest['shell_env'], pending=pending)
-    backup = snapshot(ctx)
+    backup = snapshot(ctx, preserve_cli=True) if manifest.get('package_managed_cli') else snapshot(ctx)
     try:
         stop(ctx.HOME)
         if ctx.APP.exists():
@@ -257,13 +262,35 @@ def service_action(ctx, action, lines=100, follow=False, *, batch=False):
     elif action == 'stop':
         system_proxy(ctx, 'off',batch=batch,render=False)
         stop(ctx.HOME)
-        ctx.human_header('服务','○ 已停止','33')
-        print('  启动服务：domino start')
+        ctx.human_header('运行状态','● 已关闭','31')
+        ctx.human_row('服务','已停止')
+        ctx.human_row('系统代理','已解除 Domino 接管（恢复原设置，保留其他程序的修改）')
+        print('  开启 Domino：domino start')
     else:
         if action == 'restart':
             stop(ctx.HOME)
         start(ctx.HOME)
-        ctx.human_header('服务','● 已重启' if action == 'restart' else '● 已启动')
+        try:
+            for attempt in range(20):
+                try:
+                    ctx.controller(ctx.APP / 'data', '/version', timeout=1)
+                    break
+                except (OSError, ctx.InstallError):
+                    if attempt == 19:
+                        raise ctx.InstallError('控制接口未就绪，请用 domino logs 查看日志。') from None
+                    time.sleep(.25)
+            proxy_result = system_proxy(ctx, 'on', batch=batch, render=False)
+        except DomainError as error:
+            raise ctx.InstallError('服务已启动，但系统代理未接通：' + str(error),
+                                   code=error.code, exit_code=error.exit_code, effect='unknown') from None
+        except (OSError, RuntimeError):
+            raise ctx.InstallError('服务已启动，但系统代理未接通；请运行 domino status 检查。',
+                                   effect='unknown') from None
+        ctx.human_header('运行状态','● 已重启 · 系统代理已接通' if action == 'restart' else '● 已开启 · 系统代理已接通')
+        ctx.human_row('服务','运行中')
+        number = proxy_result['proxies']['web']['port']
+        ctx.human_row('系统代理','已开启（HTTP / HTTPS / SOCKS）')
+        ctx.human_row('代理目标',f'127.0.0.1:{number}（Domino）')
 
 
 def rollback(ctx, name=None):
@@ -441,7 +468,7 @@ def system_proxy(ctx, action=None, service=None, as_json=False, batch=False, *, 
         manifest_path = app / 'manifest.json'
         manifest = json.loads(manifest_path.read_text()) if manifest_path.is_file() else {}
         if manifest.get('awaiting_subscription') and not (config.get('proxies') or config.get('proxy-providers')):
-            raise ctx.InstallError('请先用 domino configs add/switch 配好订阅，再开启系统代理。')
+            raise ctx.InstallError('请先用 domino add / domino switch 配好订阅，再运行 domino start。')
         if not state(ctx.HOME)[0]:
             raise ctx.InstallError('请先启动 Domino，再开启系统代理。')
         ctx.controller(app / 'data', '/version')

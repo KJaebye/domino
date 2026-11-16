@@ -2,6 +2,7 @@ import hashlib
 import json
 from pathlib import Path
 import tempfile
+import subprocess
 import unittest
 from unittest.mock import patch
 
@@ -11,6 +12,26 @@ from domino_model import DomainError
 
 
 class ResourceSourceTests(unittest.TestCase):
+    def test_http2_failure_retries_once_with_http11_without_exposing_credentials(self):
+        for code in [16,92,95]:
+            with self.subTest(code=code),tempfile.TemporaryDirectory() as directory:
+                failure=subprocess.CalledProcessError(code,['curl'],output='',stderr='PRIVATE')
+                with patch.object(cli.subprocess,'run',side_effect=[failure,subprocess.CompletedProcess([],0,stdout='200')]) as run:
+                    cli.download('https://example.test/sub?token=PRIVATE',Path(directory)/'out')
+                self.assertEqual(run.call_count,2)
+                self.assertIn('--http1.1',run.call_args.args[0])
+                self.assertNotIn('PRIVATE',' '.join(run.call_args.args[0]))
+                self.assertEqual(run.call_args.kwargs['input'],run.call_args_list[0].kwargs['input'])
+
+    def test_http11_failure_stays_bounded_and_auth_failures_are_not_retried(self):
+        for code,http,retries in [(16,'',2),(22,'403',1)]:
+            with self.subTest(code=code),tempfile.TemporaryDirectory() as directory:
+                failure=subprocess.CalledProcessError(code,['curl'],output=http,stderr='PRIVATE')
+                with patch.object(cli.subprocess,'run',side_effect=failure) as run,self.assertRaises(DomainError) as caught:
+                    cli.download('https://example.test/sub?token=PRIVATE',Path(directory)/'out')
+                self.assertEqual(run.call_count,retries)
+                self.assertNotIn('PRIVATE',str(caught.exception))
+
     def test_custom_source_replaces_release_metadata_and_rejects_other_origins(self):
         with patch.dict('os.environ',{'DOMINO_RESOURCE_BASE':'https://cdn.example.test/domino'}):
             self.assertEqual(resources.release_url('latest',cli.RELEASE_API),'https://cdn.example.test/domino/mihomo/latest.json')
@@ -19,6 +40,17 @@ class ResourceSourceTests(unittest.TestCase):
             self.assertFalse(resources.asset_allowed('https://github.com/MetaCubeX/mihomo/releases/download/v1.2.3/core.gz','v1.2.3'))
         for url in ['http://cdn.example.test/','https://user:secret@cdn.example.test/','https://cdn.example.test/?token=private']:
             with patch.dict('os.environ',{'DOMINO_RESOURCE_BASE':url}),self.assertRaises(DomainError): resources.resource_base()
+
+    def test_geo_dependencies_follow_rules_instead_of_node_names_or_domains(self):
+        with tempfile.TemporaryDirectory() as directory:
+            data = Path(directory)
+            profile = {'proxies': [{'name': 'GEOIP'}], 'rules': ['DOMAIN,geoip,DIRECT', 'DOMAIN-SUFFIX,geosite.example,DIRECT']}
+            self.assertEqual(resources.geo_requirements(profile, data), set())
+            profile['rules'].append('AND,((NETWORK,TCP),(GEOIP,CN)),DIRECT')
+            profile['sub-rules'] = {'nested': ['SRC-IP-ASN,123,DIRECT']}
+            (data / 'rules.yaml').write_text('payload:\n  - GEOSITE,cn,DIRECT\n')
+            profile['rule-providers'] = {'fixture': {'path': 'rules.yaml'}}
+            self.assertEqual(resources.geo_requirements(profile, data), {'Country.mmdb', 'ASN.mmdb', 'geosite.dat'})
 
     def test_geo_closure_uses_only_configured_origin_and_checks_hashes(self):
         with tempfile.TemporaryDirectory() as work,patch.dict('os.environ',{'DOMINO_RESOURCE_BASE':'https://cdn.example.test/'}):

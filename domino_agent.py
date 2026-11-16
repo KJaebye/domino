@@ -33,8 +33,9 @@ def command_request(args):
     if command=='logs':
         if args.follow: raise DomainError('JSON 日志请求需为有界读取。',code='INVALID_ARGUMENT',exit_code=2)
         return 'logs.read',{'lines':args.lines}
-    if command in ['mode','log-level']:
-        return command+('.set' if args.set else '.get'),({'value':args.set} if args.set else {})
+    if command in ['mode','log']:
+        operation = 'log-level' if command == 'log' else command
+        return operation+('.set' if args.set else '.get'),({'value':args.set} if args.set else {})
     if command=='configs':
         action=next((name for name in ['add','use','update','update_all','rename','remove','set_url','import_current'] if getattr(args,name,None)),None)
         if action:
@@ -51,10 +52,13 @@ def command_request(args):
         return 'rules.list',{key:getattr(args,key) for key in ['match','limit','custom'] if getattr(args,key,None) is not None}
     if command=='providers':
         return 'providers.'+('update' if args.update else 'list'),dict(kind=args.kind,**({'name':args.update} if args.update else {}))
-    if command=='delay':
-        return 'delay.test',{key:getattr(args,key) for key in ['name','node','group','url','timeout'] if getattr(args,key,None) is not None}
+    if command=='test':
+        if not any(getattr(args,key,None) for key in ['name','config','node','group']):
+            return 'delay.summary',{key:getattr(args,key) for key in ['url','timeout']}
+        return 'delay.test',{key:getattr(args,key) for key in ['name','config','node','group','url','timeout'] if getattr(args,key,None) is not None}
     if command=='traffic':
-        if args.watch: raise DomainError('普通机器请求不能无限输出，请先使用单次采样。',code='INVALID_ARGUMENT',exit_code=2)
+        if args.watch or getattr(args,'full',False):
+            raise DomainError('机器请求仅支持单次流量采样，不支持 --watch 或 --full。',code='INVALID_ARGUMENT',exit_code=2)
         return 'traffic.sample',{'interval':args.interval}
     raise DomainError('该操作尚未接入机器协议。',code='UNSUPPORTED_OPERATION',exit_code=3)
 
@@ -164,7 +168,7 @@ def main(arguments, cli):
         request['client']='domino'
         request.update({key:getattr(options,key) for key in ['if_revision','request_id','dry_run'] if getattr(options,key) is not None})
         payload=json.dumps(request,ensure_ascii=False,allow_nan=False)
-        deadline=900 if writing or operation=='delay.test' else 90
+        deadline=900 if writing or operation in ['delay.test','delay.summary'] else 90
         if local:
             dispatched=True
             process=subprocess.run([sys.executable,str(cli.REMOTE_SCRIPT),'agent'],input=payload,capture_output=True,text=True,timeout=deadline)

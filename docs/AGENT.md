@@ -4,13 +4,15 @@
 
 ```bash
 domino --output json --protocol-version 1 --non-interactive status
-domino --output json nodes nvidia@192.168.8.21
+domino --output json user@192.0.2.10 nodes
 domino --output json scan
 ```
 
 `scan` 对应 `source.list`，返回 `data.sources`，汇总已发现的配置文件，包含 `config`、来源标签 `name`、`default`、`compatible_config_found` 和 `proxy`；无法读取或不兼容的配置带 `config_error`。每项的 `exit_checked` 表示是否检测了配置对应的代理入口，`healthy` 表示实际 HTTPS 出网是否成功，检测失败带 `check_error`。入口最多四个并发检测，每个入口超时 5 秒，相同入口只检查一次；无代理入口时 `exit_checked` 和 `healthy` 均为 `false`。列表查询成功仍返回退出码 0，逐项健康状态由字段表达；`compatible_config_found` 不保证来源正在运行或目标能成功部署。`scan --source '/path/to/config.yaml'` 对应 `source.inspect`，检查指定的单一来源；直接调用 `source.inspect` 时仍可省略 `path` 检查默认来源。来源发现、检查和导入保持只读；管理操作只针对目标上的 Domino 自有运行时。
 
-macOS Clash Verge 的本地 `profiles.yaml` 中 `remote` / `local` 保存配置也加入列表，但不改变默认导入或自动 `catch` 的来源范围。保存配置增加 `source_kind: "profile"`、`profile_id`、`profile_name`、`client_current` 和 `check_note`。`client_current` 是客户端索引的选择，不代表运行；为 `null` 时表示存在索引歧义，不能可靠确认。它与 `default`（默认导入来源）独立。JSON 中生成运行配置仍作为独立记录保留，可能包含客户端合并／脚本处理结果。保存配置不关联监听端口：`proxy: null`、`exit_checked: false`、`healthy: false`，`check_note` 解释未检查范围，不是出网失败；不能借用活动端口给未启用配置背书。指定已索引保存配置的 `source.inspect` 使用相同字段和隔离规则，不回退环境代理进行探测。机器查询成功仍返回退出码 0；普通单来源 `scan --source`（含旧 `--json`）沿用未确认健康时退出码 3，不能只凭这个退出码把未检查当作连通失败。索引读取或项目校验失败时，列表可包含通用 `warnings` 数组，不输出原始条目、订阅 URL 或解析正文；无警告时省略该字段。
+macOS Clash Verge 的本地 `profiles.yaml` 中 `remote` / `local` 保存配置也加入列表，但不改变自动部署的默认来源；普通 `catch` 菜单和 `catch all` 可捕获保存配置。保存配置增加 `source_kind: "profile"`、`profile_id`、`profile_name`、`client_current` 和 `check_note`。`client_current` 是客户端索引的选择，不代表运行；为 `null` 时表示存在索引歧义，不能可靠确认。它与 `default`（默认导入来源）独立。JSON 中生成运行配置仍作为独立记录保留，可能包含客户端合并／脚本处理结果。保存配置不关联监听端口：`proxy: null`、`exit_checked: false`、`healthy: false`，`check_note` 解释未检查范围，不是出网失败；不能借用活动端口给未启用配置背书。指定已索引保存配置的 `source.inspect` 使用相同字段和隔离规则，不回退环境代理进行探测。机器查询成功仍返回退出码 0；普通单来源 `scan --source`（含旧 `--json`）沿用未确认健康时退出码 3，不能只凭这个退出码把未检查当作连通失败。索引读取或项目校验失败时，列表可包含通用 `warnings` 数组，不输出原始条目、订阅 URL 或解析正文；无警告时省略该字段。
+
+配置库存在时，`source.list` 还返回 `managed_configs`，含 `active`、`current_source` 和 `configs`。配置项为配置库公开列表投影（名称、类型、节点数、缓存与当前标记、更新时间、可选订阅主机），不包含原始订阅地址或节点内容；不读取或校验保存缓存、不启动内核。无法读取配置库时返回空 `configs` 和安全 `error`，外部来源继续扫描。终端先显示外部来源，再集中显示 Domino 的全部登记配置表；终端不再展开 Domino 运行来源详情或部署提示，摘要数量按实际展示的外部配置分组与配置库列表分别计算；`sources` 保留原始独立记录和默认来源顺序。
 
 Domino 运行来源可带 `current_config` 和 `import_source`。后者只公开 `status`（`known` / `unknown` / `invalid`）、私有源快照的 `snapshot_path`、`capture_kind`、安全显示名 `label`、`captured_at`、可选 `profile_name` / `association` 和解析内容／可携带快照摘要 `import_content_sha256` / `snapshot_sha256`；摘要不是原始文件字节校验和。`association: "index"` 只表示捕获时客户端索引的关联，不证明内核加载内容。`unknown` 为缺少旧版记录，`invalid` 为记录不可用，两者均不触发自动迁移或写入；源状态不替代运行入口健康。源快照不作为额外运行入口加入列表；显式检查 Domino 源快照时可返回 `source_kind: "import-snapshot"`，`proxy: null`、`exit_checked: false`、`healthy: false`，不会探测旧端口或回退环境代理。来源读取只投影白名单，不返回原配置或私有元数据全文。
 
@@ -24,12 +26,16 @@ Domino 运行来源可带 `current_config` 和 `import_source`。后者只公开
 
 ## 系统代理与独立终端代理策略
 
+`service.start` / `service.restart` 在 macOS 与 Ubuntu GNOME 桌面等待控制接口就绪后接通系统代理，`service.stop` 先恢复仍由 Domino 接管的系统代理，再停止服务；Ubuntu Server / 无 GNOME 会话时只管理服务并返回无桌面系统代理状态。启动服务成功但系统代理接通失败时返回错误及 `effect: "unknown"`，需要查询状态，不报告整体成功。服务启停的预览包含系统代理变化，即使服务原本已运行或停止也会考虑代理状态。终端策略不随服务启停改变。
+
+`status.get` 与普通 `status --json` 返回 `system_proxy: {"routing": "domino|off|other|mixed|pac|unknown|unsupported", "ports": [...]}`。`healthy` 仍表示 Domino 代理入口的实际出网检查结果，不等同于系统代理已接通；系统是否使用 Domino 需同时检查 `system_proxy.routing`。Ubuntu GNOME 的 `system_proxy` 还包含 `backend: "gnome"`、`supported`；无桌面会话返回 `routing: "unsupported"`、`supported: false`。`proxy.*` 在 Linux 也保留兼容，不写入 shell 环境；Linux 不接受 macOS 专用的 `service` 参数。恢复记录保存在 `~/.config/domino/linux-system-proxy.json`。原 `proxy.*` 协议名称不变。
+
 `proxy.status`、`proxy.on`、`proxy.off`（普通 CLI 为 `domino proxy status/on/off`）只管理系统代理，不写入终端变量。`shell.status`、`shell.on`、`shell.off`（`domino shell status/on/off`）独立读取或修改目标用户的持久化终端策略，不切换系统代理，不代表服务或实际代理出网正常。
 
 ```bash
 domino --output json call shell.status
 domino --output json --request-id 'shell-on-001' call shell.on
-domino --output json call shell.off nvidia@192.168.8.21
+domino --output json user@192.0.2.10 call shell.off
 # 普通入口也支持机器协议
 domino --output json shell status
 ```
@@ -56,7 +62,7 @@ domino --output json --input - call configs.add
 domino --output json --input /private/rename.json call configs.rename
 # rename.json: {"id":"订阅列表中的32位ID","new_name":"备用"}
 
-domino --output json --input /private/install.json call service.install nvidia@192.168.8.21
+domino --output json --input /private/install.json user@192.0.2.10 call service.install
 # install.json: {"bundle":"/目标机私有目录/domino.tar.gz","bundle_sha256":"64位SHA-256"}
 ```
 
@@ -72,7 +78,7 @@ domino --output json --input /private/export.json call bundle.export
 # 也可使用 subscription 地址；省略来源时自动发现兼容配置。
 
 domino --output json --request-id "deploy-001" --input /private/deploy.json \
-  call deployment.apply nvidia@192.168.8.21
+  call deployment.apply user@192.0.2.10
 # deploy.json: {"bundle":"/private/domino.tar.gz","bundle_sha256":"导出返回的摘要"}
 ```
 
@@ -118,6 +124,8 @@ domino --output json call operations.list
 
 协议 1 的 `client` 字段固定为 `"domino"`，仅标识受管理运行时，不是可选择的客户端参数。
 
+显式 `configs.update` 支持从已捕获的 Clash Verge 来源记录恢复订阅地址：只匹配原客户端索引中捕获时的 profile ID 和原文件关联，成功下载校验后保持配置 ID / 名称并转为在线订阅，地址保存在私有登记中。找不到地址时返回 `SUBSCRIPTION_URL_REQUIRED`，原快照不变；这与 `catch` 阶段不自动借用订阅地址的行为不同。`configs.update_all` 仍只处理已登记地址的条目。
+
 `effect` 为 `none`、`applied`、`rolled_back` 或 `unknown`。`changed` 表示该操作确认造成状态变化；重复返回的结果保留原操作信息。服务重启、关闭连接和 provider 刷新可能成功，但配置修订号不变。
 
 | 退出码 | 分类 |
@@ -139,4 +147,16 @@ domino --output json call operations.list
 
 当前提供有界 JSON 请求：状态/来源、节点/测速、模式/日志级别、连接/流量采样、规则/provider、订阅、系统代理、独立终端代理策略、服务与安装包和操作记录。具体参数与平台限制以当前 `capabilities` 为准。状态与管理操作仅针对 Domino 自有运行时；外部 Clash/Mihomo 仅作为只读配置和当前节点选择的导入来源，不开放运行时写操作。
 
-导出构建与上传编排分别使用 `bundle.export`、`deployment.apply`；恢复历史部署使用 `service.rollback`。普通 `domino USER@IP` 保持一条命令完成部署。日志用有界 `logs.read` 返回脱敏消息，流量用 `traffic.sample`；UI 与无限日志/流量输出不属于普通 JSON 请求。NDJSON 持续事件流尚未开放。
+导出构建与上传编排分别使用 `bundle.export`、`deployment.apply`；恢复历史部署使用 `service.rollback`。普通 `domino USER@IP deploy` 保持一条命令完成部署。日志用有界 `logs.read` 返回脱敏消息，流量用 `traffic.sample`；UI 与无限日志/流量输出不属于普通 JSON 请求。NDJSON 持续事件流尚未开放。
+
+`delay.test` 支持 `config` 指定目标配置库中的完整名称，与 `name` / `node` / `group` 互斥。普通入口为 `domino test --config 名称`；`name` 与已登记配置名完整相同时优先按配置测试。通过缓存配置运行隔离临时内核，返回原有逐节点 `name`、`delay_ms`、`ok` 数组，不切换当前配置，不更新订阅或缓存。
+
+裸 `domino --output json test` 调用 `delay.summary`，返回按配置的数组：`name`、`active`、`total`、`available`、`unavailable`、`status`。`status` 为 `tested` / `uncached` / `error`；未完成节点检测时计数为 `null`，附安全的 `message`，加载错误可带 `error_code`。单配置仍使用 `delay.test`，逐节点结果不变。
+
+普通终端 `domino select` 支持交互菜单，`domino select "节点名"` 支持唯一名称匹配；机器入口继续要求显式 `--group` 和 `--node`，映射到原有 `nodes.select` 参数，不进入交互菜单或隐式选择策略组。
+
+日志级别的人类命令为 `domino log [LEVEL]`，旧 `log-level` 人类命令及 TUI 别名均已移除，远端使用 `domino USER@IP log LEVEL`，机器操作名仍为 `log-level.get` / `log-level.set`；JSON 仍使用 `log-level` 键。`logs.read` 继续读取实际日志内容。
+
+交互终端的 `domino traffic` 默认内嵌完整动态面板，内容与 `--full` 相同，`--full` 仅切换为全屏显示；`--full` 不用于 JSON、捕获或机器请求；机器协议 `traffic.sample` 和普通 `traffic --json` 仍为单次有界采样，不打开终端面板。普通 CLI `traffic --json --watch --count N` 保持原逐行 JSON 输出，与机器请求的单一结果信封不同。
+
+UI 通过私有的 `--ui-result` 请求单次测速结果与当前选择信息，并单独消费 stderr 检测进度；该私有数据不是公开 Agent 操作，普通 `test --json` 仍返回原数组。`/catch` 的私有只读 `catch-options` 查询仅提供当前目标的兼容来源名称和路径，选择后调用同版 CLI 完成确认和捕获，不新增机器写操作；UI 不修改父 shell 环境。

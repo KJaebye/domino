@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext, redirect_stdout
 import copy
 import gzip
 import hashlib
@@ -29,13 +29,15 @@ from urllib.parse import urlsplit
 from urllib.request import getproxies
 from domino_model import DomainError
 
-VERSION = '0.13'
+VERSION = '0.16.3'
+PACKAGE_MANAGED = False
+DESCRIPTION = '捕获本机代理，并一键部署到指定 IP 的设备上，让翻墙像 domino 一样简单。'
 SUBSCRIPTION_USER_AGENT = 'clash.meta'
 DEFAULT_PROXY_PORT = 17897
 DEFAULT_API_PORT = 19091
 RELEASE_API = 'https://api.github.com/repos/MetaCubeX/mihomo/releases/latest'
 REMOTE_SCRIPT = Path(__file__).with_name('install_domino.py')
-CLI_MODULES = ('domino_cli.py','install_domino.py','domino_macos.py','domino_tui.py',
+CLI_MODULES = ('domino_cli.py','install_domino.py','domino_macos.py','domino_linux.py','domino_tui.py',
                'domino_subscriptions.py','domino_install.py','domino_model.py',
                'domino_store.py','domino_service.py','domino_resources.py','domino_logs.py','domino_agent.py','domino_agent_backend.py','domino_shell.py','domino_sources.py')
 DEFAULT_CLASH = Path.home() / 'Library/Application Support/io.github.clash-verge-rev.clash-verge-rev'
@@ -56,6 +58,8 @@ def run(args, *, stage='命令', **kwargs):
     try:
         return subprocess.run(args, check=True, **kwargs)
     except subprocess.CalledProcessError as exc:
+        if stage=='下载' and args[0]=='curl' and exc.returncode in [16,92,95] and '--http1.1' not in args:
+            return run([args[0],'--http1.1',*args[1:]],stage=stage,**kwargs)
         # Never interpolate argv/stderr: provider URLs and configs may contain credentials.
         if stage == '下载' and isinstance(exc.stdout, str) and re.fullmatch(r'[45]\d\d', exc.stdout.strip()):
             status = int(exc.stdout.strip())
@@ -438,9 +442,28 @@ def collect_sources():
     for item in sources:
         item.update(checks.get(item['proxy'], {'healthy': False, 'exit_checked': False}))
     result = {'sources': sources}
+    managed = collect_managed_configs(sources)
+    if managed is not None:
+        result['managed_configs'] = managed
     if warnings:
         result['warnings'] = warnings
     return result
+
+
+def collect_managed_configs(sources):
+    """Read the public registry projection without loading or activating caches."""
+    import domino_subscriptions
+    home = Path.home()
+    index = home / '.config/domino/subscriptions/index.json'
+    if not index.exists() and not index.is_symlink():
+        return None
+    runtime = next((item for item in sources if item.get('source') == 'domino'), None)
+    app = Path(runtime['config']).parent.parent if runtime else home / '.local/share/domino'
+    context = argparse.Namespace(HOME=home, APP=app, InstallError=ToolError)
+    try:
+        return domino_subscriptions.Manager(context).listing()
+    except (DomainError, OSError, ValueError, TypeError, KeyError, AttributeError):
+        return {'configs': [], 'active': None, 'error': '配置库无法读取，请检查 Domino 配置目录；外部来源扫描不受影响。'}
 
 
 def profile_status(item):
@@ -487,6 +510,39 @@ def display_import_source(item, row):
         row('导入来源', ('源快照不可用' if info['status'] == 'invalid' else '未记录（旧版运行配置）', '33'))
 
 
+def display_scan_source(item, row):
+    row('来源',(item['name']+(' · 默认导入来源' if item['default'] else ''),'1'))
+    profile = item.get('display_profile')
+    if profile or item.get('source_kind') == 'profile':
+        row('配置选择', profile_status(profile or item))
+    state = '可用' if item['healthy'] else '检查未通过' if item['exit_checked'] else '未检查（保存配置）' if item.get('source_kind') == 'profile' else '未检查'
+    row('入口出网',(state,'32' if item['healthy'] else '31' if item['exit_checked'] else '33'))
+    row('代理入口',item['proxy'] or ('未关联运行入口' if item.get('source_kind') == 'profile' else '未配置'))
+    row('配置状态',('兼容','32') if item['compatible_config_found'] else ('不可用','33'))
+    path=Path(item['config'])
+    try: display='~/'+str(path.relative_to(Path.home()))
+    except ValueError: display=str(path)
+    row('运行配置' if profile or item.get('import_source') else '原始配置' if item.get('source_kind') == 'profile' else '配置文件',(display,'2'))
+    display_import_source(item, row)
+    if profile:
+        original = Path(profile['config'])
+        try: original_display = '~/' + str(original.relative_to(Path.home()))
+        except ValueError: original_display = str(original)
+        row('原始配置', (original_display, '2'))
+        if profile['compatible_config_found'] != item['compatible_config_found']:
+            row('原始状态', ('兼容', '32') if profile['compatible_config_found'] else ('不可用', '33'))
+        row('检查范围', ('按客户端索引关联；出网结果属于运行入口，未核验内核加载内容与文件一致。', '2'))
+    if item.get('check_note'):
+        row('检查范围',(item['check_note'],'2'))
+    if item.get('config_error'):
+        row('配置检查',(item['config_error'],'33'))
+    if item.get('check_error'):
+        if item.get('check_stage'):
+            row('失败阶段',(PROBE_STAGES.get(item['check_stage'],'出网请求'),'33'))
+        row('出网检查',(item['check_error'],'33'))
+        if item.get('check_hint'): row('排查建议',(item['check_hint'],'2'))
+
+
 def list_sources(args):
     result = collect_sources()
     if args.json:
@@ -496,47 +552,42 @@ def list_sources(args):
         with output.human_output():
             def row(label,value):
                 output.human_row(label,value,wrap=True,columns=getattr(args,'columns',None))
+            def section(title, detail):
+                text = f'── {title} · {detail} '
+                columns = getattr(args, 'columns', None) or shutil.get_terminal_size((100, 24)).columns
+                rule = '─' * max(2, min(60, columns-2-output.human_width(text)))
+                print('  ' + output.human_style(text + rule, '1;36'))
+                print()
             sources = source_display_groups(result['sources'])
-            healthy = sum(item['healthy'] for item in sources)
-            output.human_header('部署来源', f'{len(sources)} 个来源 · {healthy} 个出网可用' if sources else '○ 未找到配置文件',
-                                '32' if healthy else '33')
-            for index,item in enumerate(sources):
-                if index: print()
-                row('来源',(item['name']+(' · 默认导入来源' if item['default'] else ''),'1'))
-                profile = item.get('display_profile')
-                if profile or item.get('source_kind') == 'profile':
-                    row('配置选择', profile_status(profile or item))
-                state = '可用' if item['healthy'] else '检查未通过' if item['exit_checked'] else '未检查（保存配置）' if item.get('source_kind') == 'profile' else '未检查'
-                row('入口出网',(state,'32' if item['healthy'] else '31' if item['exit_checked'] else '33'))
-                row('代理入口',item['proxy'] or ('未关联运行入口' if item.get('source_kind') == 'profile' else '未配置'))
-                row('配置状态',('兼容','32') if item['compatible_config_found'] else ('不可用','33'))
-                path=Path(item['config'])
-                try: display='~/'+str(path.relative_to(Path.home()))
-                except ValueError: display=str(path)
-                row('运行配置' if profile or item.get('import_source') else '原始配置' if item.get('source_kind') == 'profile' else '配置文件',(display,'2'))
-                display_import_source(item, row)
-                if profile:
-                    original = Path(profile['config'])
-                    try: original_display = '~/' + str(original.relative_to(Path.home()))
-                    except ValueError: original_display = str(original)
-                    row('原始配置', (original_display, '2'))
-                    if profile['compatible_config_found'] != item['compatible_config_found']:
-                        row('原始状态', ('兼容', '32') if profile['compatible_config_found'] else ('不可用', '33'))
-                    row('检查范围', ('按客户端索引关联；出网结果属于运行入口，未核验内核加载内容与文件一致。', '2'))
-                if item.get('check_note'):
-                    row('检查范围',(item['check_note'],'2'))
-                if item.get('config_error'):
-                    row('配置检查',(item['config_error'],'33'))
-                if item.get('check_error'):
-                    if item.get('check_stage'):
-                        row('失败阶段',(PROBE_STAGES.get(item['check_stage'],'出网请求'),'33'))
-                    row('出网检查',(item['check_error'],'33'))
-                    if item.get('check_hint'): row('排查建议',(item['check_hint'],'2'))
+            external = [item for item in sources if item.get('source') != 'domino' and item['name'] not in ['Domino', 'robot-clash']]
+            managed = result.get('managed_configs')
+            configs = managed.get('configs', []) if managed else []
+            registry_error = managed.get('error') if managed else None
+            summary = f'外部配置 {len(external)} 个 · ' + ('Domino 配置库无法读取' if registry_error else f'Domino 管理 {len(configs)} 个')
+            output.human_header('配置扫描', summary)
+            section('外部配置', f'{len(external)} 个配置')
+            if external:
+                for index, item in enumerate(external):
+                    if index: print()
+                    display_scan_source(item, row)
+            else:
+                row('配置', '未发现外部配置。')
+            print()
+            section('Domino 管理', '配置库无法读取' if registry_error else f'{len(configs)} 个配置')
+            if configs:
+                output.human_table(['配置名称', '类型', '节点', '缓存', '更新时间'], [
+                    [('● ' if item['active'] else '  ') + item['name'],
+                     '在线订阅' if item['kind'] == 'subscription' else '配置快照',
+                     item['node_count'] if item.get('node_count') is not None else '—',
+                     '已缓存' if item['cached'] else '未缓存',
+                     output.human_time(item['updated_at']) if item.get('updated_at') else '尚未更新']
+                    for item in configs])
+            elif not registry_error:
+                row('配置库', '尚未登记配置；可用 domino catch 捕获或 domino add 添加。')
+            if registry_error:
+                row('配置检查', (registry_error, '33'))
             for warning in result.get('warnings', []):
                 row('扫描提示', (warning, '33'))
-            if sources:
-                print()
-                row('部署',"domino USER@IP --source '配置路径'")
     return 0
 
 
@@ -596,7 +647,7 @@ def inspect_source(args):
                 output.human_row('出网检查',(result['check_error'],'33'),wrap=True,columns=columns)
                 if result.get('check_hint'):
                     output.human_row('排查建议',(result['check_hint'],'2'),wrap=True,columns=columns)
-            print('\n  此处检查可迁移的配置和对应代理入口；系统代理状态请用 domino proxy status 查看。')
+            print('\n  此处检查可迁移的配置和对应代理入口；运行及系统代理状态请用 domino status 查看。')
     return 0 if result['healthy'] else 3
 
 
@@ -779,7 +830,10 @@ def validate_independent_nodes(nodes):
             raise ToolError('源节点依赖本机回环代理，无法独立迁移。请提供可由目标机直接连接的节点配置。')
 
 
-def provider_resources(profile, source_dir, data, proxy):
+def provider_resources(profile, source_dir, data, proxy, *, resolver=None, allow_download=True):
+    from domino_sources import ResourceResolver
+    resolver = resolver or ResourceResolver(source_dir / "config.yaml")
+    origins = {}
     for kind in ['proxy-providers', 'rule-providers']:
         for name, provider in profile.get(kind, {}).items():
             kind_type = provider.get('type')
@@ -788,7 +842,7 @@ def provider_resources(profile, source_dir, data, proxy):
                     continue
                 raise ToolError('存在无法迁移的 provider 类型；未部署任何内容。')
             original = provider.get('path')
-            local = (source_dir / original).resolve() if original else None
+            local = resolver.find(original) if original else None
             suffix = '.mrs' if provider.get('format') == 'mrs' else '.yaml'
             name_hash = hashlib.sha256((kind + ':' + name).encode()).hexdigest()[:20]
             relative = Path('providers') / kind / (name_hash + suffix)
@@ -796,12 +850,15 @@ def provider_resources(profile, source_dir, data, proxy):
             target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
             if local and local.is_file():
                 shutil.copy2(local, target)
-            elif kind_type == 'http' and provider.get('url'):
+            elif allow_download and kind_type == 'http' and provider.get('url'):
                 download_resource('provider 配置资源', provider['url'], target, proxy)
             else:
-                raise ToolError('provider 缓存文件缺失，无法制作可独立启动的配置。')
+                raise ToolError('provider 缓存文件缺失；请检查引用路径或使用 --resource-dir 指定资源目录。',
+                                code='SOURCE_RESOURCE_MISSING', exit_code=3)
             target.chmod(0o600)
             provider['path'] = relative.as_posix()
+            origins[(kind, name)] = local
+    return origins
 
 
 def release_asset(release, arch, system='linux'):
@@ -961,11 +1018,13 @@ def prepare_source(args, arch, work):
             read_source(preserved)
             shutil.copytree(preserved, data / 'source')
             runtime_source = work / 'runtime-source'
-            create_source(raw, source, runtime_source, proxy=proxy, metadata=origin)
+            create_source(raw, source, runtime_source, proxy=proxy, metadata=origin,
+                          resource_dirs=getattr(args, 'resource_dir', ()))
         else:
             runtime_source = data / 'source'
             create_source(raw, source, runtime_source, proxy=proxy, metadata=origin,
-                          online=bool(getattr(args, 'subscription', None)))
+                          online=bool(getattr(args, 'subscription', None)),
+                          resource_dirs=getattr(args, 'resource_dir', ()))
         profile = derive_runtime(runtime_source, data, selections, args.proxy_port, args.api_port)
         registration = {'version': 1, 'kind': 'subscription' if getattr(args, 'subscription', None) else 'snapshot'}
         if owned_runtime and getattr(args, 'installing', False) and not (args.source or args.subscription):
@@ -1054,7 +1113,11 @@ class SSH:
 
     def action_argv(self, action, *options, tty=False):
         names=['domino_model','domino_shell']
-        if action in ['agent','scan','configs','rollback']: names += ['domino_subscriptions','domino_macos','domino_cli','domino_store','domino_service','domino_resources','domino_logs','domino_tui','domino_install','domino_agent','domino_agent_backend','domino_sources']
+        if action in ['start', 'stop', 'restart', 'status', 'logs', 'overview']:
+            names += ['domino_macos', 'domino_linux']
+        if action == 'proxy': names += ['domino_macos', 'domino_linux']
+        if action == 'traffic': names += ['domino_tui']
+        if action in ['agent','scan','configs','rollback','delay','cli','catch-options']: names += ['domino_subscriptions','domino_macos','domino_linux','domino_cli','domino_store','domino_service','domino_resources','domino_logs','domino_tui','domino_install','domino_agent','domino_agent_backend','domino_sources']
         modules={name:Path(__file__).with_name(name+'.py').read_text() for name in names}
         code = ('import sys,types;from pathlib import Path\n'
                 '__domino_sources='+repr(modules)+'\n__domino_backend='+repr(REMOTE_SCRIPT.read_text())+'\n'
@@ -1062,9 +1125,21 @@ class SSH:
                 ' m=types.ModuleType(name);m.__file__=str(Path.home()/".local/share/domino/cli"/(name+".py"));sys.modules[name]=m;exec(compile(source,m.__file__,"exec"),m.__dict__)\n'
                 'if "domino_cli" in sys.modules: sys.modules["domino_cli"].SOURCE_MODULES={**{name+".py":source for name,source in __domino_sources.items()},"install_domino.py":__domino_backend}\n'
                 'exec(compile(__domino_backend,"<domino-backend>","exec"))')
+        if action == 'cli':
+            code = ('import sys,tempfile;from pathlib import Path\n'
+                    '__sources='+repr({**{name+'.py':text for name,text in modules.items()}, 'install_domino.py':REMOTE_SCRIPT.read_text()})+'\n'
+                    'with tempfile.TemporaryDirectory(prefix="domino-command-") as directory:\n'
+                    ' root=Path(directory)\n'
+                    ' for name,source in __sources.items(): (root/name).write_text(source)\n'
+                    ' sys.path[:0]=[str(root),str(Path.home()/".local/share/domino/cli/_vendor")]\n'
+                    ' from domino_cli import main\n'
+                    ' raise SystemExit(main(sys.argv[2:]))\n')
         import base64,bz2
-        code = 'import base64,bz2;exec(compile(bz2.decompress(base64.b64decode('+repr(base64.b64encode(bz2.compress(code.encode(),9)).decode())+')),"<domino-remote>","exec"))'
+        code = 'import base64,bz2;exec(compile(bz2.decompress(base64.b85decode('+repr(base64.b85encode(bz2.compress(code.encode(),9)).decode())+')),"<domino-remote>","exec"))'
         command = 'python3 -c ' + shlex.quote(code) + ' ' + shlex.join([action, *options])
+        # Reserve 1 KiB below Linux's per-argument bound, including user arguments.
+        if len(command.encode()) >= 128*1024-1024:
+            raise ToolError('远端命令过长，请缩短参数；机器请求请用 --input 通过标准输入传入。')
         return self.command_argv(command, tty)
 
     def info(self):
@@ -1140,7 +1215,7 @@ def deploy(args, ssh, info, work):
             print('本地 VS Code 主机代理已更新。')
         if args.restart_vscode:
             ssh.action('restart-vscode')
-        print(f'检查状态：domino status {shlex.quote(ssh.target)}')
+        print(f'检查状态：domino {shlex.quote(ssh.target)} status')
     finally:
         # Only remove the validated, freshly created staging directory.
         try:
@@ -1163,7 +1238,7 @@ class DominoDelayHelpFormatter(DominoHelpFormatter, argparse.RawDescriptionHelpF
 
 class DelayAdvancedHelp(argparse.Action):
     def __call__(self, parser, namespace, values, option_string=None):
-        build_parser(advanced_delay_help=True).parse_args(['delay','--help'])
+        build_parser(advanced_delay_help=True).parse_args(['test','--help'])
 
 
 class DominoParser(argparse.ArgumentParser):
@@ -1181,10 +1256,20 @@ class DominoParser(argparse.ArgumentParser):
         commands = next((action.choices for action in self._actions if isinstance(action,argparse._SubParsersAction)), {})
         root = self.prog == 'domino' and 'deploy' in commands
         start=0
-        if root and start<len(arguments) and not arguments[start].startswith('-'):
-            target = arguments[start]
+        prefix = None
+        if root and len(arguments) >= 2 and not arguments[0].startswith('-') and arguments[0] not in commands and arguments[0] not in ['clients','source','subs','log-level'] and arguments[1] in commands:
+            prefix = arguments.pop(0)
+            try:
+                destination(prefix)
+            except DomainError:
+                self.error('目标地址无效；远端格式为 domino USER@IP COMMAND。')
+            if arguments[0] in ['deploy', 'plan']:
+                arguments.insert(1, prefix)
+        elif root and arguments and not arguments[0].startswith('-'):
+            target = arguments[0]
             if target not in commands and is_target_address(target):
-                arguments.insert(start,'deploy')
+                arguments.insert(0,'deploy')
+        command_arguments = list(arguments)
         defaults = {'configs': ({'list', 'add', 'switch', 'update', 'rename', 'remove', 'set-url'}, 'list'),
                     'proxy': ({'status', 'on', 'off'}, 'status'),
                     'shell': ({'status', 'on', 'off'}, 'status')}
@@ -1196,10 +1281,30 @@ class DominoParser(argparse.ArgumentParser):
                     label = '系统代理' if arguments[start] == 'proxy' else '终端代理'
                     group = arguments[start]
                     self.error(f'未知{label}动作：{action}。可用动作：status、on、off；'
-                               f'关闭请用 domino {group} off；查询远程主机请用 domino {group} status HOST。')
+                               f'关闭请用 domino {group} off；查询远程主机请用 domino HOST {group} status。')
             if len(arguments) == start+1 or arguments[start+1] not in actions | {'-h', '--help'}:
                 arguments.insert(start+1, default)
-        return super().parse_args(arguments, namespace)
+        result = super().parse_args(arguments, namespace)
+        if root:
+            if prefix is not None:
+                if result.command == 'rules' and getattr(result, 'target', None) in ['add','remove']:
+                    if result.rule_target not in (None, prefix):
+                        self.error('目标只能指定一次。')
+                    result.rule_target = prefix
+                else:
+                    if getattr(result, 'target', None) not in (None, prefix):
+                        self.error('目标只能放在命令前：domino USER@IP COMMAND。')
+                    result.target = prefix
+            elif not hasattr(result, 'target'):
+                result.target = None
+            result.remote_arguments = command_arguments
+            if result.command in CONFIG_COMMANDS:
+                result.configs_action = result.command
+                result.command = 'configs'
+        return result
+
+
+CONFIG_COMMANDS = ('list', 'add', 'switch', 'update', 'remove', 'rename', 'set-url')
 
 
 def format_group_help(commands):
@@ -1219,15 +1324,16 @@ def format_group_help(commands):
 
 
 def build_parser(*, advanced_delay_help=False, installing=False, machine_mode=False):
-    parser = DominoParser(prog='domino', description='命令行代理管理与跨设备独立部署。',
-                          usage='domino USER@IP [options]\n       domino COMMAND [ARGS]',
-                          epilog='直接部署：domino nvidia@192.168.8.21；部署参数：domino nvidia@192.168.8.21 -h。')
+    parser = DominoParser(prog='domino', description=DESCRIPTION,
+                          usage='domino [USER@IP] COMMAND [ARGS] [options]',
+                          epilog='本机：domino list；远端：domino user@host list；部署：domino user@host deploy。')
     parser.add_argument('--version', action='version', version=VERSION)
     sub = parser.add_subparsers(dest='command', required=True)
     source_options = argparse.ArgumentParser(add_help=False)
     source_options.add_argument('--local-proxy', help='源电脑下载使用的代理，例如 http://127.0.0.1:7897；不作为目标机上游')
     source_options.add_argument('--controller', help='源 Clash 本机控制接口 URL')
     source_options.add_argument('--controller-socket', help='源 Clash Unix 控制 socket')
+    source_options.add_argument('--resource-dir', action='append', default=[], help='附加本地资源目录；可重复指定，用于 provider、证书和 Geo 数据库')
     source_options.add_argument('--core', help='本机 Mihomo 可执行文件，用于提前校验配置')
     source_options.add_argument('--mihomo-version', default='latest', help='固定内核版本，例如 v1.19.33；默认最新稳定版，本机重复安装优先复用已安装版本的已校验缓存')
     source_options.add_argument('--proxy-port', type=port, default=DEFAULT_PROXY_PORT,
@@ -1240,11 +1346,12 @@ def build_parser(*, advanced_delay_help=False, installing=False, machine_mode=Fa
     source_group = source_parent.add_mutually_exclusive_group()
     source_group.add_argument('--source', help='当前生效的 Clash/Mihomo YAML 或 JSON 配置')
     source_group.add_argument('--subscription', help='返回完整 Clash/Mihomo 配置的 HTTPS 订阅链接')
-    p = sub.add_parser('catch', parents=[source_options], help='捕获本机外部代理配置，确认后导入 Domino',
-                       description='自动发现本机 Clash/Mihomo 配置；多个来源时选择，确认后安装或替换本机 Domino。\n'
-                                   '只读来源配置和可获取的当前节点选择，不关闭来源客户端，不自动开启系统代理。')
+    p = sub.add_parser('catch', parents=[source_options], help='选择并捕获外部代理配置',
+                       description='选择本机 Clash/Mihomo 运行配置或保存配置；catch all 捕获全部。\n'
+                                   '已有安装只保存配置库，保持当前配置、服务和代理开关；首次安装需确认初始化。')
+    p.add_argument('capture_scope', nargs='?', choices=['all'], help='捕获所有兼容配置，并跳过重复项')
     p.add_argument('--source', help='明确选择本地 Clash/Mihomo 配置文件')
-    p.add_argument('--yes', action='store_true', help='接受安装和替换影响，跳过最终确认；不自动选择多个来源')
+    p.add_argument('--yes', action='store_true', help='接受捕获影响，跳过最终确认；多个来源仍需选择或指定 all')
     p.add_argument('--batch', action='store_true', help='禁止 sudo 密码询问；不代表同意导入')
     p.set_defaults(subscription=None, bundle=None, name=None)
     def target_options(optional=False, parent=None, include_target=True):
@@ -1253,25 +1360,28 @@ def build_parser(*, advanced_delay_help=False, installing=False, machine_mode=Fa
         description = ('localhost 管理当前用户的本机；USER@IP 或 SSH 别名管理远端；省略时等同 localhost'
                        if optional else '目标 IP、SSH Host 别名或 USER@IP；本机请运行安装程序')
         if include_target:
-            parent.add_argument('target', **({'nargs': '?'} if optional else {}), help=description)
+            parent.add_argument('target', **({'nargs': '?'} if optional else {}), help=argparse.SUPPRESS)
         parent.add_argument('--user', help='SSH 用户名；省略时使用 SSH 配置')
         parent.add_argument('--ssh-port', type=ssh_port, help='SSH 端口；省略时使用 SSH 配置，通常为 22')
         parent.add_argument('--identity', help='SSH 私钥路径，密码不会保存')
-        parent.add_argument('--batch', action='store_true', help='禁止 SSH 和 sudo 密码询问')
+        if '--batch' not in parent._option_string_actions:
+            parent.add_argument('--batch', action='store_true', help='禁止 SSH 和 sudo 密码询问')
         return parent
     target_parent = target_options()
     manage_parent = target_options(optional=True)
-    p = sub.add_parser('deploy', parents=[target_parent, source_parent], help='部署或更新独立 Mihomo 服务',
-                       prog='domino', usage='domino USER@IP [options]',
+    p = sub.add_parser('deploy', parents=[target_parent, source_parent], help='将代理部署到指定电脑',
+                       prog='domino', usage='domino USER@IP deploy [options]',
                        description='将当前兼容配置部署到指定电脑；自动完成检查、安装、服务启动和出网验证。')
     p.add_argument('--vscode', action='store_true', help='同时更新本机 VS Code 对该目标的代理设置')
     p.add_argument('--vscode-settings', help='VS Code 用户 settings.json 路径')
     p.add_argument('--restart-vscode', action='store_true', help='停止目标当前用户的 VS Code/Codex 进程以应用环境')
     sub.add_parser('plan', parents=[target_parent, source_parent], help='只检查目标和源配置，不修改设备')
-    p = sub.add_parser('status', parents=[manage_parent], help='检查本机或指定电脑的服务、开机自启、代理出网')
+    p = sub.add_parser('status', parents=[manage_parent], help='查看服务、系统代理目标和实际出网状态',
+                       description='查看服务、自启动、代理端口及实际出网状态，同时显示系统代理是否开启及其目标。'
+                                   f'Domino 默认代理地址为 127.0.0.1:{DEFAULT_PROXY_PORT}，自定义端口时显示实际值。')
     p.add_argument('--json', action='store_true')
-    p = sub.add_parser('scan', help='扫描本机已发现的兼容配置来源',
-                       description='查找已知运行配置及 Clash Verge 保存配置，标注默认导入来源与客户端当前项。\n'
+    p = sub.add_parser('scan', help='扫描外部代理配置和 Domino 管理的代理配置',
+                       description='分区展示外部客户端配置和 Domino 管理的配置列表，分别统计数量。\n'
                                    '保存配置只检查兼容性，不借用运行端口证明出网；运行入口并发检查，每个超时 5 秒。\n'
                                    '使用 --source 检查指定来源，不切换或管理来源客户端。')
     p.add_argument('--json', action='store_true')
@@ -1279,80 +1389,111 @@ def build_parser(*, advanced_delay_help=False, installing=False, machine_mode=Fa
     p = sub.add_parser('nodes', parents=[manage_parent], help='查看策略组、当前选择和可用节点')
     p.add_argument('--group', help='只查看指定策略组的候选节点')
     p.add_argument('--json', action='store_true')
-    p = sub.add_parser('select', parents=[manage_parent], help='为可手动选择策略组切换节点')
-    p.add_argument('--group', required=True, help='策略组名称，按 nodes 输出填写')
-    p.add_argument('--node', required=True, help='该组中的节点或下层策略组名称')
-    for action, help_text in [('start', '启动代理服务'), ('stop', '停止代理服务'), ('restart', '重启代理服务'), ('logs', '查看代理服务日志')]:
-        p = sub.add_parser(action, parents=[manage_parent], help=help_text)
+    p = sub.add_parser('select', parents=[manage_parent if machine_mode else target_options(optional=True, include_target=False)],
+                       help='交互选择节点，或按名称切换节点', usage='domino [USER@IP] select [NAME] [options]',
+                       description='不带名称打开节点选择菜单；填写名称或关键词，匹配多个时选择候选编号。\n'
+                                   '多个手动策略组可选时再选择策略组；仅修改当前配置的节点选择。',
+                       epilog='示例：domino select；domino select "日本"；domino USER@IP select；domino select "日本" --group "节点选择"；含方括号或空格的节点名必须加引号。')
+    if not machine_mode:
+        p.add_argument('name', nargs='?', metavar='NAME', help='节点名称或关键词；省略时交互选择')
+        p.set_defaults(target=None)
+    p.add_argument('--group', required=machine_mode, help='指定手动策略组；省略时按可选范围选择')
+    p.add_argument('--node', required=machine_mode, help='兼容写法：指定该组中的完整节点或下层策略组名称')
+    for action, help_text in [('start', '开启 Domino，接通系统代理'), ('stop', '关闭 Domino，恢复系统代理'), ('restart', '重启 Domino 并接通系统代理'), ('logs', '查看代理服务日志')]:
+        description = {
+            'start': '启动 Domino 服务，等待内核就绪后开启 HTTP、HTTPS、SOCKS 系统代理，'
+                     f'并指向 Domino 代理地址（默认 127.0.0.1:{DEFAULT_PROXY_PORT}，自定义时使用实际端口）。',
+            'stop': '先恢复仍由 Domino 接管的系统代理设置，再停止服务；保留其他程序之后的修改。',
+            'restart': '重启 Domino 服务，并重新开启系统代理，'
+                       f'指向 Domino 代理地址（默认 127.0.0.1:{DEFAULT_PROXY_PORT}，自定义时使用实际端口）。',
+        }.get(action, help_text + '。')
+        p = sub.add_parser(action, parents=[manage_parent], help=help_text,
+                           description=description + ' 系统代理支持 macOS 和 Ubuntu GNOME 桌面；无桌面服务器提供代理入口，终端代理通过 domino shell 独立管理。')
         if action == 'logs':
             p.add_argument('--lines', type=int, default=100)
             p.add_argument('--follow', action='store_true')
-    for action in ['mode', 'log-level']:
-        p = sub.add_parser(action, parents=[manage_parent], help='查看或设置' + ('代理模式' if action == 'mode' else '日志级别'))
-        p.add_argument('--set', choices=['rule', 'global', 'direct'] if action == 'mode' else ['debug', 'info', 'warning', 'error', 'silent'])
-        p.add_argument('--json', action='store_true')
-    p = sub.add_parser('delay', parents=[target_options(optional=True, include_target=False)], help='测试本机或指定电脑全部节点的 HTTPS 延迟',
-                      usage='domino delay [NAME] [TARGET] [options]' if advanced_delay_help else 'domino delay [TARGET] [--timeout MS] [--json]',
+    p = sub.add_parser('mode', parents=[manage_parent], help='查看或设置代理模式')
+    p.add_argument('--set', choices=['rule', 'global', 'direct'])
+    p.add_argument('--json', action='store_true')
+    p = sub.add_parser('log', parents=[target_options(optional=True, include_target=False)],
+                       help='查看或设置日志级别；日志内容用 logs 查看',
+                       usage='domino [USER@IP] log [LEVEL] [options]',
+                       description='列出全部日志级别，用 ● 标记当前项；填写级别直接设置。日志内容使用 domino logs 查看。',
+                       epilog='示例：domino log；domino log debug；domino USER@IP log warning。')
+    p.add_argument('level', nargs='?', choices=['debug', 'info', 'warning', 'error', 'silent'], metavar='LEVEL')
+    p.add_argument('--set', choices=['debug', 'info', 'warning', 'error', 'silent'], help=argparse.SUPPRESS)
+    p.add_argument('--json', action='store_true')
+    p.set_defaults(target=None)
+    p = sub.add_parser('test', aliases=['delay'], parents=[target_options(optional=True, include_target=False)], help='汇总全部配置的节点连通性，或查看指定配置的节点延迟',
+                      usage='domino [USER@IP] test [NAME] [options]',
                       formatter_class=DominoDelayHelpFormatter,
                       description=('测试 HTTPS 请求延迟，结果单位为毫秒（ms），不测下载带宽。\n'
-                                  '不带名称测试全部节点；填写名称自动识别节点或策略组。\n'
+                                  '不带名称检测所有配置，汇总可用和超时/不可用节点数；填写完整配置名查看节点明细。\n'
                                   '完整名称优先；部分名称唯一时直接使用，匹配多个时列出候选。' if advanced_delay_help else
-                                   '测试全部节点的 HTTPS 延迟，结果单位 ms。\n'
-                                   'TARGET 省略或填写 localhost 测本机；填写 USER@IP 或 IP 测远端。'),
+                                   '汇总所有配置的节点总数、可用数和超时/不可用数；填写配置名查看逐节点延迟。\n'
+                                   '本机省略目标；远端使用 domino USER@IP test NAME。'),
                       epilog=('示例：\n'
-                             '  domino delay                          测本机全部节点\n'
-                             '  domino delay 自动选择                 测组内各项，可省略名称前的符号\n'
-                             '  domino delay 美国TRI002                测唯一匹配的节点\n'
-                             '  domino delay "[HY2]美国TRI002"          使用完整名称；方括号、空格需加引号\n'
-                             '  domino delay 自动选择 --timeout 10000  单项最多等待 10 秒\n'
-                             '  domino delay all nvidia@192.168.8.21   测远端全部节点\n'
-                             '  domino delay 自动选择 nvidia@192.168.8.21  测远端指定组\n\n'
+                             '  domino test                          汇总本机所有配置\n'
+                             '  domino test 自动选择                 测组内各项，可省略名称前的符号\n'
+                             '  domino test 美国TRI002                测唯一匹配的节点\n'
+                             '  domino test "[HY2]美国TRI002"          使用完整名称；方括号、空格需加引号\n'
+                             '  domino test 自动选择 --timeout 10000  单项最多等待 10 秒\n'
+                             '  domino user@192.0.2.10 test   汇总远端所有配置\n'
+                             '  domino user@192.0.2.10 test 自动选择  测远端指定组\n\n'
                              '--url 和 --timeout 后必须填写值；使用默认值时省略整个选项。\n'
-                             'SSH 别名示例：domino delay all my-server；支持 --user、--ssh-port、--identity、--batch。\n'
+                             'SSH 别名示例：domino my-server test；支持 --user、--ssh-port、--identity、--batch。\n'
                              '未找到名称时，可运行 domino nodes 查看节点和策略组。' if advanced_delay_help else
                              '常用示例：\n'
-                             '  domino delay                         测本机全部节点\n'
-                             '  domino delay nvidia@192.168.8.21      测远端全部节点\n'
-                             '  domino delay --timeout 10000         超时设为 10 秒\n\n'
-                             '高级用法：domino delay --help-all'))
+                             '  domino test                         汇总本机所有配置\n'
+                             '  domino test feiniao                 测配置 feiniao 的全部节点\n'
+                             '  domino user@192.0.2.10 test      汇总远端所有配置\n'
+                             '  domino test --timeout 10000         超时设为 10 秒\n\n'
+                             '高级用法：domino test --help-all'))
+    p.set_defaults(command='test')
+    sub._choices_actions[-1].metavar = 'test'
     p._positionals.title = '位置参数'
     p._optionals.title = '选项'
     p._option_string_actions['--help'].help = '显示帮助并退出'
-    p.add_argument('name', nargs='?', metavar='NAME', help='节点或策略组名称，可用唯一部分名称；省略或 all 表示全部节点')
-    p.add_argument('target', nargs='?', metavar='TARGET', help='目标电脑，省略等同 localhost；远端示例 USER@IP')
+    p.add_argument('name', nargs='?', metavar='NAME', help='节点或策略组名称，可用唯一部分名称；省略或 all 按配置汇总')
+    p.add_argument('target', nargs='?', metavar='TARGET', help=argparse.SUPPRESS)
     choice = p.add_argument_group('兼容写法（通常无需使用）').add_mutually_exclusive_group()
+    choice.add_argument('--config', help='测试配置库中指定配置的全部节点，不切换当前配置')
     choice.add_argument('--node', help='测速节点的完整名称或唯一部分名称；含方括号、空格时请加引号')
     choice.add_argument('--group', help='明确按策略组名称匹配，测试组内各项')
-    choice.add_argument('--all', action='store_true', help='测试所有节点，等同不填写名称')
+    choice.add_argument('--all', action='store_true', help='按配置汇总，等同不填写名称')
     p.add_argument('--url', default='https://www.gstatic.com/generate_204', help='HTTPS 测速地址（默认：https://www.gstatic.com/generate_204）')
     p.add_argument('--timeout', type=int, default=5000, metavar='MS', help='单项超时，默认 5000 毫秒（5 秒），范围 100–60000')
     p.add_argument('--json', action='store_true', help='输出 JSON，供脚本或 Agent 使用')
     p.add_argument('--help-all', action=DelayAdvancedHelp, nargs=0, help=argparse.SUPPRESS)
     if not advanced_delay_help:
         for action in p._actions:
-            if action.dest not in ['help','timeout','json']:
+            if action.dest not in ['help','timeout','json','config']:
                 action.help = argparse.SUPPRESS
     p = sub.add_parser('connections', parents=[manage_parent], help='查看连接及其规则/节点，或关闭连接')
     choice = p.add_mutually_exclusive_group()
     choice.add_argument('--close')
     choice.add_argument('--all', action='store_true')
     p.add_argument('--json', action='store_true')
-    p = sub.add_parser('traffic', parents=[manage_parent], help='查看实时速率和累计流量')
-    p.add_argument('--watch', action='store_true')
-    p.add_argument('--interval', type=float, default=1)
-    p.add_argument('--count', type=int, default=0)
+    p = sub.add_parser('traffic', parents=[manage_parent], help='内嵌动态流量面板，--full 使用全屏',
+                       description='默认内嵌刷新全部流量信息、趋势图和峰值，保留终端历史；--full 切换为全屏。\n'
+                                   'q、Esc 或 Ctrl+C 退出。\n'
+                                   'JSON 和重定向默认单次采样；--watch 可持续输出采样。')
+    p.add_argument('--full', action='store_true', help='使用全屏显示；内容和功能与默认内嵌面板一致')
+    p.add_argument('--watch', action='store_true', help='持续采样；终端默认开启，JSON / 重定向时可显式使用')
+    p.add_argument('--interval', type=float, default=1, help='刷新间隔，默认 1 秒，范围 0.2–60 秒')
+    p.add_argument('--count', type=int, default=0, help='持续采样次数，0 表示直到退出')
     p.add_argument('--json', action='store_true')
     p = sub.add_parser('rules', parents=[manage_parent], help='分流规则管理',
-                       usage='domino rules [TARGET] [--match TEXT | --custom] [--limit N] [--json]\n'
-                             '       domino rules add "RULE" [TARGET] [--json]\n'
-                             '       domino rules remove "RULE" [TARGET] [--json]',
+                       usage='domino [USER@IP] rules [--match TEXT | --custom] [--limit N] [--json]\n'
+                             '       domino [USER@IP] rules add "RULE" [--json]\n'
+                             '       domino [USER@IP] rules remove "RULE" [--json]',
                        description='规则示例：DOMAIN-SUFFIX,example.com,DIRECT。新增规则默认置顶，先校验再生效。')
     p.inline_command_help = [
         argparse.Action([], dest='add', metavar='add', help='添加自定义规则'),
         argparse.Action([], dest='remove', metavar='remove', help='删除自定义规则'),
     ]
     p.add_argument('rule', nargs='?', help='add/remove 后的完整 Mihomo 规则，请用引号包裹')
-    p.add_argument('rule_target', nargs='?', help='新增或删除规则的目标，省略为本机')
+    p.add_argument('rule_target', nargs='?', help=argparse.SUPPRESS)
     p.set_defaults(add_rule=None, remove_rule=None)
     p.add_argument('--custom', action='store_true', help='查看自定义规则原文')
     p.add_argument('--match')
@@ -1363,12 +1504,15 @@ def build_parser(*, advanced_delay_help=False, installing=False, machine_mode=Fa
     p.add_argument('--update')
     p.add_argument('--json', action='store_true')
     p = sub.add_parser('configs', help='配置管理（在线订阅与快照）',
-                       description='直接运行 domino configs 查看列表；使用下列子命令管理在线订阅与配置快照。')
+                       description='直接运行 domino list 查看列表；使用下列子命令管理在线订阅与配置快照。')
     subscription_commands = p.add_subparsers(dest='configs_action')
-    query = subscription_commands.add_parser('list', parents=[manage_parent], help='查看配置列表（默认）',
+    query = subscription_commands.add_parser('list', parents=[manage_parent], help='查看 Domino 管理的所有代理配置',
                                              description='查看配置列表；可使用 --import-current 保存当前配置快照。')
     from install_domino import subscription_arguments
     subscription_arguments(query)
+    for legacy in query._actions:
+        if legacy.dest in ['add','use','update','remove','rename','set_url','update_all','url','new_name']:
+            legacy.help = argparse.SUPPRESS
     details = {'add': '添加命名订阅，默认隐藏输入地址；可用 --url 提供完整配置订阅地址。',
                'switch': '切换本机当前配置；在线订阅首次使用时自动下载。',
                'update': '更新指定订阅；名称为 all 时更新全部在线订阅。',
@@ -1396,10 +1540,12 @@ def build_parser(*, advanced_delay_help=False, installing=False, machine_mode=Fa
         p.add_argument('--set', choices=['on', 'off'], help=argparse.SUPPRESS)
         p.add_argument('--service', help='macOS 网络服务名称，默认使用当前出站网络服务')
         p.add_argument('--json', action='store_true')
-    p = sub.add_parser('shell', help='终端代理策略与环境恢复（独立于系统代理）')
+    p = sub.add_parser('shell', help='终端代理管理',
+                       description='通过代理环境变量让终端（Terminal）中的程序使用 Domino；on 开启、off 恢复原变量、status 查看端口和环境变量。',
+                       epilog='已接入终端返回命令行后同步。接入方法：. "$HOME/.config/domino/proxy.env"')
     shell_commands = p.add_subparsers(dest='shell_action')
-    for action, text in [('status','查看终端代理策略'),('on','启用终端代理并保存当前变量'),('off','关闭终端代理并恢复原变量')]:
-        child = shell_commands.add_parser(action, parents=[manage_parent], help=text)
+    for action, text in [('status','查看终端代理状态'),('on','使用 Domino 代理'),('off','恢复原代理设置')]:
+        child = shell_commands.add_parser(action, parents=[manage_parent], help=text,description=text)
         child.add_argument('--json', action='store_true')
     sub.add_parser('ui', parents=[manage_parent], help='打开纯终端交互控制台')
     p = sub.add_parser('env', parents=[manage_parent], help='输出当前 shell 的代理设置，使用 eval "$(domino env)" 生效')
@@ -1429,12 +1575,22 @@ def build_parser(*, advanced_delay_help=False, installing=False, machine_mode=Fa
     p.add_argument('--batch', action='store_true', help='禁止 sudo 密码询问')
     # Keep the legacy local installation entry point working but hidden from help.
     sub._choices_actions = [action for action in sub._choices_actions if action.dest != 'init']
+    # Flat configuration commands share the same backend and argument definitions.
+    for action in CONFIG_COMMANDS:
+        child = subscription_commands.choices[action]
+        public = sub.add_parser(action, parents=[child], add_help=False,
+                                help=next((a.help for a in subscription_commands._choices_actions if a.dest == action), action),
+                                description=child.description)
+        public.set_defaults(configs_action=action)
+    sub._choices_actions = [a for a in sub._choices_actions if a.dest not in ['configs', 'proxy']]
+    for command in ['catch', 'scan', 'export', 'init']:
+        target_options(parent=sub.choices[command], include_target=False)
     sub.metavar = 'COMMAND'
     if machine_mode:
         sub.add_parser('capabilities',parents=[manage_parent])
         p=sub.add_parser('call',parents=[target_options(include_target=False)])
         p.add_argument('operation')
-        p.add_argument('target',nargs='?')
+        p.add_argument('target',nargs='?',help=argparse.SUPPRESS)
         def mark(parser):
             parser.machine_mode=True
             for action in parser._actions:
@@ -1478,14 +1634,80 @@ def unpack_bundle(package, directory):
     (directory / 'mihomo').chmod(0o755)
 
 
+def command_overview_snapshot():
+    """Bounded loopback reads only; no service, desktop, traffic or exit probes."""
+    import install_domino as output
+    app,_=output.current_installation()
+    path=app/'data/config.json'
+    result={'installed':path.is_file(),'reachable':False,'node_count':None,'group_count':None}
+    if not result['installed']: return result
+    try:
+        config=json.loads(path.read_text())
+        result.update(mode=config.get('mode'),proxy_port=config.get('mixed-port'),subscription=output.subscription_name(app),
+                      awaiting_subscription=output.subscription_pending(app,config))
+        def read(route):
+            try:
+                return json.loads(output.controller(app/'data',route,timeout=.5))
+            except (DomainError,OSError,ValueError,KeyError,TypeError):return None
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            runtime,proxies=list(pool.map(read,['/configs','/proxies']))
+        if isinstance(runtime,dict):result['mode']=runtime.get('mode',result.get('mode'))
+        if not isinstance(runtime,dict) or not isinstance(proxies,dict) or not isinstance(proxies.get('proxies'),dict):return result
+        result['reachable']=True
+        def provider_api(route):
+            value=read(route)
+            if not isinstance(value,dict):raise output.InstallError('无法读取节点信息。')
+            return value
+        live=output.proxy_inventory(proxies['proxies'],api=provider_api)
+        groups=[name for name,item in live.items() if isinstance(item.get('all'),list)
+                and (name!='GLOBAL' or result['mode']=='global')]
+        nodes=[name for name,item in live.items() if not isinstance(item.get('all'),list)
+               and name not in ['DIRECT','REJECT','REJECT-DROP','PASS','COMPATIBLE']]
+        result.update(node_count=len(nodes),group_count=len(groups))
+    except (DomainError,OSError,ValueError,KeyError,TypeError,AttributeError):pass
+    return result
+
+
 def common_operations():
-    print('Domino · 捕获本机翻墙配置，复制到另一台电脑\n')
-    print('  domino catch       捕获并导入本机当前代理配置')
-    print('  domino USER@IP     将翻墙能力复制到指定电脑')
-    print('  domino status      查看运行状态')
-    print('  domino nodes       查看节点')
-    print('  domino ui          打开交互控制台')
-    print('  domino -h          查看完整帮助')
+    import install_domino as output
+    import domino_tui
+    def command_text(command):
+        return ' '.join(output.human_style(token, '33' if token in ['USER@IP', 'COMMAND'] or
+                                          token.startswith('[') and token.endswith(']') else '1;36')
+                        for token in command.split())
+    groups = [
+        ('常用入口', [
+            ('domino USER@IP', '将代理部署到指定电脑（等同 domino USER@IP deploy）'),
+            ('domino ui', '打开交互控制台'),
+            ('domino scan', '扫描外部代理配置和 Domino 管理的代理配置'),
+            ('domino list', '查看 Domino 管理的所有代理配置'),
+            ('domino catch', '选择并捕获外部代理配置')]),
+        ('节点与检测', [
+            ('domino nodes', '查看当前配置的节点和策略组'),
+            ('domino select [NAME]', '选择节点；可输入名称或关键词'),
+            ('domino test [CONFIG]', '检测全部配置；指定配置查看各节点结果')]),
+        ('服务与代理', [
+            ('domino start', f'开启 Domino，接通系统代理（默认端口 {DEFAULT_PROXY_PORT}）'),
+            ('domino stop', '关闭 Domino，恢复系统代理设置'),
+            ('domino status', '查看服务、系统代理和出网状态'),
+            ('domino shell on', '终端使用 Domino 代理'),
+            ('domino shell off', '恢复终端原代理设置'),
+            ('domino shell status', '查看终端代理状态'),
+            ('domino traffic', '查看内嵌动态流量面板')])]
+    width = max(len(command) for _, rows in groups for command, _ in rows)
+    with output.human_output():
+        print(domino_tui.command_banner(command_overview_snapshot(),VERSION,
+                                      columns=shutil.get_terminal_size((100,24)).columns))
+        output.human_header('命令概览', DESCRIPTION, tone='2')
+        print('  ' + output.human_style('usage:', '1') + ' ' + command_text('domino [USER@IP] COMMAND [ARGS] [options]'))
+        print('  本机省略 USER@IP；远端将目标放在命令前。')
+        for title, rows in groups:
+            print('\n  ' + output.human_style(title, '1;36'))
+            for command, description in rows:
+                description = description.replace('domino USER@IP deploy', command_text('domino USER@IP deploy'))
+                print('  ' + command_text(command) + ' ' * (width-len(command)+2) + description)
+        print('\n  ' + command_text('domino -h') + ' ' * (width-len('domino -h')+2) +
+              '查看完整帮助；' + command_text('domino COMMAND -h') + ' 查看命令参数')
 
 
 def owned_source(path):
@@ -1495,10 +1717,11 @@ def owned_source(path):
                for root in roots)
 
 
-def capture_candidates():
+def capture_candidates(*, include_saved=False):
     candidates = []
     seen = set()
-    for path in discover_sources():
+    profiles, _ = read_verge_profiles() if include_saved else ({}, [])
+    for path in [*discover_sources(), *profiles]:
         try:
             resolved = path.resolve()
             if owned_source(path) or resolved in seen:
@@ -1512,14 +1735,131 @@ def capture_candidates():
     return candidates
 
 
-def capture_input(prompt):
+def capture_input(label, hint):
+    import install_domino as output
+    prompt = '  ' + output.human_style(label, '2') + ' ' * max(2, 10-output.human_width(label)) + hint
     try:
         return input(prompt).strip()
     except EOFError:
         return ''
+    except KeyboardInterrupt as error:
+        error.domino_capture_prompt = True
+        raise
+
+
+def capture_cancelled():
+    import install_domino as output
+    with output.human_output():
+        output.human_header('捕获已取消', '未修改本机 Domino。', '33')
+
+
+def capture_choices(paths, *, allow_all=True):
+    import install_domino as output
+    with output.human_output():
+        output.human_header('选择捕获配置', f'{len(paths)} 个外部配置 · 重复项自动跳过')
+        for index, path in enumerate(paths, 1):
+            if index > 1: print()
+            identity = source_identity(path)
+            if identity:
+                name = 'Clash Verge · ' + identity['profile_name']
+            elif path.name == 'clash-verge.yaml':
+                name = 'Clash Verge · 运行配置'
+            else:
+                name = path.name
+            output.human_row(str(index), (name, '1'), wrap=True)
+            if identity:
+                output.human_row('配置选择', (profile_status(identity), '2'), wrap=True)
+            try: display = '~/' + str(path.relative_to(Path.home()))
+            except ValueError: display = str(path)
+            output.human_row('配置文件', (display, '2'), wrap=True)
+        print()
+        if allow_all:
+            output.human_row('all', ('全部配置', '1'))
+        output.human_row('选择方式', '输入编号或 all；回车取消。' if allow_all else '输入配置编号；回车取消。', wrap=True)
+
+
+def capture_status(label, text, tone):
+    import install_domino as output
+    with output.human_output():
+        output.human_row(label, (text, tone), wrap=True)
 
 
 def catch(args):
+    import install_domino as output
+    from domino_subscriptions import Manager
+    interactive = sys.stdin.isatty()
+    if args.capture_scope and args.source:
+        raise ToolError('catch all 不能与 --source 同时使用。')
+    if not interactive and not args.yes:
+        raise ToolError('捕获需要确认。请在终端运行 domino catch；脚本明确指定 --yes；--batch 不代表同意。')
+    if args.source:
+        paths = [Path(args.source).expanduser()]
+        if owned_source(paths[0]):
+            raise ToolError('catch 不能捕获 Domino 或 robot-clash 自有配置。')
+    else:
+        paths = capture_candidates(include_saved=True)
+        if not paths:
+            raise ToolError('未发现兼容配置，请用 domino catch --source PATH 指定，或用 domino add 添加订阅。')
+        if args.capture_scope != 'all':
+            if not interactive and len(paths) > 1:
+                raise ToolError('发现多个配置，请使用 --source 或 catch all 明确选择；--yes 不会自动选择来源。')
+            if interactive:
+                capture_choices(paths)
+                value = capture_input('选择配置', '编号 / all（回车取消）：')
+                if not value:
+                    capture_cancelled()
+                    return 0
+                if value.lower() != 'all':
+                    if not value.isascii() or not value.isdecimal() or not 1 <= int(value) <= len(paths):
+                        raise ToolError('配置编号无效，未捕获。')
+                    paths = [paths[int(value) - 1]]
+    installed = (Path.home() / '.local/share/domino/data/config.json').is_file()
+    # Fresh setup retains the existing bootstrap path. Installed targets only gain
+    # cached profiles: no service, API, proxy, shell, or runtime writes.
+    if installed:
+        with output.human_output():
+            output.human_header('捕获配置到 Domino', f'{len(paths)} 个来源 · 重复项跳过')
+            output.human_row('运行影响', '仅保存到配置库；保留当前配置、节点、服务和系统/终端代理状态。', wrap=True)
+        if not args.yes and capture_input('确认捕获', '[y/N] ').lower() not in ('y', 'yes'):
+            capture_cancelled()
+            return 0
+    added = skipped = failed = 0
+    for path in paths:
+        prepared = copy.copy(args)
+        prepared.source = str(path)
+        try:
+            if not installed:
+                _install_capture(prepared)
+                # Cancellation of bootstrap must stop the entire batch.
+                if not (Path.home() / '.local/share/domino/data/config.json').is_file():
+                    return 0
+                installed = True
+                added += 1
+                continue
+            source, raw, proxy = source_config(prepared)
+            # Saved library entries use file defaults. A stopped source controller
+            # must not prevent copying an otherwise complete saved configuration.
+            with output.deployment_lock():
+                item, changed = Manager(output).capture(source, raw, proxy, core=args.core, resource_dirs=args.resource_dir)
+            added += int(changed)
+            skipped += int(not changed)
+            capture_status('已捕获' if changed else '已跳过', item['name'], '32' if changed else '2')
+        except (DomainError, OSError, ValueError, TypeError) as error:
+            failed += 1
+            with redirect_stdout(sys.stderr):
+                capture_status('捕获失败', path.name + '；请检查配置、依赖资源或内核校验。', '31')
+            if isinstance(error, TypeError):
+                raise ToolError('来源配置数据结构无效，未导入。') from None
+            if not installed or len(paths) == 1:
+                raise
+    with output.human_output():
+        output.human_header('捕获完成', f'新增/更新 {added} · 跳过 {skipped} · 失败 {failed}', '33' if failed else '32')
+        output.human_row('查看配置', 'domino list')
+        output.human_row('启用配置', 'domino switch "配置名"')
+    return 1 if failed else 0
+
+
+def _install_capture(args):
     import install_domino as output
     interactive = sys.stdin.isatty()
     if not interactive and not args.yes:
@@ -1533,17 +1873,14 @@ def catch(args):
         candidates = capture_candidates()
         if not candidates:
             raise ToolError('未发现可捕获的外部 Clash/Mihomo 配置。请用 domino catch --source PATH 指定兼容配置，'
-                            '或用 domino configs add 添加订阅；仅有本地代理端口无法独立复制。')
+                            '或用 domino add 添加订阅；仅有本地代理端口无法独立复制。')
         if len(candidates) > 1:
             if not interactive:
                 raise ToolError('发现多个外部配置，请使用 --source 明确选择；--yes 不会自动选择来源。')
-            with output.human_output():
-                output.human_header('选择捕获来源', '多个兼容配置，不能确定当前使用哪一个')
-                for index, candidate in enumerate(candidates, 1):
-                    output.human_row(str(index), str(candidate), wrap=True)
-            value = capture_input('选择来源编号（回车取消）：')
+            capture_choices(candidates, allow_all=False)
+            value = capture_input('选择配置', '配置编号（回车取消）：')
             if not value:
-                print('已取消，未修改本机 Domino。')
+                capture_cancelled()
                 return 0
             if not value.isascii() or not value.isdecimal() or not 1 <= int(value) <= len(candidates):
                 raise ToolError('来源编号无效，未导入。')
@@ -1563,7 +1900,7 @@ def catch(args):
     prepared._captured_origin = origin_info(raw, source)
     with output.human_output():
         output.human_header('捕获本机代理配置', '确认后安装或替换当前用户的 Domino 独立服务')
-        output.human_row('来源文件', str(source), wrap=True)
+        output.human_row('来源文件', (str(source).replace(str(Path.home()) + '/', '~/', 1), '2'), wrap=True)
         output.human_row('目标电脑', '本机 · 当前用户')
         output.human_row('节点选择', f'已读取 {len(selections)} 个手动选择' if selections else '使用配置默认节点（未读取到手动选择）')
         output.human_row('配置模式', str(raw.get('mode', 'rule')))
@@ -1576,12 +1913,15 @@ def catch(args):
         output.human_row('环境影响', environment, wrap=True)
         output.human_row('来源客户端', '保持运行，不修改其配置或节点选择；不自动开启系统代理或 TUN。', wrap=True)
         output.human_row('配置登记', '保存独立导入源快照并设为 Domino 当前配置；已有在线订阅保留，不自动导入其他发现项。', wrap=True)
-    if not args.yes and capture_input('确认导入？[y/N] ').lower() not in ['y', 'yes']:
-        print('已取消，未修改本机 Domino。')
+    if not args.yes and capture_input('确认导入', '[y/N] ').lower() not in ['y', 'yes']:
+        capture_cancelled()
         return 0
     prepared.command = 'init'
     initialize(prepared)
-    print('Domino 独立代理已就绪。查看状态：domino status；需要系统代理时：domino proxy on。')
+    with output.human_output():
+        output.human_header('初始化完成', '独立代理已就绪')
+        output.human_row('查看状态', 'domino status')
+        output.human_row('系统代理', 'domino proxy on')
     return 0
 
 
@@ -1632,12 +1972,16 @@ def initialize(args):
         else:
             prepare(args, arch, work)
             bundle = work / 'bundle'
+        manifest_path = bundle / 'manifest.json'
+        manifest = json.loads(manifest_path.read_text())
+        manifest['package_managed_cli'] = PACKAGE_MANAGED
+        private_write(manifest_path, json.dumps(manifest))
         # Run the current trusted installer, not an installer script supplied by the archive.
         run([sys.executable, str(REMOTE_SCRIPT), 'install', str(bundle)], stage='本机安装')
     if getattr(args, 'base_install', False):
-        print('Domino 已安装。重新打开终端后：domino configs add "名称"；domino configs switch "名称"。')
+        print('Domino 已安装。重新打开终端后：domino add "名称"；domino switch "名称"。')
     else:
-        print('本机独立代理已配置。管理命令：~/.local/bin/domino status localhost；~/.local/bin/domino nodes localhost')
+        print('本机独立代理已配置。管理命令：domino status；domino nodes')
 
 
 def is_local_target(target):
@@ -1656,16 +2000,25 @@ def is_target_address(value):
 
 def normalize_command(args):
     """Map public commands onto shared local/remote management operations."""
-    if args.command == 'delay':
-        if args.node is not None or args.group is not None or args.all:
-            if args.name is not None:
-                if args.target is not None:
-                    raise ToolError('已指定测速选项时，只需附加一个目标电脑。')
-                args.target, args.name = args.name, None
-        elif args.target is None and args.name is not None and is_target_address(args.name):
-            args.target, args.name = args.name, None
+    if args.command == 'log':
+        level = getattr(args, 'level', None)
+        if level is not None:
+            if args.set is not None and args.set != level:
+                raise ToolError('日志级别只能指定一次；使用 domino log debug 等命令。')
+            args.set = level
+        args.command = 'log'
+    elif args.command == 'select':
+        name = getattr(args, 'name', None)
+        if name is not None and args.node is not None:
+            if args.group and args.target is None and is_target_address(name):
+                args.target, args.name = name, None
+            else:
+                raise ToolError('节点只能指定一次；用 domino [USER@IP] select "节点名"，或 --group 与 --node。')
+    elif args.command == 'test':
         if args.name == 'all':
             args.name = None
+        if args.name is not None and (args.node is not None or args.group is not None or args.all or args.config is not None):
+            raise ToolError('测速对象只能指定一次；远端格式为 domino USER@IP test NAME。')
     elif args.command == 'proxy':
         if args.proxy_action in ['on', 'off']:
             if args.set is not None and args.set != args.proxy_action:
@@ -1678,11 +2031,11 @@ def normalize_command(args):
             return args
         if args.target in ['add', 'remove']:
             if args.rule is None or args.match or args.custom:
-                raise ToolError('用法：domino rules ' + args.target + ' "完整规则" [USER@IP]；查询请单独使用 --match 或 --custom。')
+                raise ToolError('用法：domino [USER@IP] rules ' + args.target + ' "完整规则"；查询请单独使用 --match 或 --custom。')
             setattr(args, 'add_rule' if args.target == 'add' else 'remove_rule', args.rule)
             args.target = args.rule_target
         elif args.rule is not None or args.rule_target is not None:
-            raise ToolError('用法：domino rules [USER@IP]，或 domino rules add/remove "完整规则" [USER@IP]。')
+            raise ToolError('用法：domino [USER@IP] rules，或 domino [USER@IP] rules add/remove "完整规则"。')
     elif args.command == 'configs' and getattr(args,'configs_action',None):
         if args.configs_action != 'list':
             action, name = args.configs_action, args.name
@@ -1717,17 +2070,18 @@ def management_options(args):
         options += ['--json']
     if args.command in ['nodes', 'select'] and args.group:
         options += ['--group=' + args.group]
-    if args.command == 'select':
+    if args.command == 'select' and args.node is not None:
         options += ['--node=' + args.node]
-    if args.command in ['mode', 'log-level', 'proxy', 'shell']:
+    if args.command in ['mode', 'log', 'proxy', 'shell']:
         if args.set:
             options += ['--set', args.set]
     if args.command == 'proxy' and args.service:
         options += ['--service', args.service]
-    if args.command == 'delay':
-        options += (['--node=' + args.node] if args.node is not None else
+    if args.command == 'test':
+        options += (['--config=' + args.config] if args.config is not None else
+                    ['--node=' + args.node] if args.node is not None else
                     ['--group=' + args.group] if args.group is not None else
-                    ['--name=' + args.name] if args.name is not None else ['--all'])
+                    ['--name=' + args.name] if args.name is not None else ['--summary'])
         options += ['--url', args.url, '--timeout', str(args.timeout)]
     if args.command == 'connections':
         options += ['--close=' + args.close] if args.close else ['--all'] if args.all else []
@@ -1768,45 +2122,245 @@ def management_options(args):
     return options, privileged
 
 
+def select_matches(query, names):
+    names = list(dict.fromkeys(names))
+    if query in names:
+        return [query]
+    needle = query.strip().casefold()
+    return [name for name in names if needle and needle in name.casefold()]
+
+
+def select_match(query, names, kind):
+    matches = select_matches(query, names)
+    if len(matches) == 1:
+        return matches[0]
+    if not matches:
+        raise ToolError(f'没有找到匹配的{kind}；请运行 domino nodes 查看名称。')
+    import install_domino as output
+    raise ToolError(f'匹配到多个{kind}，请使用完整名称（含方括号或空格时加引号）：' +
+                    '；'.join(shlex.quote(output.human_text(name)) for name in matches))
+
+
+def select_menu(title, entries, *, group=None, nodes=False):
+    import install_domino as output
+    node_menu = nodes or group is not None
+    while True:
+        with output.human_output():
+            output.human_header(title, ('策略组 ' + group['name']) if group else
+                                f'{len(entries)} 个候选节点' if nodes else f'{len(entries)} 个手动策略组')
+            if group:
+                output.human_row('当前选择', group.get('current') or '未选择', wrap=True)
+                output.human_table(['编号', '节点 / 策略', '状态'], [
+                    [str(i), entry['name'], ('● 当前', '32') if entry['name'] == group.get('current') else '—']
+                    for i, entry in enumerate(entries, 1)])
+            elif nodes:
+                output.human_table(['编号', '节点 / 策略', '可选策略组'], [
+                    [str(i), entry['name'], entry['groups']] for i, entry in enumerate(entries, 1)])
+            else:
+                output.human_table(['编号', '策略组', '当前选择'], [
+                    [str(i), entry['name'], entry.get('current') or '未选择'] for i, entry in enumerate(entries, 1)])
+            output.human_row('选择方式', '输入编号或名称；关键词可继续筛选；回车取消。', wrap=True)
+        prompt = '  ' + output.human_style('选择', '2') + ' ' * 6 + '编号 / 名称（回车取消）：'
+        try:
+            value = input(prompt).strip()
+        except EOFError:
+            value = ''
+        if not value:
+            with output.human_output():
+                output.human_header('节点选择已取消', '未修改节点选择。', '33')
+            return None
+        if value.isascii() and value.isdecimal() and 1 <= int(value) <= len(entries):
+            return entries[int(value)-1]['name']
+        matches = select_matches(value, [entry['name'] for entry in entries])
+        if len(matches) > 1:
+            entries = [entry for entry in entries if entry['name'] in matches]
+            continue
+        return select_match(value, [entry['name'] for entry in entries], '节点' if node_menu else '策略组')
+
+
+def resolve_selection(args, ssh=None, *, interactive=True):
+    """Resolve a human selection read-only; the backend rechecks before writing."""
+    query = getattr(args, 'name', None) or args.node
+    interactive = interactive and sys.stdin.isatty()
+    if query is None and not interactive:
+        raise ToolError('非交互选择需要节点名；使用 domino [USER@IP] select "节点名" --group "策略组名"。')
+    request = copy.copy(args)
+    request.command, request.group, request.json = 'nodes', None, True
+    response = manage(request, ssh, capture=True)
+    try:
+        inventory = json.loads(response.stdout)
+        groups = [group for group in inventory['groups'] if group['selectable'] and group['choices']]
+    except (ValueError, TypeError, KeyError, AttributeError):
+        raise ToolError('无法读取可选节点列表，请先运行 domino nodes 检查。') from None
+    if not groups:
+        raise ToolError('没有可手动选择的策略组；自动策略组不能直接切换节点。')
+    if args.group is not None:
+        name = select_match(args.group, [group['name'] for group in groups], '手动策略组')
+        groups = [group for group in groups if group['name'] == name]
+    elif inventory.get('mode') == 'global' and any(group['name'] == 'GLOBAL' for group in groups):
+        groups = [group for group in groups if group['name'] == 'GLOBAL']
+    if query is not None:
+        names = [name for group in groups for name in group['choices']]
+        matches = select_matches(query, names)
+        if interactive and len(matches) > 1:
+            entries = [{'name': name, 'groups': '；'.join(group['name'] for group in groups if name in group['choices'])}
+                       for name in matches]
+            node = select_menu('选择匹配节点', entries, nodes=True)
+            if node is None:
+                return None
+        else:
+            node = select_match(query, names, '节点或下层策略组')
+        groups = [group for group in groups if node in group['choices']]
+    if len(groups) > 1:
+        if not interactive:
+            from install_domino import human_text
+            raise ToolError('该节点属于多个手动策略组，请用 --group 指定：' + '；'.join(human_text(group['name']) for group in groups))
+        name = select_menu('选择策略组', groups)
+        if name is None:
+            return None
+        groups = [group for group in groups if group['name'] == name]
+    group = groups[0]
+    if query is None:
+        node = select_menu('选择节点', [{'name': name} for name in group['choices']], group=group)
+        if node is None:
+            return None
+    selected = copy.copy(args)
+    selected.group, selected.node, selected.name = group['name'], node, None
+    return selected
+
+
+def management_action(command):
+    return {'test': 'delay', 'log': 'log-level'}.get(command, command)
+
+
+@contextmanager
+def traffic_terminal(full=False):
+    """A subprocess interrupted by its caller may not get to restore the terminal."""
+    import termios
+    terminal = state = None
+    try:
+        terminal = sys.stdin.fileno()
+        state = termios.tcgetattr(terminal)
+    except (OSError, ValueError, termios.error):
+        pass
+    try:
+        yield
+    except BaseException:
+        try:
+            sys.stdout.write(('\033[?1049l' if full else '') + '\033[0m\033[?2004l\033[?25h\n')
+            sys.stdout.flush()
+        except OSError:
+            pass
+        raise
+    finally:
+        if state is not None:
+            try: termios.tcsetattr(terminal, termios.TCSANOW, state)
+            except (OSError, termios.error): pass
+
+
 def manage(args, ssh=None, capture=False):
+    normalize_command(args)
+    if args.command == 'select' and (not args.group or not args.node):
+        args = resolve_selection(args, ssh, interactive=not capture)
+        if args is None:
+            return None
     options, privileged = management_options(args)
-    if ssh is not None:
-        kwargs = {'capture_output': True, 'text': True} if capture else {}
-        if privileged:
-            return ssh.action(args.command, *options, tty=not args.batch, **kwargs)
-        return ssh.action(args.command, *options, **kwargs)
-    result = run([sys.executable, str(REMOTE_SCRIPT), args.command, *options], stage='本机管理',
-                 **({'capture_output': True, 'text': True} if capture else {}))
-    return result
+    backend_command = management_action(args.command)
+    dashboard = (args.command == 'traffic' and not args.json and not capture
+                 and sys.stdout.isatty() and sys.stdin.isatty() and os.environ.get('TERM') != 'dumb')
+    if args.command == 'traffic' and args.full and not dashboard:
+        raise ToolError('--full 需要交互终端，不能用于 JSON、重定向或捕获输出。')
+    if dashboard:
+        options += ['--dashboard' if args.full else '--compact']
+    if args.command == 'test' and not args.json and not capture and sys.stderr.isatty():
+        # SSH uses no remote PTY; carry the caller's terminal preference explicitly.
+        options += ['--progress']
+    with traffic_terminal(args.full) if dashboard else nullcontext():
+        if ssh is not None:
+            kwargs = {'capture_output': True, 'text': True} if capture else {}
+            if dashboard:
+                return ssh.action(backend_command, *options, tty=True, **kwargs)
+            if privileged:
+                return ssh.action(backend_command, *options, tty=not args.batch, **kwargs)
+            return ssh.action(backend_command, *options, **kwargs)
+        result = run([sys.executable, str(REMOTE_SCRIPT), backend_command, *options], stage='本机管理',
+                     **({'capture_output': True, 'text': True} if capture else {}))
+        return result
 
 
 def terminal_ui(args, ssh=None):
     if not sys.stdin.isatty():
         raise ToolError('交互控制台需要终端，请在终端运行 domino ui；脚本请使用各子命令及 --json。')
     import domino_tui
-    async def execute(arguments, capture=False, timeout=75):
-        command = (argparse.Namespace(command='overview', target=arguments[1]) if arguments[0]=='overview'
+    async def execute(arguments, capture=False, timeout=75, on_progress=None):
+        command = (argparse.Namespace(command=arguments[0], target=arguments[1]) if arguments[0] in ['overview','catch-options']
                    else normalize_command(build_parser().parse_args(arguments)))
-        command.batch = args.batch
+        command.batch = args.batch or getattr(command,'batch',False)
         options, privileged = management_options(command)
+        if capture and command.command=='test':
+            options+=['--ui-result']
+            if on_progress is not None:options+=['--progress']
         if command.command=='scan':
             options+=['--columns',str(max(20,shutil.get_terminal_size((100,24)).columns-4))]
-        if capture and not getattr(command,'json',False) and command.command not in ['overview','logs'] and 'NO_COLOR' not in os.environ:
+        if capture and not getattr(command,'json',False) and command.command not in ['overview','catch-options','logs'] and 'NO_COLOR' not in os.environ:
             options+=['--color']
-        argv = (ssh.action_argv(command.command, *options, tty=privileged and not args.batch and not capture)
-                if ssh else [sys.executable, str(REMOTE_SCRIPT), command.command, *options])
+        backend_command = management_action(command.command)
+        if command.command=='catch':
+            if capture:raise ToolError('捕获配置需要前台交互确认。')
+            tokens=command.remote_arguments
+            if command.batch and '--batch' not in tokens:tokens=[*tokens,'--batch']
+            argv=(ssh.action_argv('cli',*tokens,tty=not command.batch) if ssh else [sys.executable,str(Path(__file__)),*tokens])
+            if not ssh and PACKAGE_MANAGED:
+                argv=[sys.executable,str(Path(__file__).with_name('domino_install.py')),'--package-cli',*tokens]
+        else:
+            if command.command=='traffic' and command.full:
+                if capture:raise ToolError('--full 需要前台交互终端。')
+                options+=['--dashboard']
+            tty=(privileged and not args.batch or command.command=='traffic' and command.full) and not capture
+            argv = (ssh.action_argv(backend_command, *options, tty=tty)
+                    if ssh else [sys.executable, str(REMOTE_SCRIPT), backend_command, *options])
         process = await asyncio.create_subprocess_exec(*argv,
                     stdout=asyncio.subprocess.PIPE if capture else None,
-                    stderr=asyncio.subprocess.PIPE if capture else None)
+                    stderr=asyncio.subprocess.PIPE if capture else None,
+                    start_new_session=capture and command.command=='test')
         try:
-            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout)
+            if capture and on_progress is not None and command.command=='test':
+                async def progress_stream():
+                    import codecs
+                    decoder=codecs.getincrementaldecoder('utf-8')(errors='replace')
+                    chunks=[];pending=''
+                    while True:
+                        chunk=await process.stderr.read(4096)
+                        if not chunk:break
+                        chunks.append(chunk);chunks=chunks[-16:]
+                        pending+=decoder.decode(chunk)
+                        lines=re.split(r'[\r\n]',pending)
+                        for line in lines:
+                            clean=domino_tui.clean(line).strip()
+                            if clean.startswith(('正在检测','加载配置')):on_progress(clean)
+                        pending=lines[-1][-1000:]
+                    return b''.join(chunks)
+                async def communicate_progress():
+                    out,err,_=await asyncio.gather(process.stdout.read(),progress_stream(),process.wait())
+                    return out,err
+                stdout,stderr=await asyncio.wait_for(communicate_progress(),timeout=timeout)
+            else:
+                stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout)
         except BaseException:
             if process.returncode is None:
-                process.terminate()
+                grouped=capture and command.command=='test'
+                if grouped:
+                    import signal
+                    try:os.killpg(process.pid,signal.SIGTERM)
+                    except ProcessLookupError:pass
+                else:process.terminate()
                 try:
-                    await asyncio.wait_for(process.wait(), 2)
+                    await asyncio.wait_for(process.wait(), 12 if grouped else 2)
                 except asyncio.TimeoutError:
-                    process.kill()
+                    if grouped:
+                        try:os.killpg(process.pid,signal.SIGKILL)
+                        except ProcessLookupError:pass
+                    else:process.kill()
                     await process.wait()
             raise
         if capture and command.command in ['status','scan'] and process.returncode == 3 and stdout:
@@ -1825,7 +2379,10 @@ def terminal_ui(args, ssh=None):
 
 def main(argv=None, *, installing=False):
     arguments = list(sys.argv[1:] if argv is None else argv)
-    if not installing and arguments and arguments[0].split('=',1)[0] in ['--output','--protocol-version','--non-interactive','--input','--if-revision','--request-id','--dry-run']:
+    machine_flags = ['--protocol-version','--non-interactive','--input','--if-revision','--request-id','--dry-run']
+    json_mode = '--output=json' in arguments or any(arguments[i:i+2] == ['--output','json'] for i in range(len(arguments)-1))
+    if not installing and arguments and (arguments[0].split('=',1)[0] == '--output' or
+            any(value.split('=',1)[0] in machine_flags for value in arguments) or (json_mode and 'export' not in arguments[:2])):
         import domino_agent
         module=sys.modules.get(__name__)
         if getattr(module,'build_parser',None) is not build_parser:
@@ -1851,7 +2408,7 @@ def main(argv=None, *, installing=False):
             for name in ['.local/share/domino', '.local/share/robot-clash'])
     try:
         normalize_command(args)
-        if args.command == 'scan':
+        if args.command == 'scan' and is_local_target(args.target):
             return inspect_source(args) if args.source else list_sources(args)
         if args.command in ['deploy', 'plan', 'export', 'init', 'catch']:
             if args.mihomo_version != 'latest' and not re.fullmatch(r'v\d+\.\d+\.\d+', args.mihomo_version):
@@ -1867,6 +2424,17 @@ def main(argv=None, *, installing=False):
             raise ToolError('--restart-vscode 需要 --vscode，且不能使用 --no-shell-env。')
         if args.command in ['deploy', 'rollback', 'init'] and not args.batch and not sys.stdin.isatty() and not (sys.platform == 'darwin' and args.command in ['init', 'rollback']):
             raise ToolError('部署、安装或回滚需要在终端运行，以便安全输入认证密码。')
+        if args.command in ['catch', 'export', 'init'] and not is_local_target(getattr(args, 'target', None)):
+            with SSH(args) as ssh:
+                options = []
+                tokens = iter(args.remote_arguments)
+                for value in tokens:
+                    if value in ['--user','--ssh-port','--identity']:
+                        next(tokens, None)
+                    elif not any(value.startswith(flag+'=') for flag in ['--user','--ssh-port','--identity']):
+                        options.append(value)
+                ssh.action('cli', *options, tty=not args.batch)
+            return 0
         if args.command == 'catch':
             if sys.platform != 'darwin' and not sys.stdin.isatty() and not args.batch:
                 raise ToolError('非交互捕获请同时使用 --yes --batch；--batch 仅禁止密码询问。')
@@ -1882,7 +2450,7 @@ def main(argv=None, *, installing=False):
                 print('离线安装包已导出：' + str(output))
             return 0
         management = ['status', 'nodes', 'select', 'start', 'stop', 'restart', 'logs', 'rollback',
-                      'mode', 'log-level', 'delay', 'connections', 'traffic', 'rules', 'providers', 'configs', 'proxy', 'shell', 'ui', 'env']
+                      'mode', 'log', 'test', 'connections', 'traffic', 'rules', 'providers', 'configs', 'proxy', 'shell', 'ui', 'env', 'scan']
         if args.command in management and is_local_target(args.target):
             if args.user or args.ssh_port or args.identity:
                 raise ToolError('localhost 直接管理当前用户的本机，不能附加 SSH 参数；需切换用户时请使用 USER@localhost 通过 SSH 管理。')
@@ -1923,8 +2491,12 @@ def main(argv=None, *, installing=False):
         message = str(exc) if isinstance(exc, DomainError) else type(exc).__name__
         print('失败：' + message, file=sys.stderr)
         return 1
-    except KeyboardInterrupt:
-        print('\n已取消。', file=sys.stderr)
+    except KeyboardInterrupt as error:
+        if getattr(error, 'domino_capture_prompt', False):
+            with redirect_stdout(sys.stderr):
+                capture_cancelled()
+        else:
+            print('\n已取消。', file=sys.stderr)
         return 130
 
 

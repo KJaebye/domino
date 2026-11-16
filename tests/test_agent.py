@@ -183,7 +183,8 @@ class AgentProcessTests(unittest.TestCase):
         ssh=cli.SSH(args)
         ssh.socket='/tmp/not-used'
         command=shlex.split(ssh.action_argv('agent')[-1])
-        self.assertLess(len(ssh.action_argv('agent')[-1].encode()),120000)
+        self.assertLess(len(ssh.action_argv('agent')[-1].encode()),128*1024-1024)
+        with self.assertRaises(cli.ToolError):ssh.action_argv('agent','x'*131072)
         request={'schema_version':1,'operation':'configs.add','arguments':{'name':'A','url':'https://example.test/PRIVATE-TOKEN'},
             'target':'alice@host','operation_id':'a'*32,'transport_token':'b'*32,'request_id':'remote-add'}
         def run():
@@ -580,6 +581,24 @@ class OperationRecoveryTests(unittest.TestCase):
 
 
 class ServiceSeparationTests(unittest.TestCase):
+    def test_service_preview_accounts_for_system_proxy_even_when_service_already_running_or_stopped(self):
+        from types import SimpleNamespace
+        import domino_macos
+        with tempfile.TemporaryDirectory() as directory:
+            app=Path(directory);(app/'data').mkdir()
+            (app/'data/config.json').write_text('{"mixed-port":17897}')
+            ctx=SimpleNamespace(HOME=app,current_installation=lambda:(app,None),systemctl=lambda _:True)
+            application=Application(ctx)
+            with patch('domino_service.platform.system',return_value='Darwin'), \
+                    patch.object(domino_macos,'system_proxy_overview',return_value={'routing':'off'}):
+                self.assertTrue(application.plan('service.start',{})['would_change'])
+            ctx.systemctl=lambda _:False
+            with patch('domino_service.platform.system',return_value='Darwin'), \
+                    patch.object(domino_macos,'system_proxy_overview',return_value={'routing':'domino'}):
+                self.assertTrue(application.plan('service.stop',{})['would_change'])
+            with patch('domino_service.platform.system',return_value='Linux'):
+                self.assertFalse(application.plan('service.stop',{})['would_change'])
+
     def test_query_collectors_return_data_without_terminal_output(self):
         output=io.StringIO()
         with patch.object(backend,'proxy_state',return_value=({'mode':'rule'},{'A':{'type':'Trojan'}})),redirect_stdout(output):

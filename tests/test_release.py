@@ -18,8 +18,9 @@ class ReleaseTests(unittest.TestCase):
         self.root = Path(self.temp.name) / 'repo'
         self.root.mkdir()
         for name in build_release.SOURCE_FILES:
+            (self.root / name).parent.mkdir(parents=True,exist_ok=True)
             (self.root / name).write_text('current ' + name)
-        (self.root / 'pyproject.toml').write_text('[project]\nname = "domino"\nversion = "' + build_release.cli.VERSION + '"\n')
+        (self.root / 'pyproject.toml').write_text('[project]\nname = "domino-proxy"\nversion = "' + build_release.cli.VERSION + '"\n')
         (self.root / 'domino_cli.py').write_text('VERSION = ' + repr(build_release.cli.VERSION) + '\n')
         self.output = Path(self.temp.name) / 'release'
         self.root_patch = patch.object(build_release, 'ROOT', self.root)
@@ -36,11 +37,11 @@ class ReleaseTests(unittest.TestCase):
             self.assertIn(option, command)
         source = Path(command[command.index('--wheel-dir') - 1])
         self.assertNotEqual(source, self.root)
-        self.assertEqual({p.name for p in source.iterdir()}, set(build_release.SOURCE_FILES))
+        self.assertEqual({p.relative_to(source).as_posix() for p in source.rglob('*') if p.is_file()}, set(build_release.SOURCE_FILES))
         for name in build_release.SOURCE_FILES:
             self.assertEqual((source / name).read_bytes(), (self.root / name).read_bytes())
         output = Path(command[command.index('--wheel-dir') + 1])
-        (output / f'domino-{build_release.cli.VERSION}-py3-none-any.whl').write_bytes(b'fixture wheel')
+        (output / build_release.wheel_name(build_release.cli.VERSION)).write_bytes(b'fixture wheel')
 
     def make_cli(self, package):
         cli = package / 'cli'
@@ -77,6 +78,8 @@ class ReleaseTests(unittest.TestCase):
                 member = f'domino-{build_release.cli.VERSION}/cli/{name}'
                 self.assertEqual(bundle.extractfile(member).read(), (self.root / name).read_bytes())
             self.assertTrue(any(name.endswith('/CHANGELOG.md') for name in names))
+            for name in build_release.DOCUMENT_FILES:
+                self.assertEqual(bundle.extractfile(f'domino-{build_release.cli.VERSION}/{name}').read(),(self.root/name).read_bytes())
         manifest = json.loads((self.output / 'release.json').read_text())
         self.assertFalse(manifest['published'])
         self.assertEqual(manifest['version'], build_release.cli.VERSION)
@@ -102,7 +105,7 @@ class ReleaseTests(unittest.TestCase):
         self.run_build()
         output = self.root / 'dist/release'
         self.assertTrue((output / 'release.json').is_file())
-        wheel = f'domino-{build_release.cli.VERSION}-py3-none-any.whl'
+        wheel = build_release.wheel_name(build_release.cli.VERSION)
         self.assertEqual((self.root / 'dist' / wheel).read_bytes(), (output / wheel).read_bytes())
         self.assertFalse((output / build_release.cli.VERSION).exists())
         self.assertFalse((self.root / 'dist/.domino-release.lock').exists())
@@ -141,7 +144,7 @@ class ReleaseTests(unittest.TestCase):
         manifest = json.loads((output / 'release.json').read_text())
         self.assertEqual(manifest['version'], build_release.cli.VERSION)
         self.assertEqual({item['name'] for item in manifest['files']},
-                         {f'domino-{build_release.cli.VERSION}-py3-none-any.whl',
+                         {build_release.wheel_name(build_release.cli.VERSION),
                           f'domino-runtime-{build_release.cli.VERSION}.tar.gz', 'domino.rb.in'})
         self.assertEqual((output.parent / 'domino-0.11.1-py3-none-any.whl').read_bytes(), b'older root wheel')
         self.assertEqual((output.parent / 'installed-verification.json').read_bytes(), b'old installed verification')
@@ -150,7 +153,8 @@ class ReleaseTests(unittest.TestCase):
         self.run_build('--base-url', 'https://example.test/releases')
         output = self.root / 'dist/release'
         old = {path.name: path.read_bytes() for path in output.iterdir()}
-        version = build_release.cli.VERSION + '.1'
+        major, minor, patch_version = build_release.cli.VERSION.split('.')
+        version = f'{major}.{minor}.{int(patch_version) + 1}'
         (self.root / 'domino_cli.py').write_text('VERSION = ' + repr(version) + '\n')
         (self.root / 'pyproject.toml').write_text('[project]\nversion="' + version + '"\n')
         with patch.object(build_release.cli, 'VERSION', version):
@@ -163,7 +167,7 @@ class ReleaseTests(unittest.TestCase):
 
     def test_existing_root_wheel_blocks_default_build_without_changing_release(self):
         output, previous = self.previous_flat_release()
-        wheel = output.parent / f'domino-{build_release.cli.VERSION}-py3-none-any.whl'
+        wheel = output.parent / build_release.wheel_name(build_release.cli.VERSION)
         wheel.write_bytes(b'existing version')
         with self.assertRaises(FileExistsError):
             self.run_build()
@@ -193,8 +197,8 @@ class ReleaseTests(unittest.TestCase):
             self.assertEqual((output / name).read_bytes(), content)
         self.assertFalse((output / 'history/0.12.0').exists())
         self.assertFalse((output / f'domino-runtime-{build_release.cli.VERSION}.tar.gz').exists())
-        self.assertFalse((output / f'domino-{build_release.cli.VERSION}-py3-none-any.whl').exists())
-        self.assertFalse((output.parent / f'domino-{build_release.cli.VERSION}-py3-none-any.whl').exists())
+        self.assertFalse((output / build_release.wheel_name(build_release.cli.VERSION)).exists())
+        self.assertFalse((output.parent / build_release.wheel_name(build_release.cli.VERSION)).exists())
         self.assertFalse((output.parent / '.domino-release.lock').exists())
 
     def test_changed_previous_release_during_build_is_not_overwritten(self):
@@ -219,7 +223,7 @@ class ReleaseTests(unittest.TestCase):
     def test_version_preflight_rejects_missing_invalid_or_mismatched_versions(self):
         path = self.root / 'pyproject.toml'
         for content in ['[project]\nname="domino"\n', '[project]\nversion="1.2.3"\n',
-                        '[project]\nversion="0.13.1.2"\n', '[other]\nversion="' + build_release.cli.VERSION + '"\n']:
+                        '[project]\nversion="0.13"\n', '[project]\nversion="0.13.1.2"\n', '[other]\nversion="' + build_release.cli.VERSION + '"\n']:
             with self.subTest(content=content):
                 path.write_text(content)
                 with redirect_stdout(io.StringIO()), patch('sys.stderr', io.StringIO()), self.assertRaises(SystemExit):
@@ -228,7 +232,7 @@ class ReleaseTests(unittest.TestCase):
         self.wheel.assert_not_called()
 
     def test_big_and_small_update_versions_are_supported(self):
-        for version in ['0.13', '0.13.1', '0.14', '0.14.2']:
+        for version in ['0.13.0', '0.13.1', '0.14.0', '0.14.2']:
             with self.subTest(version=version), patch.object(build_release.cli, 'VERSION', version):
                 inputs = {'domino_cli.py': ('VERSION = ' + repr(version)).encode(),
                           'pyproject.toml': ('[project]\nversion="' + version + '"\n').encode()}
@@ -282,6 +286,13 @@ class ReleaseTests(unittest.TestCase):
                 with hook, self.assertRaises((RuntimeError, OSError, ValueError)):
                     self.run_build('--output', str(self.output))
                 self.assert_no_temporary_outputs()
+
+    def test_runtime_rejects_dependencies_above_the_declared_python_minimum(self):
+        with patch.object(build_release.importlib.metadata,'metadata',return_value={'Requires-Python':'>=3.10'}):
+            with self.assertRaisesRegex(RuntimeError,'Python 3.9'):
+                self.run_build('--output',str(self.output))
+        self.wheel.assert_not_called()
+        self.assert_no_temporary_outputs()
 
     def test_sources_changed_during_build_fail_without_delivering(self):
         def mutate(package):

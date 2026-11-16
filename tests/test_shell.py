@@ -61,6 +61,8 @@ class ShellPolicyTests(unittest.TestCase):
             with self.subTest(enabled=enabled):
                 (self.app / 'shell-policy.json').write_text(json.dumps({'version': 1, 'enabled': enabled}))
                 before = (self.app / 'shell-policy.json').read_bytes()
+                (self.app / 'data').mkdir(exist_ok=True)
+                (self.app / 'data/config.json').write_text('{"mixed-port":19876}')
                 output = io.StringIO()
                 with patch.object(control, 'current_installation', return_value=(self.app, None)), \
                         patch.object(control, 'HOME', self.app), redirect_stdout(output), \
@@ -71,16 +73,52 @@ class ShellPolicyTests(unittest.TestCase):
                         control.shell_proxy()
                 text = output.getvalue()
                 if enabled:
-                    self.assertIn('\033[32m● 已开启\033[0m', text)
-                    self.assertIn('开启不代表代理变量已同步', text)
+                    self.assertIn('\033[32m● 策略已开启\033[0m', text)
+                    self.assertIn('使用 Domino 代理', text)
                 else:
-                    self.assertIn('\033[31m● 已关闭\033[0m', text)
+                    self.assertIn('\033[31m● 策略已关闭\033[0m', text)
                     self.assertNotIn('\033[32m', text)
-                    self.assertIn('关闭不代表代理变量已清空', text)
-                    self.assertIn('原有或手动设置的代理可能仍保留', text)
-                self.assertIn('env | grep -i proxy', text)
-                self.assertIn('不改变系统代理', text)
+                    self.assertIn('恢复原代理设置', text)
+                    self.assertIn('保留手动修改', text)
+                self.assertIn('已接入终端返回命令行后同步', text)
+                self.assertIn('终端（Terminal）', text)
+                self.assertIn('http://127.0.0.1:19876', text)
+                self.assertIn('socks5h://127.0.0.1:19876', text)
+                self.assertIn('http_proxy / HTTP_PROXY', text)
+                self.assertIn('https_proxy / HTTPS_PROXY', text)
+                self.assertIn('all_proxy / ALL_PROXY', text)
+                self.assertIn('no_proxy / NO_PROXY', text)
+                self.assertIn('本次命令继承的已导出变量', text)
+                self.assertNotIn('env | grep', text)
                 self.assertEqual((self.app / 'shell-policy.json').read_bytes(), before)
+
+    def test_status_shows_inherited_exports_without_credentials_or_policy_writes(self):
+        variables = {'http_proxy': 'http://user:PRIVATE@127.0.0.1:7897/path?token=SECRET',
+                     'HTTPS_PROXY': 'http://[::1]:19876', 'all_proxy': 'not-a-url-PRIVATE',
+                     'NO_PROXY': 'localhost,.example.org'}
+        output = io.StringIO()
+        with patch.object(control, 'current_installation', return_value=(self.app, None)), \
+                patch.object(control, 'HOME', self.app), \
+                patch.dict(os.environ, variables), redirect_stdout(output):
+            control.shell_proxy()
+        text = output.getvalue()
+        self.assertIn('http://127.0.0.1:7897', text)
+        self.assertIn('http://[::1]:19876', text)
+        self.assertIn('localhost,.example.org', text)
+        for secret in ['PRIVATE', 'SECRET', 'user:', '/path', 'token=']:
+            self.assertNotIn(secret, text)
+        self.assertFalse((self.app / 'shell-policy.json').exists())
+
+    def test_environment_value_display_masks_invalid_urls_and_terminal_controls(self):
+        for value in ['http://user:PRIVATE@host:bad', 'http://host:123456',
+                      'http://host\x1b[31m:7897', 'PRIVATE', 'http://[broken']:
+            with self.subTest(value=value):
+                displayed = shell.display_value('http_proxy', value)
+                self.assertNotIn('PRIVATE', displayed)
+                self.assertNotIn('\x1b', displayed)
+                self.assertIn('隐藏', displayed)
+        self.assertEqual(shell.display_value('http_proxy', None), '未设置')
+        self.assertEqual(shell.display_value('https_proxy', ''), '空值')
 
     def test_human_status_respects_no_color_and_json_contract_is_unchanged(self):
         for as_json in (False, True):
@@ -97,7 +135,7 @@ class ShellPolicyTests(unittest.TestCase):
                     self.assertFalse(result['enabled'])
                     self.assertFalse(result['current_shell_applied'])
                 else:
-                    self.assertIn('● 已关闭', output.getvalue())
+                    self.assertIn('● 策略已关闭', output.getvalue())
 
     def test_exact_legacy_templates(self):
         for platform in ('darwin', 'linux'):
@@ -152,6 +190,8 @@ class RealShellTests(unittest.TestCase):
 import json, os, sys
 from pathlib import Path
 args = sys.argv[1:]
+if len(args)>1 and args[1]=='shell' and args[0].lower().rstrip('.') in ('localhost','127.0.0.1','::1','[::1]'):
+    args=args[1:]
 if args == ['fail']:
     print('original-output')
     raise SystemExit(17)
@@ -265,6 +305,23 @@ printf 'RC=%s\\n' "$?"
 domino shell status --json
 ''')
                 self.assertEqual(result.stdout, 'original-output\nRC=17\n{"ok":true}\n')
+
+    def test_current_shell_summary_is_readable_and_preserves_manual_settings(self):
+        for name in ('bash','zsh'):
+            with self.subTest(shell=name):
+                result=self.run_shell(name,f'''
+{self.source()}
+domino shell on
+domino shell status
+export http_proxy=http://user:PRIVATE@manual:7897
+domino shell status
+domino shell off
+domino shell status
+''')
+                self.assertIn('Domino 已接管终端代理',result.stdout)
+                self.assertIn('Domino 已接管部分变量 · 保留手动设置',result.stdout)
+                self.assertIn('使用原有代理设置 · 保留手动设置',result.stdout)
+                for text in ['managed=','restorable=','PRIVATE']:self.assertNotIn(text,result.stdout)
 
     def test_remote_and_noncanonical_commands_do_not_force_takeover(self):
         for name in ('bash', 'zsh'):
@@ -419,7 +476,7 @@ printf 'RC=%s,PROXY=%s\\n' "$?" "$http_proxy"
                 result = self.run_shell(name, f'''
 export http_proxy=http://manual:7897
 {self.source()}
-domino shell on localhost
+domino localhost shell on
 printf 'LOCAL=%s\\n' "$http_proxy"
 domino shell status --json
 ''')
@@ -434,9 +491,9 @@ domino shell status --json
                     result = self.run_shell(name, f'''
 export http_proxy=http://manual:7897
 {self.source()}
-domino shell on {shlex.quote(target)}
+domino {shlex.quote(target)} shell on
 printf 'LOCAL=%s\\n' "$http_proxy"
-domino shell off {shlex.quote(target)}
+domino {shlex.quote(target)} shell off
 printf 'BASELINE=%s\\n' "$http_proxy"
 ''')
                     self.assertIn('LOCAL=http://127.0.0.1:19876', result.stdout)
@@ -454,7 +511,7 @@ printf 'KEPT=%s\\n' "$http_proxy"
 ''')
                 self.assertIn('Current shell: unavailable', result.stdout)
                 self.assertIn('KEPT=http://127.0.0.1:19876', result.stdout)
-                self.assertNotIn('Current shell: policy=on', result.stdout)
+                self.assertNotIn('Domino 已接管终端代理', result.stdout)
 
     def test_unexporting_owned_parameter_is_a_manual_override(self):
         for name in ('bash', 'zsh'):

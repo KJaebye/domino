@@ -36,7 +36,7 @@ class ManagementTests(unittest.TestCase):
                     tool.main(['shell', action])
                 self.assertEqual(error.exception.code, 2)
                 self.assertIn('domino shell off', output.getvalue())
-                self.assertIn('domino shell status HOST', output.getvalue())
+                self.assertIn('domino HOST shell status', output.getvalue())
                 run.assert_not_called()
                 ssh.assert_not_called()
         for action in ['on', 'off', 'status']:
@@ -76,7 +76,7 @@ class ManagementTests(unittest.TestCase):
                 self.assertEqual(error.exception.code, 2)
                 self.assertIn('未知系统代理动作：' + action, output.getvalue())
                 self.assertIn('domino proxy off', output.getvalue())
-                self.assertIn('domino proxy status HOST', output.getvalue())
+                self.assertIn('domino HOST proxy status', output.getvalue())
                 run.assert_not_called()
                 ssh.assert_not_called()
 

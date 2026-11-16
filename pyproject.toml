@@ -3,19 +3,48 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "domino"
-version = "0.13"
+name = "domino-proxy"
+version = "0.16.3"
 description = "Deploy independent proxy access over SSH and manage local or remote Domino services"
-readme = "README.md"
+readme = "README.pypi.md"
 requires-python = ">=3.9"
 dependencies = ["prompt-toolkit>=3.0.48,<4", "PyYAML>=6"]
+authors = [{name = "KJaebye"}]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Environment :: Console",
+  "Operating System :: MacOS :: MacOS X",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+]
+
+[project.urls]
+Homepage = "https://github.com/KJaebye/domino"
+Repository = "https://github.com/KJaebye/domino"
+Issues = "https://github.com/KJaebye/domino/issues"
+Documentation = "https://github.com/KJaebye/domino/blob/main/README.md"
+Changelog = "https://github.com/KJaebye/domino/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 yaml = ["PyYAML>=6"]
+# 3.0.53 drops Python 3.9; runtime archives must keep the declared minimum.
+dev = ["setuptools>=68", "build>=1", "twine>=5", "packaging>=23", "prompt-toolkit<3.0.53", "tomli>=2; python_version<'3.11'", "Pillow>=9"]
 
 [project.scripts]
-domino = "domino_cli:main"
-domino-install = "domino_install:main"
+domino = "domino_install:package_cli"
+domino-install = "domino_install:package_install"
 
 [tool.setuptools]
-py-modules = ["domino_cli", "install_domino", "domino_macos", "domino_tui", "domino_subscriptions", "domino_install", "domino_model", "domino_store", "domino_service", "domino_resources", "domino_logs", "domino_agent", "domino_agent_backend", "domino_shell", "domino_sources"]
+py-modules = ["domino_cli", "install_domino", "domino_macos", "domino_linux", "domino_tui", "domino_subscriptions", "domino_install", "domino_model", "domino_store", "domino_service", "domino_resources", "domino_logs", "domino_agent", "domino_agent_backend", "domino_shell", "domino_sources"]
+
+[tool.setuptools.data-files]
+"share/doc/domino" = ["README.md", "README.pypi.md", "CHANGELOG.md", "NOTICE", "LICENSE*", "SECURITY.md", "CONTRIBUTING.md"]
+"share/doc/domino/docs" = ["docs/*.md"]
+"share/doc/domino/assets" = ["assets/*"]
+"share/doc/domino/licenses" = ["licenses/*"]

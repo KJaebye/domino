@@ -189,6 +189,19 @@ class SourceDeliveryTests(unittest.TestCase):
         self.assertEqual((bundle / 'registration.json').stat().st_mode & 0o777, 0o600)
         self.run.assert_not_called()
 
+    def test_export_resource_directory_option_is_carried_into_portable_bundle(self):
+        resource_dir = self.home / 'shared'
+        resource_dir.mkdir()
+        (resource_dir / 'certificate.pem').write_text('fixture certificate')
+        raw = copy.deepcopy(self.raw)
+        raw['proxies'][0]['certificate'] = 'certificate.pem'
+        self.source.write_text(json.dumps(raw))
+        bundle, _, _ = self.prepare(self.args('--source', str(self.source), '--resource-dir', str(resource_dir)))
+        shutil.rmtree(resource_dir)
+        profile = tool.load_yaml(bundle / 'data/config.json')
+        self.assertEqual((bundle / 'data' / profile['proxies'][0]['certificate']).read_text(), 'fixture certificate')
+        self.download.assert_not_called()
+
     def test_provider_and_certificate_resources_are_shared_without_repeated_downloads(self):
         raw = copy.deepcopy(self.raw)
         cert = self.source.parent / 'client.pem'
@@ -286,7 +299,8 @@ class SourceDeliveryTests(unittest.TestCase):
         self.run.assert_not_called()
 
     def test_source_helper_is_declared_for_cli_wheel_and_embedded_remote_actions(self):
-        import tomllib
+        try: import tomllib
+        except ModuleNotFoundError: import tomli as tomllib
         project = Path(tool.__file__).resolve().parent
         self.assertIn('domino_sources.py', tool.CLI_MODULES)
         packaging = tomllib.loads((project / 'pyproject.toml').read_text())
@@ -295,7 +309,7 @@ class SourceDeliveryTests(unittest.TestCase):
         args.target, args.user, args.ssh_port, args.identity, args.batch = 'fixture.example.test', None, None, None, True
         ssh = tool.SSH(args)
         ssh.socket = str(self.home / 'never-opened-control-socket')
-        for action in ('scan', 'configs', 'agent'):
+        for action in ('scan', 'configs', 'agent', 'catch-options'):
             with self.subTest(action=action):
                 command = shlex.split(ssh.action_argv(action)[-1])
                 self.assertEqual(command[:2], ['python3', '-c'])
@@ -303,8 +317,8 @@ class SourceDeliveryTests(unittest.TestCase):
                 wrapper = ast.parse(command[2])
                 encoded = next(node for node in ast.walk(wrapper)
                                if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-                               and node.func.attr == 'b64decode')
-                payload = bz2.decompress(base64.b64decode(ast.literal_eval(encoded.args[0]))).decode()
+                               and node.func.attr == 'b85decode')
+                payload = bz2.decompress(base64.b85decode(ast.literal_eval(encoded.args[0]))).decode()
                 tree = ast.parse(payload)
                 assignment = next(node for node in tree.body if isinstance(node, ast.Assign)
                                   and any(isinstance(target, ast.Name) and target.id == '__domino_sources'

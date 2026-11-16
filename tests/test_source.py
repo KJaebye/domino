@@ -246,9 +246,10 @@ class SourceListingTests(unittest.TestCase):
         text = io.StringIO()
         with patch.object(tool, 'collect_sources', return_value=result), redirect_stdout(text):
             tool.list_sources(argparse.Namespace(json=False))
-        self.assertIn('运行配置', text.getvalue())
-        self.assertIn('源快照', text.getvalue())
-        self.assertIn('导入时间', text.getvalue())
+        self.assertIn('── Domino 管理', text.getvalue())
+        self.assertNotIn('运行配置', text.getvalue())
+        self.assertNotIn('源快照', text.getvalue())
+        self.assertNotIn('导入时间', text.getvalue())
         self.assertEqual(before, {str(p): p.read_bytes() for p in self.home.rglob('*') if p.is_file()})
 
     def test_managed_source_inspect_never_probes_old_port_or_environment_proxy(self):
@@ -295,7 +296,8 @@ class SourceListingTests(unittest.TestCase):
         text = io.StringIO()
         with patch.object(tool, 'collect_sources', return_value=result), redirect_stdout(text):
             tool.list_sources(argparse.Namespace(json=False))
-        self.assertIn('未记录', text.getvalue())
+        self.assertIn('Domino 管理 0 个', text.getvalue())
+        self.assertNotIn('导入来源', text.getvalue())
         self.assertNotIn('源快照    ~/', text.getvalue())
 
     def test_bad_and_missing_configs_do_not_hide_other_sources(self):
@@ -386,10 +388,89 @@ class SourceListingTests(unittest.TestCase):
         with redirect_stdout(output):
             self.assertEqual(tool.main(['scan']), 0)
         text = output.getvalue()
-        for expected in ['2 个来源', 'Domino', 'Clash Verge', '默认', 'config.json', 'clash-verge.yaml',
+        for expected in ['外部配置 1 个', 'Domino 管理 0 个', 'Clash Verge', 'clash-verge.yaml',
                          '代理入口', '入口出网', 'http://127.0.0.1:7897', '检查未通过']:
             self.assertIn(expected, text)
         self.assertNotIn('PRIVATE', text)
+
+    def managed_registry(self):
+        items = [dict(id=f'{i+1:032x}', name=name, kind='snapshot', revision=f'{i+10:032x}',
+                      node_count=count, updated_at='2026-11-15T15:18:00+00:00')
+                 for i, (name, count) in enumerate([('xlink-xqEiJS', 32), ('xlink', 32), ('feiniao', 71)])]
+        path = self.config('.config/domino/subscriptions/index.json', {'schema': 1, 'items': items})
+        return path, items
+
+    def test_scan_groups_all_managed_configs_after_external_sources_read_only(self):
+        import domino_subscriptions
+        runtime = self.config('.local/share/domino/data/config.json')
+        raw = json.loads(runtime.read_text());raw['mixed-port'] = 17897
+        runtime.write_text(json.dumps(raw))
+        external = self.config('.config/mihomo/config.yaml')
+        _, items = self.managed_registry()
+        self.config('.local/share/domino/data/subscription.json', {'id': items[1]['id']})
+        before = {str(p): p.read_bytes() for p in self.home.rglob('*') if p.is_file()}
+        with patch.object(domino_subscriptions.Manager, 'cached', side_effect=AssertionError('scan loaded a saved cache')):
+            collected = tool.collect_sources()
+        managed = collected['managed_configs']
+        self.assertEqual([item['name'] for item in managed['configs']], ['xlink-xqEiJS', 'xlink', 'feiniao'])
+        self.assertEqual(managed['active'], 'xlink')
+        self.assertEqual([item['active'] for item in managed['configs']], [False, True, False])
+        self.assertEqual(len(collected['sources']), 2)
+        self.assertEqual(self.probe.call_count, 2)
+        assert_result_schema(self, collected, OPERATIONS['source.list']['result'])
+        output = io.StringIO()
+        with patch.object(tool, 'collect_sources', return_value=collected), redirect_stdout(output):
+            tool.list_sources(argparse.Namespace(json=False))
+        text = output.getvalue()
+        self.assertLess(text.index('Mihomo'), text.index('── Domino 管理'))
+        block = text[text.index('── Domino 管理'):]
+        for word in ['3 个配置', 'xlink-xqEiJS', '● xlink', 'feiniao', '71']:
+            self.assertIn(word, block)
+        self.assertEqual(text.count('xlink-xqEiJS'), 1)
+        self.assertIn('外部配置 1 个 · Domino 管理 3 个', text)
+        for removed in ['运行配置', '入口出网', '代理入口', '导入来源', '源快照', '导入时间', 'domino test', 'deploy --source']:
+            self.assertNotIn(removed, block)
+        self.assertNotIn('PRIVATE', text + json.dumps(collected))
+        self.assertEqual(before, {str(p): p.read_bytes() for p in self.home.rglob('*') if p.is_file()})
+        self.assertEqual(collected['sources'][0]['config'], str(runtime))
+        self.assertEqual(collected['sources'][1]['config'], str(external))
+
+    def test_scan_shows_uncached_managed_configs_without_a_runtime(self):
+        index, items = self.managed_registry()
+        items[2].pop('revision');items[2]['kind'] = 'subscription'
+        items[2]['url'] = 'https://subscription.example.test/profile?token=PRIVATE-TOKEN'
+        index.write_text(json.dumps({'schema': 1, 'items': items}))
+        before = index.read_bytes()
+        result = tool.collect_sources()
+        self.assertEqual(result['sources'], [])
+        self.assertFalse(result['managed_configs']['configs'][2]['cached'])
+        output = io.StringIO()
+        with patch.object(tool, 'collect_sources', return_value=result), redirect_stdout(output):
+            tool.list_sources(argparse.Namespace(json=False))
+        for word in ['Domino 管理', 'xlink-xqEiJS', 'feiniao', '未缓存', '在线订阅']:
+            self.assertIn(word, output.getvalue())
+        self.assertNotIn('PRIVATE', json.dumps(result) + output.getvalue())
+        self.assertNotIn('https://subscription', json.dumps(result))
+        assert_result_schema(self, result, OPERATIONS['source.list']['result'])
+        self.assertEqual(before, index.read_bytes())
+        self.probe.assert_not_called()
+
+    def test_unreadable_managed_registry_does_not_hide_external_sources(self):
+        self.config('.config/mihomo/config.yaml')
+        index, _ = self.managed_registry()
+        index.write_text('PRIVATE broken registry')
+        before = index.read_bytes()
+        result = tool.collect_sources()
+        self.assertEqual(len(result['sources']), 1)
+        self.assertIn('error', result['managed_configs'])
+        assert_result_schema(self, result, OPERATIONS['source.list']['result'])
+        output = io.StringIO()
+        with patch.object(tool, 'collect_sources', return_value=result), redirect_stdout(output):
+            tool.list_sources(argparse.Namespace(json=False))
+        self.assertIn('Mihomo', output.getvalue())
+        self.assertIn('配置库无法读取', output.getvalue())
+        self.assertNotIn('PRIVATE', json.dumps(result) + output.getvalue())
+        self.assertEqual(before, index.read_bytes())
 
     def test_agent_maps_list_and_inspection_to_distinct_operations(self):
         parser = tool.build_parser()
@@ -686,7 +767,7 @@ items:
             self.assertEqual(tool.main(['scan']), 0)
         text = output.getvalue()
         for expected in ['运行配置', 'Saved subscription', 'Backup', '默认导入来源',
-                         '客户端当前启用', '非当前', '未检查（保存配置）', '扫描提示', '--source']:
+                         '客户端当前启用', '非当前', '未检查（保存配置）', '扫描提示']:
             self.assertIn(expected, text)
         self.assertNotIn('PRIVATE', text)
         self.probe.assert_called_once()
@@ -703,7 +784,7 @@ items:
             with redirect_stdout(output):
                 tool.main(['scan'])
             text = output.getvalue()
-            self.assertIn('2 个来源', text)
+            self.assertIn('外部配置 2 个 · Domino 管理 0 个', text)
             self.assertEqual(text.count('来源      '), 2)
             self.assertIn('Clash Verge · xlink', text)
             self.assertIn('Clash Verge · feiniao', text)
@@ -753,7 +834,7 @@ items:
         with redirect_stdout(output):
             tool.main(['scan'])
         text = output.getvalue()
-        self.assertIn('1 个来源', text)
+        self.assertIn('外部配置 1 个 · Domino 管理 0 个', text)
         self.assertIn('检查未通过', text)
         self.assertNotIn('未检查（保存配置）', text)
         self.assertIn('原始配置', text)

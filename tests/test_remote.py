@@ -145,6 +145,28 @@ class TransactionTests(unittest.TestCase):
         (self.home / '.bashrc').chmod(0o640)
         self.state.update(active=True, enabled=False)
 
+    def test_package_initializer_preserves_pipx_symlink_on_success_and_failed_upgrade(self):
+        self.stack.__enter__()
+        launcher = self.home / '.local/bin/domino'
+        launcher.parent.mkdir(parents=True)
+        target = self.root / 'package-launcher'
+        target.write_text('package managed executable')
+        launcher.symlink_to(target)
+        manifest_path = self.bundle / 'manifest.json'
+        manifest = json.loads(manifest_path.read_text())
+        manifest['package_managed_cli'] = True
+        manifest_path.write_text(json.dumps(manifest))
+        (self.bundle / 'cli').mkdir(exist_ok=True)
+        (self.bundle / 'cli/domino_shell.py').write_text('# helper')
+        remote.install(self.bundle)
+        self.assertTrue(launcher.is_symlink())
+        self.assertEqual(target.read_text(), 'package managed executable')
+        with patch.object(remote, 'probe', side_effect=remote.InstallError('test health failure')):
+            with self.assertRaises(remote.InstallError):
+                remote.install(self.bundle)
+        self.assertTrue(launcher.is_symlink())
+        self.assertEqual(target.read_text(), 'package managed executable')
+
     def seed_registry(self):
         root = self.home / '.config/domino/subscriptions'
         revision = 'a' * 32
@@ -869,9 +891,10 @@ export NO_PROXY="$no_proxy"
     def test_service_management_uses_only_its_owned_service(self):
         remote.install(self.bundle)
         for action in ['stop', 'start', 'restart']:
-            with patch.object(remote, 'sudo') as sudo:
+            with patch.object(remote, 'sudo') as sudo, patch.object(remote,'system_proxy',return_value={'supported':False}) as proxy:
                 remote.service_action(action, non_interactive=True)
             sudo.assert_called_once_with('systemctl', action, 'domino.service')
+            proxy.assert_called_once_with('off' if action=='stop' else 'on',render=False)
         self.service.write_text('# someone else\n')
         with patch.object(remote, 'sudo') as sudo, self.assertRaises(remote.InstallError):
             remote.service_action('stop', non_interactive=True)

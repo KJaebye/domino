@@ -51,6 +51,132 @@ class SourceStoreTests(unittest.TestCase):
         self.profiles.assert_not_called()
         self.download.assert_not_called()
 
+    def test_saved_verge_profile_reuses_shared_geo_without_changing_client_files(self):
+        with patch.object(Path, 'home', return_value=self.root):
+            client = self.root / 'Library/Application Support/io.github.clash-verge-rev.clash-verge-rev'
+            source = client / 'profiles/saved.json'
+            source.parent.mkdir(parents=True)
+            raw = dict(self.raw, rules=['GEOIP,CN,DIRECT', 'MATCH,出口'])
+            source.write_text(json.dumps(raw))
+            database = client / 'Country.mmdb'
+            database.write_bytes(b'fixture shared mmdb')
+            sources.create_source(raw, source, self.source, require_geo=True)
+            self.assertEqual((self.source / 'Country.mmdb').read_bytes(), database.read_bytes())
+            self.assertEqual(database.read_bytes(), b'fixture shared mmdb')
+            _, metadata = sources.read_source(self.source)
+            self.assertIn('Country.mmdb', metadata['files'])
+            sources.derive_runtime(self.source, self.root / 'runtime', {}, 17897, 19091)
+            self.assertEqual((self.root / 'runtime/Country.mmdb').read_bytes(), database.read_bytes())
+        self.download.assert_not_called()
+
+    def test_missing_geo_fails_before_core_with_specific_error_and_cleans_staging(self):
+        raw = dict(self.raw, rules=['GEOIP,CN,DIRECT', 'MATCH,出口'])
+        # An unrelated parent is deliberately not a recognized resource root.
+        (self.input.parent.parent / 'Country.mmdb').write_bytes(b'unrelated')
+        with self.assertRaises(DomainError) as caught:
+            sources.create_source(raw, self.input, self.source, require_geo=True)
+        self.assertEqual(caught.exception.code, 'GEO_RESOURCE_MISSING')
+        self.assertIn('Country.mmdb', str(caught.exception))
+        self.assertNotIn('CONTROL-PRIVATE', str(caught.exception))
+        self.assertFalse(self.source.exists())
+        self.download.assert_not_called()
+
+    def test_geo_fallback_cannot_follow_symlinks_and_respects_geodata_mode(self):
+        raw = dict(self.raw, rules=['GEOIP,CN,DIRECT', 'GEOSITE,cn,DIRECT'], **{'geodata-mode': True})
+        fallback = self.root / 'installed'
+        fallback.mkdir()
+        outside = self.root / 'outside.dat'
+        outside.write_bytes(b'outside')
+        (fallback / 'geoip.dat').symlink_to(outside)
+        (fallback / 'geosite.dat').write_bytes(b'fixture geosite')
+        with self.assertRaises(DomainError) as caught:
+            sources.create_source(raw, self.input, self.source, geo_dirs=(fallback,), require_geo=True)
+        self.assertEqual(caught.exception.code, 'GEO_RESOURCE_MISSING')
+        (fallback / 'geoip.dat').unlink()
+        (fallback / 'geoip.dat').write_bytes(b'fixture geoip')
+        sources.create_source(raw, self.input, self.source, geo_dirs=(fallback,), require_geo=True)
+        self.assertEqual((self.source / 'geoip.dat').read_bytes(), b'fixture geoip')
+        self.assertEqual((self.source / 'geosite.dat').read_bytes(), b'fixture geosite')
+
+    def test_verge_shared_providers_geo_and_provider_relative_keys_survive_client_removal(self):
+        with patch.object(Path, 'home', return_value=self.root):
+            client = self.root / 'Library/Application Support/io.github.clash-verge-rev.clash-verge-rev'
+            source = client / 'profiles/saved.json'
+            source.parent.mkdir(parents=True)
+            (client / 'providers/tls').mkdir(parents=True)
+            (client / 'providers/tls/key.pem').write_bytes(b'provider private key')
+            (client / 'providers/nodes.json').write_text(json.dumps({'proxies': [
+                dict(self.raw['proxies'][0], **{'private-key': 'tls/key.pem'})]}))
+            (client / 'rules').mkdir()
+            (client / 'rules/rules.yaml').write_text('payload:\n  - GEOIP,CN,DIRECT\n')
+            (client / 'tls').mkdir()
+            (client / 'tls/key.pem').write_bytes(b'profile certificate')
+            (client / 'Country.mmdb').write_bytes(b'fixture country')
+            raw = dict(self.raw, proxies=[dict(self.raw['proxies'][0], certificate='tls/key.pem')],
+                       **{'proxy-providers': {'local': {'type': 'file', 'path': 'providers/nodes.json'}},
+                          'rule-providers': {'local': {'type': 'file', 'path': 'rules/rules.yaml', 'behavior': 'classical'}}})
+            source.write_text(json.dumps(raw))
+            sources.create_source(raw, source, self.source, require_geo=True)
+            shutil.rmtree(client)
+            data = self.root / 'runtime'
+            runtime = sources.derive_runtime(self.source, data, {}, 17897, 19091)
+            self.assertEqual((data / runtime['proxies'][0]['certificate']).read_bytes(), b'profile certificate')
+            provider = tool.load_yaml(data / runtime['proxy-providers']['local']['path'])
+            self.assertEqual((data / provider['proxies'][0]['private-key']).read_bytes(), b'provider private key')
+            self.assertTrue((data / runtime['rule-providers']['local']['path']).is_file())
+            self.assertEqual((data / 'Country.mmdb').read_bytes(), b'fixture country')
+            self.assertNotIn(str(client), json.dumps(runtime))
+        self.download.assert_not_called()
+
+    def test_custom_resource_directory_is_used_without_searching_unrelated_parents(self):
+        resources = self.root / 'custom-resources'
+        resources.mkdir()
+        (resources / 'nodes.json').write_text(json.dumps({'proxies': self.raw['proxies']}))
+        (resources / 'client.pem').write_bytes(b'fixture certificate')
+        raw = dict(self.raw, proxies=[dict(self.raw['proxies'][0], certificate='client.pem')],
+                   **{'proxy-providers': {'local': {'type': 'file', 'path': 'nodes.json'}}})
+        with self.assertRaises(DomainError) as caught:
+            sources.create_source(raw, self.input, self.source)
+        self.assertEqual(caught.exception.code, 'SOURCE_RESOURCE_MISSING')
+        self.assertIn('--resource-dir', str(caught.exception))
+        sources.create_source(raw, self.input, self.source, resource_dirs=[resources])
+        shutil.rmtree(resources)
+        runtime = sources.derive_runtime(self.source, self.root / 'runtime', {}, 17897, 19091)
+        self.assertEqual((self.root / 'runtime' / runtime['proxies'][0]['certificate']).read_bytes(), b'fixture certificate')
+        self.download.assert_not_called()
+
+    def test_config_directory_wins_over_shared_and_explicit_resource_roots(self):
+        resources = self.root / 'resources'
+        resources.mkdir()
+        (resources / 'client.pem').write_bytes(b'wrong certificate')
+        (self.input.parent / 'client.pem').write_bytes(b'correct certificate')
+        raw = dict(self.raw, proxies=[dict(self.raw['proxies'][0], certificate='client.pem')])
+        sources.create_source(raw, self.input, self.source, resource_dirs=[resources])
+        profile, _ = sources.read_source(self.source)
+        self.assertEqual((self.source / profile['proxies'][0]['certificate']).read_bytes(), b'correct certificate')
+
+    def test_resource_symlink_is_rejected_without_falling_back_or_downloading(self):
+        outside = self.root / 'private.pem'
+        outside.write_bytes(b'PRIVATE CONTENT')
+        (self.input.parent / 'nodes.json').symlink_to(outside)
+        raw = dict(self.raw, **{'proxy-providers': {'remote': {
+            'type': 'http', 'path': 'nodes.json', 'url': 'https://provider.test?PRIVATE'}}})
+        with self.assertRaises(DomainError) as caught:
+            sources.create_source(raw, self.input, self.source)
+        self.assertEqual(caught.exception.code, 'INVALID_RESOURCE_PATH')
+        self.assertNotIn('PRIVATE', str(caught.exception))
+        self.assertFalse(self.source.exists())
+        self.download.assert_not_called()
+
+    def test_offline_local_provider_can_use_explicit_resource_directory(self):
+        resources = self.root / 'resources'
+        resources.mkdir()
+        (resources / 'nodes.json').write_text(json.dumps({'proxies': self.raw['proxies']}))
+        raw = dict(self.raw, **{'proxy-providers': {'local': {'type': 'file', 'path': 'nodes.json'}}})
+        sources.create_source(raw, self.input, self.source, resource_dirs=[resources], _offline=True)
+        sources.read_source(self.source)
+        self.download.assert_not_called()
+
     def test_file_identity_is_path_stable_while_parsed_digest_tracks_content_not_mapping_order(self):
         first = sources.origin_info(self.raw, self.input)
         changed = copy.deepcopy(self.raw)

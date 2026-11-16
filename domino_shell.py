@@ -86,6 +86,27 @@ export NO_PROXY="$no_proxy"
     return number if text == expected else None
 
 
+def display_value(name: str, value: Optional[str]) -> str:
+    """Display proxy endpoints without credentials, paths or terminal controls."""
+    if value is None:
+        return '未设置'
+    if not value:
+        return '空值'
+    if name.lower() == 'no_proxy':
+        return value if re.fullmatch(r'[A-Za-z0-9:.,*/_ -]+', value) else '已设置（值已隐藏）'
+    from urllib.parse import urlsplit
+    try:
+        url = urlsplit(value)
+        if url.scheme not in ('http', 'https', 'socks4', 'socks4a', 'socks5', 'socks5h') or not url.hostname:
+            return '已设置（值已隐藏）'
+        host = '[' + url.hostname + ']' if ':' in url.hostname else url.hostname
+        if not all(c.isprintable() for c in host):
+            return '已设置（值已隐藏）'
+        return url.scheme + '://' + host + (':' + str(url.port) if url.port else '')
+    except ValueError:
+        return '已设置（值已隐藏）'
+
+
 def _desired(port: int) -> dict:
     return {name: (NO_PROXY if name.lower() == 'no_proxy' else
                    f'{"socks5h" if name.lower() == "all_proxy" else "http"}://127.0.0.1:{port}')
@@ -206,9 +227,9 @@ def sync_state(app: Path, current: dict, *, metadata: str = '', pid: str = '',
     commands.append(f'export {STATE_VAR}={shlex.quote(encoded)}')
     manual = sum(name not in owned and (reported[name]['present'] or name in detached)
                  for name in VARIABLES)
-    summary = (f'policy={"on" if enabled else "off"} managed={len(owned)} '
-               f'manual={manual} readonly={readonly_count} '
-               f'restorable={len(owned)}')
+    summary = 'Domino 已接管终端代理' if len(owned)==len(VARIABLES) else 'Domino 已接管部分变量' if owned else '使用原有代理设置'
+    if manual:summary+=' · 保留手动设置'
+    if readonly_count:summary+=' · 跳过只读变量'
     commands.append(f'_DOMINO_SHELL_SUMMARY={shlex.quote(summary)}')
     if intent in ('on', 'off') and readonly_count:
         commands.append("printf '%s\\n' 'Domino: readonly proxy parameters skipped; terminal application is partial.' >&2")
@@ -252,7 +273,8 @@ def integration(app: Path, python: str, legacy_port: Optional[int] = None) -> st
     """Generate a stable sourceable loader; no HOME writes or user rc edits."""
     app = Path(app).absolute()
     helper = app / 'cli/domino_shell.py'
-    command = f'{shlex.quote(python)} -I {shlex.quote(str(helper))} sync --app {shlex.quote(str(app))}'
+    executable = shlex.join(python if isinstance(python, (list, tuple)) else [python])
+    command = f'{executable} -I {shlex.quote(str(helper))} sync --app {shlex.quote(str(app))}'
     if legacy_port is not None:
         if type(legacy_port) is not int or not 1024 <= legacy_port <= 65535:
             raise ValueError('Invalid legacy proxy port')
@@ -294,6 +316,14 @@ case $- in
       local _domino_action=status _domino_safe=1 _domino_json= _domino_target= _domino_argument
       command domino "$@"
       _domino_rc=$?
+      _domino_argument=${1-}
+      while [ "${_domino_argument%.}" != "$_domino_argument" ]; do
+        _domino_argument=${_domino_argument%.}
+      done
+      case "$_domino_argument" in
+        [lL][oO][cC][aA][lL][hH][oO][sS][tT]|127.0.0.1|::1|'[::1]')
+          [ "${2-}" != shell ] || shift;;
+      esac
       if [ "$_domino_rc" -eq 0 ] && [ "${1-}" = shell ]; then
         shift
         case "${1-}" in on|off|status) _domino_action=$1; shift;; esac

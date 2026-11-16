@@ -19,6 +19,8 @@ import domino_cli as tool
 
 REAL_API_JSON = control.api_json
 REAL_RUN = control.run
+TEST_CORE = Path(os.environ.get("DOMINO_TEST_CORE", str(Path.home() / ".local/share/domino/mihomo")))
+TEST_MMDB = Path(os.environ.get("DOMINO_TEST_MMDB", str(Path.home() / ".local/share/domino/data/Country.mmdb")))
 
 
 class SubscriptionTests(unittest.TestCase):
@@ -527,6 +529,109 @@ class SubscriptionTests(unittest.TestCase):
         (bundle / 'registration.json').write_text('{"version":1,"kind":"snapshot"}')
         return bundle
 
+    def captured_clash_fixture(self, *, active=False, runtime=False):
+        bundle=self.prepared_bundle(profile_id='captured-uid',profile_name='已重命名配置')
+        client=self.home/'synthetic-client'
+        (client/'profiles').mkdir(parents=True,exist_ok=True)
+        original=client/('clash-verge.yaml' if runtime else 'profiles/captured.yaml')
+        original.write_text(json.dumps(self.original))
+        index=client/'profiles.yaml'
+        index.write_text(json.dumps({'current':'another-uid','items':[
+            {'uid':'another-uid','type':'remote','name':'另一个配置','file':'another.yaml','url':'https://other.example/config'},
+            {'uid':'captured-uid','type':'remote','name':'旧的显示名称','file':'captured.yaml',
+             'url':'https://airport.example/config?token=RECOVERED-PRIVATE'}]}))
+        metadata_path=bundle/'data/source/metadata.json'
+        metadata=json.loads(metadata_path.read_text())
+        metadata.update(capture_kind='verge-runtime' if runtime else 'verge-profile',original_path=str(original.resolve()))
+        metadata_path.write_text(json.dumps(metadata))
+        item=self.manager().register_prepared(bundle,{'version':1,'kind':'snapshot'},activate=active)
+        return item,index
+
+    def test_update_captured_clash_profile_downloads_and_becomes_independent_subscription(self):
+        item,index=self.captured_clash_fixture()
+        runtime=(self.app/'data/config.json').read_bytes()
+        self.content['proxies'].append(dict(self.content['proxies'][0],name='最新节点'))
+        self.execute('--update',item['name'])
+        updated=self.manager().find(item['name'])
+        self.assertEqual((updated['id'],updated['name']),(item['id'],item['name']))
+        self.assertEqual(updated['kind'],'subscription')
+        self.assertEqual(updated['node_count'],3)
+        self.assertNotEqual(updated['revision'],item['revision'])
+        self.assertEqual(self.download.call_args.args[0],'https://airport.example/config?token=RECOVERED-PRIVATE')
+        self.assertNotIn('RECOVERED-PRIVATE',self.execute('--json'))
+        self.assertEqual((self.app/'data/config.json').read_bytes(),runtime)
+        self.api.assert_not_called()
+        index.unlink()
+        self.execute('--update',item['name'])
+        self.assertEqual(self.download.call_count,2)
+
+    def test_update_current_clash_runtime_uses_captured_uid_and_preserves_runtime_settings(self):
+        item,_=self.captured_clash_fixture(active=True,runtime=True)
+        self.content['proxies'].append(dict(self.content['proxies'][0],name='最新节点'))
+        self.execute('--update',item['name'])
+        self.assertEqual(self.manager().active_id(),item['id'])
+        self.assertEqual(self.manager().find(item['name'])['kind'],'subscription')
+        current=json.loads((self.app/'data/config.json').read_text())
+        self.assertEqual(len(current['proxies']),3)
+        for field in ['mixed-port','external-controller','secret','mode','log-level']:
+            self.assertEqual(current[field],self.original[field])
+        self.assertEqual(self.download.call_args.args[0],'https://airport.example/config?token=RECOVERED-PRIVATE')
+        self.assertTrue(any(call.args[0]=='/configs?force=true' for call in self.api.call_args_list))
+
+    def test_failed_clash_update_retains_snapshot_revision_and_registration(self):
+        item,_=self.captured_clash_fixture(active=True)
+        before=self.manager().index.read_bytes()
+        runtime=(self.app/'data/config.json').read_bytes()
+        self.validation.side_effect=control.InstallError('synthetic validation failure')
+        with self.assertRaises(control.InstallError):self.execute('--update',item['name'])
+        self.assertEqual(self.manager().index.read_bytes(),before)
+        self.assertEqual((self.app/'data/config.json').read_bytes(),runtime)
+        self.assertEqual(self.manager().find(item['name'])['kind'],'snapshot')
+        self.api.assert_not_called()
+
+    def test_failed_active_clash_reload_restores_snapshot_and_does_not_save_recovered_url(self):
+        item,_=self.captured_clash_fixture(active=True)
+        before=self.manager().index.read_bytes()
+        runtime=(self.app/'data/config.json').read_bytes()
+        failed=False
+        def response(route,*args,**kwargs):
+            nonlocal failed
+            if route=='/configs?force=true' and not failed:
+                failed=True
+                raise control.InstallError('synthetic reload failure')
+            return self.response(route,*args,**kwargs)
+        self.api.side_effect=response
+        with self.assertRaisesRegex(control.InstallError,'已恢复原配置'):
+            self.execute('--update',item['name'])
+        self.assertTrue(failed)
+        self.assertEqual(self.manager().index.read_bytes(),before)
+        self.assertEqual((self.app/'data/config.json').read_bytes(),runtime)
+        self.assertEqual(self.manager().find(item['name'])['kind'],'snapshot')
+        self.assertNotIn('url',self.manager().find(item['name']))
+
+    def test_unsafe_missing_or_ambiguous_clash_address_never_downloads_or_changes_registry(self):
+        item,index=self.captured_clash_fixture()
+        original=json.loads(index.read_text())
+        before=self.manager().index.read_bytes()
+        for mode in ['duplicate','different-file','bad-url','missing-url','missing-index']:
+            with self.subTest(mode=mode):
+                data=copy.deepcopy(original)
+                entry=data['items'][1]
+                if mode=='duplicate':data['items'].append(dict(entry))
+                elif mode=='different-file':entry['file']='another.yaml'
+                elif mode=='bad-url':entry['url']='http://host/config?token=PRIVATE'
+                elif mode=='missing-url':entry['url']=None
+                index.write_text(json.dumps(data))
+                if mode=='missing-index':index.unlink()
+                with self.assertRaises(control.InstallError) as caught:
+                    self.execute('--update',item['name'])
+                self.assertEqual(caught.exception.code,'SUBSCRIPTION_URL_REQUIRED')
+                self.assertIn('修改地址',str(caught.exception))
+                self.assertNotIn('PRIVATE',str(caught.exception))
+                self.assertEqual(self.manager().index.read_bytes(),before)
+        self.download.assert_not_called()
+        self.api.assert_not_called()
+
     def test_prepared_capture_registration_preserves_same_name_online_item_and_user_rename(self):
         import domino_sources as sources
         self.add('xlink')
@@ -732,6 +837,137 @@ class SubscriptionTests(unittest.TestCase):
         source = sources.read_source(self.app / 'data/source')[0]
         owned = tool.load_yaml(self.app / 'data/source' / source['proxy-providers']['file']['path'])
         self.assertFalse(Path(owned['proxies'][0]['certificate']).is_absolute())
+
+    def capture_file(self, raw=None):
+        source = self.home / 'external.json'
+        source.write_text(json.dumps(self.content if raw is None else raw))
+        return self.manager().capture(source, tool.load_yaml(source))
+
+    def test_capture_preserves_active_configuration_proxy_shell_and_node_state(self):
+        first, changed = self.capture_file()
+        self.assertTrue(changed)
+        control.write_private(self.app / 'data/subscription.json', json.dumps({'id': first['id']}))
+        for name in ['data/cache.db', 'shell-policy.json']:
+            control.write_private(self.app / name, 'fixture state')
+        for name in ['.config/domino/system-proxy.json', '.config/domino/proxy.env', '.zshrc']:
+            control.write_private(self.home / name, 'fixture proxy enabled state')
+        before = {str(p): p.read_bytes() for p in self.app.rglob('*') if p.is_file()}
+        external = {name: (self.home / name).read_bytes() for name in ['.config/domino/system-proxy.json', '.config/domino/proxy.env', '.zshrc']}
+        self.api.reset_mock(); self.probe.reset_mock()
+        modified = copy.deepcopy(self.content)
+        modified['proxies'][0]['port'] += 1
+        second, changed = self.capture_file(modified)
+        self.assertTrue(changed)
+        self.assertNotEqual(first['id'], second['id'])
+        self.assertEqual(self.manager().active_id(), first['id'])
+        self.assertEqual(self.manager().find(first['name'])['revision'], first['revision'])
+        self.assertEqual(before, {str(p): p.read_bytes() for p in self.app.rglob('*') if p.is_file()})
+        for name, content in external.items():
+            self.assertEqual((self.home / name).read_bytes(), content)
+        self.api.assert_not_called(); self.probe.assert_not_called()
+
+    def test_capture_deduplicates_online_cached_profile_without_changing_its_name(self):
+        self.add()
+        self.execute('--update', '机场一')
+        manager = self.manager()
+        item = manager.find('机场一')
+        baseline = manager.index.read_bytes()
+        _, changed = self.capture_file(self.content)
+        self.assertFalse(changed)
+        self.assertEqual(manager.index.read_bytes(), baseline)
+        self.assertEqual(self.manager().registry['items'], [item])
+
+    def test_capture_save_failure_cleans_revision_and_preserves_registry_and_runtime(self):
+        self.capture_file()
+        manager = self.manager()
+        before_index = manager.index.read_bytes()
+        before_runtime = (self.app / 'data/config.json').read_bytes()
+        before_cache = sorted(p.name for p in (manager.root / 'cache').iterdir())
+        modified = copy.deepcopy(self.content)
+        modified['proxies'][0]['port'] += 1
+        with patch.object(subscriptions.Manager, 'save', side_effect=OSError('fixture failure')):
+            with self.assertRaises(OSError):
+                self.capture_file(modified)
+        self.assertEqual(manager.index.read_bytes(), before_index)
+        self.assertEqual((self.app / 'data/config.json').read_bytes(), before_runtime)
+        self.assertEqual(sorted(p.name for p in (manager.root / 'cache').iterdir()), before_cache)
+
+    def test_unused_geo_cache_does_not_create_duplicate_profile(self):
+        first, changed = self.capture_file()
+        self.assertTrue(changed)
+        (self.home / 'Country.mmdb').write_bytes(b'unused shared database')
+        before = self.manager().index.read_bytes()
+        second, changed = self.capture_file()
+        self.assertFalse(changed)
+        self.assertEqual(first['id'], second['id'])
+        self.assertEqual(self.manager().index.read_bytes(), before)
+
+    def test_capture_uses_installed_geo_cache_before_validation_and_preserves_active_data(self):
+        raw = dict(self.content, rules=['GEOIP,CN,DIRECT', 'MATCH,出口'])
+        geo = self.app / 'data/Country.mmdb'
+        geo.write_bytes(b'fixture installed mmdb')
+        before = {str(p): p.read_bytes() for p in self.app.rglob('*') if p.is_file()}
+        def validate(command, **options):
+            data = Path(command[command.index('-d') + 1])
+            self.assertEqual((data / 'Country.mmdb').read_bytes(), b'fixture installed mmdb')
+            self.assertEqual(options['stage'], '本机配置校验')
+        self.validation.side_effect = validate
+        item, changed = self.capture_file(raw)
+        self.assertTrue(changed)
+        self.assertEqual((self.manager().cached(item) / 'Country.mmdb').read_bytes(), geo.read_bytes())
+        self.assertEqual(before, {str(p): p.read_bytes() for p in self.app.rglob('*') if p.is_file()})
+        self.api.assert_not_called()
+
+    def test_local_validation_timeout_has_correct_stage_and_private_output(self):
+        raw = dict(self.content)
+        with patch.object(control, 'run', REAL_RUN), \
+             patch.object(control.subprocess, 'run', side_effect=subprocess.TimeoutExpired('fixture', 90, output='PRIVATE')):
+            with self.assertRaises(control.InstallError) as caught:
+                self.capture_file(raw)
+        self.assertEqual(caught.exception.code, 'CONFIG_VALIDATION_TIMEOUT')
+        self.assertIn('本机配置校验超时', str(caught.exception))
+        self.assertNotIn('远端', str(caught.exception))
+        self.assertNotIn('PRIVATE', str(caught.exception))
+        self.assertFalse(self.manager().index.exists())
+
+    @unittest.skipUnless(TEST_CORE.is_file() and TEST_MMDB.is_file(), 'requires disposable Mihomo and public MMDB fixture')
+    def test_real_core_captures_geoip_profile_without_hidden_download_or_runtime_change(self):
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+        import threading
+        requests = []
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                requests.append(self.path)
+                self.send_response(404); self.end_headers()
+            def log_message(self, *args):
+                pass
+        server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            shutil.copy2(TEST_CORE, self.app / 'mihomo')
+            shutil.copy2(TEST_MMDB, self.app / 'data/Country.mmdb')
+            raw = dict(self.content, rules=['GEOIP,CN,DIRECT', 'MATCH,出口'],
+                       **{'geox-url': {'mmdb': f'http://127.0.0.1:{server.server_port}/Country.mmdb'}})
+            before = {str(p): p.read_bytes() for p in self.app.rglob('*') if p.is_file()}
+            with patch.object(control, 'run', REAL_RUN):
+                item, changed = self.capture_file(raw)
+            self.assertTrue(changed)
+            self.assertTrue((self.manager().cached(item) / 'Country.mmdb').is_file())
+            self.assertEqual(requests, [])
+            self.assertEqual(before, {str(p): p.read_bytes() for p in self.app.rglob('*') if p.is_file()})
+            self.api.assert_not_called()
+        finally:
+            server.shutdown(); server.server_close(); thread.join(timeout=2)
+
+    def test_capture_rejects_invalid_core_configuration_without_registering(self):
+        before = (self.app / 'data/config.json').read_bytes()
+        self.validation.side_effect = control.InstallError('fixture validation failed')
+        with self.assertRaises(control.InstallError):
+            self.capture_file()
+        self.assertFalse(self.manager().index.exists())
+        self.assertEqual((self.app / 'data/config.json').read_bytes(), before)
+
 
 
 if __name__ == '__main__':

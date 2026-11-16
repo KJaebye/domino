@@ -1,0 +1,36 @@
+name: 问题反馈
+description: 提交可复现的 Domino 问题
+body:
+  - type: markdown
+    attributes:
+      value: 请使用合成配置，隐藏订阅地址、控制密钥、节点凭据和私有主机信息。
+  - type: input
+    id: version
+    attributes:
+      label: Domino 版本
+      description: domino --version
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: 系统、架构与 Python 版本
+      placeholder: Ubuntu 24.04 / x86_64 / Python 3.12
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤与脱敏命令
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: 预期结果与实际结果
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: 脱敏错误摘要

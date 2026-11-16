@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Target-side installer; standard library only. No credential values in output."""
+"""Target-side installer and management runtime. No credential values in output."""
 from __future__ import annotations
 
 import argparse
@@ -93,15 +93,17 @@ def deployment_lock():
         yield
 
 
-def run(args, **kwargs):
+def run(args, *, stage='远端步骤', **kwargs):
     try:
         return subprocess.run(args, check=True, **kwargs)
     except subprocess.CalledProcessError as exc:
         if args[:3]==['sudo','-n','-v']:
             raise InstallError('需要预先授权 sudo；机器接口不会询问密码。',code='AUTH_REQUIRED',exit_code=4) from None
-        raise InstallError(f'远端步骤失败（退出码 {exc.returncode}）。') from None
+        raise InstallError(f'{stage}失败（退出码 {exc.returncode}）。',
+                           code='CONFIG_VALIDATION_FAILED' if stage == '本机配置校验' else 'OPERATION_FAILED') from None
     except subprocess.TimeoutExpired:
-        raise InstallError('远端步骤超时。') from None
+        raise InstallError(f'{stage}超时。',
+                           code='CONFIG_VALIDATION_TIMEOUT' if stage == '本机配置校验' else 'OPERATION_FAILED') from None
 
 
 def write_private(path, text, mode=0o600):
@@ -238,7 +240,7 @@ def probe(proxy_port, url):
     return {'healthy': True, 'exit_country': country}
 
 
-def _snapshot(kind='deploy', backup=None):
+def _snapshot(kind='deploy', backup=None, *, preserve_cli=False):
     if backup is None:
         BACKUPS.mkdir(parents=True, exist_ok=True, mode=0o700)
         BACKUPS.chmod(0o700)
@@ -261,21 +263,21 @@ def _snapshot(kind='deploy', backup=None):
             write_private(backup / f'file-{i}', path.read_bytes(), mode)
             state['files'][name]['mode'] = mode
     cli = HOME / '.local/bin/domino'
-    state['cli_file'] = {'exists': cli.exists()}
-    if cli.exists():
+    state['cli_file'] = {'exists': cli.exists(), 'preserved': preserve_cli}
+    if cli.exists() and not preserve_cli:
         state['cli_file']['mode'] = cli.stat().st_mode & 0o777
         write_private(backup / 'cli-launcher', cli.read_bytes(), state['cli_file']['mode'])
     write_private(backup / 'snapshot.json', json.dumps(state))
     return backup
 
 
-def snapshot(kind='deploy'):
-    backup = _snapshot(kind)
+def snapshot(kind='deploy', *, preserve_cli=False):
+    backup = _snapshot(kind, preserve_cli=True) if preserve_cli else _snapshot(kind)
     # Publish only after both installation layouts and the external registry are captured.
     pending = backup / 'snapshot.pending'
     (backup / 'snapshot.json').rename(pending)
     with legacy_layout():
-        _snapshot(kind, backup / 'legacy')
+        _snapshot(kind, backup / 'legacy', preserve_cli=True) if preserve_cli else _snapshot(kind, backup / 'legacy')
     import domino_subscriptions
     domino_subscriptions.snapshot_registry(sys.modules[__name__], backup)
     pending.rename(backup / 'snapshot.json')
@@ -306,7 +308,9 @@ def _restore(backup):
     cli = HOME / '.local/bin/domino'
     if 'cli_file' in state:
         item = state['cli_file']
-        if item['exists']:
+        if item.get('preserved'):
+            pass
+        elif item['exists']:
             write_private(cli, (backup / 'cli-launcher').read_bytes(), item['mode'])
         elif cli.exists():
             cli.unlink()
@@ -438,7 +442,7 @@ def install_shell_policy(app, state):
 
 def configure_shell_environment(app, home, *, linux=False, legacy_port=None):
     import domino_shell
-    write_private(home / '.config/domino/proxy.env', domino_shell.integration(app, sys.executable, legacy_port))
+    write_private(home / '.config/domino/proxy.env', domino_shell.integration(app, ['/usr/bin/env', 'python3'], legacy_port))
     body = '[ ! -r "$HOME/.config/domino/proxy.env" ] || . "$HOME/.config/domino/proxy.env"'
     names = ['.bashrc', '.zshrc']
     if linux:
@@ -458,6 +462,8 @@ def install_cli(bundle):
     if not (bundle / 'cli').is_dir():
         return
     shutil.copytree(bundle / 'cli', APP / 'cli')
+    if json.loads((bundle / 'manifest.json').read_text()).get('package_managed_cli'):
+        return
     launcher = f'''#!/usr/bin/env python3
 {CLI_MARKER}
 from pathlib import Path
@@ -502,7 +508,7 @@ def install(bundle):
             raise InstallError('目标缺少依赖：' + command)
     owned_installations()
     cli = HOME / '.local/bin/domino'
-    if not owned_cli(cli):
+    if not manifest.get('package_managed_cli') and not owned_cli(cli):
         raise InstallError('~/.local/bin/domino 已被其他程序使用，未覆盖。')
     body = '[ ! -r "$HOME/.config/domino/proxy.env" ] || . "$HOME/.config/domino/proxy.env"'
     for name in dict.fromkeys(ENV_FILES + LEGACY_ENV_FILES):
@@ -531,7 +537,7 @@ def install(bundle):
     unit = unit_text(user, group)
     pending = manifest.get('awaiting_subscription') and not (config.get('proxies') or config.get('proxy-providers'))
     shell_state = prepare_shell_policy(APP, HOME, system='linux', shell_env=manifest['shell_env'], pending=pending)
-    backup = snapshot()
+    backup = snapshot(preserve_cli=True) if manifest.get('package_managed_cli') else snapshot()
     try:
         if LEGACY_SERVICE.exists():
             sudo('systemctl', 'stop', LEGACY_SERVICE.name)
@@ -589,7 +595,7 @@ def install(bundle):
         globals().pop('_domino_registry_backup', None)
     print('服务已运行并启用开机自启；代理端口：' + str(proxy_port))
     if health is None:
-        print('基础环境已就绪，待添加订阅：domino configs add "名称"；domino configs switch "名称"。')
+        print('基础环境已就绪，待添加订阅：domino add "名称"；domino switch "名称"。')
     else:
         print('代理出网校验通过；出口地区：' + (health['exit_country'] or '未返回'))
     if manifest['shell_env']:
@@ -598,7 +604,7 @@ def install(bundle):
         print('其他已接入终端下次提示符同步；运行中的 VS Code / Server 不会更新环境。')
     print('部署前备份：' + backup.name)
     if (APP / 'cli').is_dir():
-        print('目标机管理和继续部署：~/.local/bin/domino status localhost；~/.local/bin/domino USER@IP')
+        print('目标机管理和继续部署：~/.local/bin/domino status；~/.local/bin/domino USER@IP')
 
 
 def select_backup(name=None):
@@ -800,15 +806,18 @@ def human_time(value):
 
 
 def status_text(result, system_proxy=None, *, color=False):
+    system_proxy = system_proxy if system_proxy is not None else result.get('system_proxy')
     text = human_text
     def styled(value, code):
         return human_style(value,code,color=color)
     if not result.get('installed'):
         summary, tone = '○ 尚未安装运行环境', '33'
     elif result.get('awaiting_subscription'):
-        summary, tone = ('● 服务已运行 · 待添加订阅' if result.get('active') else '○ 服务已停止 · 待添加订阅'), '33'
+        summary, tone = ('● 服务已运行 · 待添加订阅', '33') if result.get('active') else ('● 服务已停止 · 待添加订阅', '31')
     elif not result.get('active'):
-        summary, tone = '○ 服务已停止', '33'
+        summary, tone = '● 服务已停止', '31'
+    elif result.get('healthy') and system_proxy is not None and system_proxy.get('routing') not in ['domino','unsupported']:
+        summary, tone = '● 服务运行中 · 系统代理未接通', '33'
     elif result.get('healthy'):
         summary, tone = '● 代理出网正常', '32'
     else:
@@ -827,10 +836,10 @@ def status_text(result, system_proxy=None, *, color=False):
     if system_proxy is not None:
         routing = system_proxy.get('routing','unknown')
         ports = '/'.join(text(number) for number in system_proxy.get('ports',[]))
-        value = {'domino':'已指向 Domino' + (f" :{result['proxy_port']}" if result.get('proxy_port') else ''),
+        value = {'domino':'已开启，指向 Domino' + (f" 127.0.0.1:{text(result['proxy_port'])}" if result.get('proxy_port') else ''),
                  'off':'未开启', 'other':'指向其他代理' + (' :'+ports if ports else ''),
                  'mixed':'部分指向其他代理' + (' :'+ports if ports else ''),
-                 'pac':'使用 PAC 自动配置', 'unknown':'无法确认'}.get(routing,'无法确认')
+                 'pac':'使用 PAC 自动配置', 'unsupported':'无 GNOME 桌面会话；终端可用 domino shell on', 'unknown':'无法确认'}.get(routing,'无法确认')
         row('系统代理', styled(value,'32' if routing == 'domino' else '33'))
     if 'shell_proxy' in result:
         shell = result['shell_proxy']
@@ -844,11 +853,13 @@ def status_text(result, system_proxy=None, *, color=False):
     if result.get('requires_source_online'):
         row('上游依赖', styled('需要源电脑保持在线','33'))
     if result.get('awaiting_subscription'):
-        lines += ['','  下一步：domino configs add "名称"；domino configs switch "名称"。']
+        lines += ['','  下一步：domino add "名称"；domino switch "名称"。']
     elif not result.get('active'):
         lines += ['','  启动服务：domino start']
     elif not result.get('healthy'):
         lines += ['','  排查连接：domino logs；domino nodes']
+    elif system_proxy is not None and system_proxy.get('routing') not in ['domino','unsupported']:
+        lines += ['','  接通系统代理：domino start']
     return '\n'.join([*lines,''])
 
 
@@ -874,6 +885,11 @@ def collect_status(check_exit=True):
         if manifest.get('platform') == 'darwin':
             result['service'] = 'local.domino.mihomo'
             result['autostart_scope'] = 'user-login'
+            import domino_macos
+            result['system_proxy'] = domino_macos.system_proxy_overview(result['proxy_port'])
+        elif sys.platform == 'linux':
+            import domino_linux
+            result['system_proxy'] = domino_linux.system_proxy_overview(result['proxy_port'])
         result['deployment_method'] = manifest.get('deployment_method', 'independent')
         result['requires_source_online'] = manifest.get('requires_source_online', False)
         if result['active']:
@@ -894,12 +910,8 @@ def status(as_json=False):
     if as_json:
         print(json.dumps(result, ensure_ascii=False, indent=2))
     else:
-        system_proxy = None
-        if result.get('service') == 'local.domino.mihomo':
-            import domino_macos
-            system_proxy = domino_macos.system_proxy_overview(result.get('proxy_port'))
         color = sys.stdout.isatty() and 'NO_COLOR' not in os.environ and os.environ.get('TERM') != 'dumb'
-        print(status_text(result, system_proxy, color=color))
+        print(status_text(result, color=color))
     return 0 if result['healthy'] else 3
 
 
@@ -918,12 +930,13 @@ def proxy_state():
     return config, live
 
 
-def proxy_inventory(live):
+def proxy_inventory(live, *, api=None):
+    api = api or api_json
     """Include provider members that the top-level proxy API does not enumerate."""
     live=dict(live)
     missing={name for item in live.values() for name in item.get('all',[]) if name not in live}
     if not missing: return live
-    try: providers=api_json('/providers/proxies').get('providers',{})
+    try: providers=api('/providers/proxies').get('providers',{})
     except InstallError as error:
         if error.code=='RESOURCE_NOT_FOUND': return live
         raise
@@ -942,7 +955,54 @@ def proxy_inventory(live):
     return live
 
 
-def collect_nodes(group=None):
+def current_proxy_paths(mode, live, group=None, *, include_nodes=False):
+    """Resolve runtime selections without assuming a rule-mode request's destination."""
+    if group:
+        roots = [group]
+    elif mode == 'direct':
+        roots = ['DIRECT']
+    elif mode == 'global':
+        roots = ['GLOBAL']
+    else:
+        groups = [name for name, item in live.items() if name != 'GLOBAL' and isinstance(item.get('all'), list)]
+        roots = [name for name in groups if str(live[name].get('type', '')).lower() in ['selector', 'select']] or groups
+    paths = []
+    for root in roots:
+        path, seen, name, terminal = [], set(), root, None
+        while True:
+            if name in seen:
+                path.append(name + '（循环引用）')
+                break
+            seen.add(name)
+            path.append(name)
+            item = live.get(name)
+            if name == 'DIRECT':
+                path[-1] += '（直连）'
+                break
+            if name in ['REJECT', 'REJECT-DROP']:
+                path[-1] += '（拒绝连接）'
+                break
+            if item is None:
+                path[-1] += '（节点信息不可用）'
+                break
+            if not isinstance(item.get('all'), list):
+                if name not in ['PASS', 'COMPATIBLE']:
+                    terminal = name
+                break
+            if str(item.get('type', '')).lower() in ['loadbalance', 'load-balance']:
+                path[-1] += '（按连接分配）'
+                break
+            selected = item.get('now')
+            if not selected:
+                path[-1] += '（尚未选定节点）'
+                break
+            name = selected
+        path = ' → '.join(path)
+        paths.append({'path':path, 'node':terminal} if include_nodes else path)
+    return paths
+
+
+def collect_nodes(group=None, *, include_current=False):
     config, live = proxy_state()
     live=proxy_inventory(live)
     groups = []
@@ -962,21 +1022,27 @@ def collect_nodes(group=None):
             raise InstallError('没有找到该策略组，请先运行 nodes 查看名称。')
         actual_nodes = []
     result = {'mode': config.get('mode', 'rule'), 'groups': groups, 'nodes': actual_nodes}
+    if include_current:
+        result['current_proxy_paths'] = current_proxy_paths(result['mode'], live, group)
     return result
 
 
 def nodes(group=None, as_json=False):
-    result=collect_nodes(group)
+    result=collect_nodes(group, include_current=not as_json)
     groups,actual_nodes=result['groups'],result['nodes']
     if as_json:
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return
     mode = {'rule':'规则模式','global':'全局模式','direct':'直连模式'}.get(result['mode'],result['mode'])
     human_header('节点',f"{mode}  ·  {len(groups)} 策略组  ·  {len(actual_nodes)} 节点")
-    group_rows=[]
-    for g in groups:
-        group_rows.append([g['name'],(g['current'] or '由策略决定','1'),'手动选择' if g['selectable'] else '自动策略'])
-    if group_rows: human_table(['策略组','当前选择','类型'],group_rows)
+    app, _ = current_installation()
+    human_row('当前配置', (subscription_name(app) or '未关联配置库的配置', '1'))
+    for index, path in enumerate(result['current_proxy_paths']):
+        human_row(('组内当前选择' if group else '当前代理') if index == 0 else '', (path, '1;32'))
+    if not result['current_proxy_paths']:
+        human_row('当前代理', '无法确定（未发现可用策略组）')
+    if result['mode'] == 'rule' and not group:
+        print('  按规则分流；以上为手动策略组（无手动组时为自动策略组）的当前选择。')
     if group:
         print()
         for choice in groups[0]['choices']:
@@ -1049,9 +1115,32 @@ def service_action(action, non_interactive=False, lines=100, follow=False):
             command += ['-f']
         run(['sudo', '-n', *command])
     else:
+        if action == 'stop':
+            system_proxy('off', render=False)
         sudo('systemctl', action, service.name)
-        human_header('服务',{'start':'● 已启动','stop':'○ 已停止','restart':'● 已重启'}[action], '33' if action == 'stop' else '32')
+        proxy = None
+        if action in ['start','restart']:
+            try: proxy = system_proxy('on', render=False)
+            except DomainError as error:
+                raise InstallError('服务已启动，但系统代理未接通：'+str(error),code=error.code,exit_code=error.exit_code,effect='unknown') from None
+        human_header('运行状态',{'start':'● 已开启','stop':'● 已关闭','restart':'● 已重启'}[action], '31' if action == 'stop' else '32')
         human_row('管理服务',service.name)
+        if proxy and proxy.get('supported'):
+            human_row('系统代理','已开启（HTTP / HTTPS / SOCKS）')
+            human_row('代理目标',f"127.0.0.1:{proxy['proxies']['http']['port']}（Domino）")
+        elif action != 'stop':
+            human_row('系统代理','无 GNOME 桌面会话；代理入口已就绪')
+            human_row('终端代理','使用 domino shell on/off/status 独立管理')
+        else:
+            human_row('系统代理','已解除 Domino 接管；无桌面时不修改系统代理')
+
+
+def system_proxy(action=None, service=None, as_json=False, non_interactive=False, *, render=True):
+    if sys.platform == 'darwin':
+        import domino_macos as backend
+    else:
+        import domino_linux as backend
+    return backend.system_proxy(sys.modules[__name__],action,service,as_json,non_interactive,render=render)
 
 
 def api_json(route, payload=None, *, method=None, timeout=3):
@@ -1111,7 +1200,13 @@ def set_option(key, value=None, as_json=False, *, render=True):
 def show_option(key, value, persisted=False):
     names = {'rule':'规则模式','global':'全局模式','direct':'直连模式','debug':'调试','info':'信息',
              'warning':'警告','error':'错误','silent':'静默'}
-    human_header('代理模式' if key == 'mode' else '日志级别',names.get(value,human_text(value)))
+    options = ('rule', 'global', 'direct') if key == 'mode' else ('debug', 'info', 'warning', 'error', 'silent')
+    human_header('代理模式' if key == 'mode' else '日志级别')
+    human_table(['模式' if key == 'mode' else '级别', '值'], [
+        [(('● ' if option == value else '  ') + names[option], '32' if option == value else '0'), option]
+        for option in options])
+    if value not in options:
+        human_row('当前模式' if key == 'mode' else '当前级别', (human_text(value), '33'))
     if persisted: human_row('保存','已写入配置，重启后保留')
 
 
@@ -1127,13 +1222,333 @@ def resolve_delay_name(query, names, kind):
     raise InstallError(f'没有找到指定{kind}；请运行 domino nodes 查看名称。')
 
 
-def delay(node=None, group=None, url='https://www.gstatic.com/generate_204', timeout_ms=5000, as_json=False, *, name=None, render=True):
+DELAY_NODE_WORKERS = 32
+DELAY_CONFIG_WORKERS = 3
+from threading import Lock
+_DELAY_PORT_LOCK = Lock()
+_DELAY_PORTS = set()
+
+
+class _DelayProgress:
+    """One terminal writer; worker threads only update counters."""
+    def __init__(self, enabled=True, *, force=False, configs=False):
+        from threading import Event
+        self.stream = sys.stderr
+        self.enabled = enabled and (force or self.stream.isatty())
+        self.configs = configs
+        self.config_total = 0
+        self.registered = {}
+        self.finished = set()
+        self.completed = self.available = 0
+        self.lock = Lock()
+        self.stop = Event()
+        self.thread = None
+        self.started = time.monotonic()
+
+    def __enter__(self):
+        return self
+
+    def start(self, configs=0):
+        if not self.enabled or self.thread is not None:
+            return
+        from threading import Thread
+        self.config_total = configs
+        self.started = time.monotonic()
+        sys.stdout.flush()
+        self._draw()
+        self.thread = Thread(target=self._animate, name='domino-delay-progress', daemon=True)
+        self.thread.start()
+
+    def nodes(self, key, count):
+        with self.lock:
+            self.registered[key] = count
+
+    def node_done(self, ok):
+        with self.lock:
+            self.completed += 1
+            self.available += bool(ok)
+
+    def config_done(self, key):
+        with self.lock:
+            self.finished.add(key)
+
+    def _draw(self):
+        with self.lock:
+            elapsed = time.monotonic() - self.started
+            total = sum(self.registered.values())
+            known = (len(set(self.registered) | self.finished) == self.config_total
+                     if self.configs else bool(self.registered))
+            count = (f'{self.completed}/{total}' + ('' if known else '+')
+                     if known or total else '0/?')
+            status = '正在检测' if known else '加载配置'
+            percent = min(100, int(self.completed * 100 / total)) if known and total else None
+            if known and not total:
+                percent = 100
+            details = f' {percent:3d}%' if percent is not None else '  ...'
+            details += f' · 节点 {count} · 可用 {self.available} · 不可用 {self.completed-self.available}'
+            if self.configs:
+                details += f' · 配置 {len(self.finished)}/{self.config_total}'
+            details += f' · {elapsed:.1f}s'
+            columns = shutil.get_terminal_size(fallback=(100, 24)).columns
+            width = max(4, min(20, columns - human_width(status + details) - 7))
+            if percent is None:
+                bar = [' '] * width
+                bar[int(elapsed * 10) % width] = '='
+                bar = ''.join(bar)
+            else:
+                filled = width * percent // 100
+                bar = '=' * filled + '-' * (width - filled)
+            line = f'  {status} [{bar}]' + details
+            while line and human_width(line) >= columns:
+                line = line[:-1]
+            self.stream.write('\r\033[2K' + line)
+            self.stream.flush()
+
+    def _animate(self):
+        while not self.stop.wait(.1):
+            self._draw()
+
+    def close(self, final=False):
+        if self.thread is None:
+            return
+        self.stop.set()
+        self.thread.join()
+        self.thread = None
+        if final:
+            self._draw()
+            self.stream.write('\n')
+        else:
+            self.stream.write('\r\033[2K')
+        self.stream.flush()
+
+    def __exit__(self, kind, value, traceback):
+        self.close()
+
+
+@contextmanager
+def _delay_port():
+    # Keep separate concurrent cores from choosing the same released port.
+    with _DELAY_PORT_LOCK:
+        while True:
+            with socket.socket() as reservation:
+                reservation.bind(('127.0.0.1', 0))
+                port = reservation.getsockname()[1]
+            if port not in _DELAY_PORTS:
+                _DELAY_PORTS.add(port)
+                break
+    try:
+        yield port
+    finally:
+        with _DELAY_PORT_LOCK:
+            _DELAY_PORTS.discard(port)
+
+
+def _delay_cancelled(cancel):
+    if cancel is not None and cancel.is_set():
+        from concurrent.futures import CancelledError
+        raise CancelledError()
+
+
+def _delay_results(futures, cancel=None):
+    from concurrent.futures import TimeoutError as FutureTimeout
+    results = []
+    for future in futures:
+        if cancel is None:
+            results.append(future.result())
+            continue
+        while True:
+            _delay_cancelled(cancel)
+            try:
+                results.append(future.result(timeout=.1))
+                break
+            except FutureTimeout:
+                continue
+    return results
+
+
+@contextmanager
+def isolated_delay_config(name, *, _cancel=None):
+    """Run a cached profile on a disposable controller without touching services."""
+    import secrets
+    import domino_subscriptions
+    import domino_cli
+    _delay_cancelled(_cancel)
+    manager = domino_subscriptions.Manager(sys.modules[__name__])
+    item = manager.find(name)
+    cached = manager.cached(item)  # Never download or activate an uncached profile.
+    core = manager.app / 'mihomo'
+    if not core.is_file():
+        raise InstallError('缺少 Mihomo 内核，无法测试配置。', code='NOT_INSTALLED', exit_code=3)
+    with tempfile.TemporaryDirectory(prefix='domino-delay-') as directory, _delay_port() as port:
+        data = Path(directory) / 'data'
+        shutil.copytree(cached, data, ignore=shutil.ignore_patterns('source', 'cache.db', 'cache.db-*'))
+        raw = json.loads((data / 'config.json').read_text())
+        profile = domino_cli.sanitize_profile(raw, {}, 0, port)
+        profile['rules'] = ['MATCH,DIRECT']
+        profile.pop('rule-providers', None)
+        profile.pop('sub-rules', None)
+        providers = profile.get('proxy-providers', {})
+        for provider in providers.values():
+            if provider.get('type') == 'http':
+                provider['type'] = 'file'
+            for key in ('url', 'interval', 'proxy', 'header'):
+                provider.pop(key, None)
+            provider['health-check'] = {'enable': False}
+        profile['proxy-groups'] = [{'name': 'DominoDelay-' + secrets.token_hex(8), 'type': 'select',
+            'proxies': ['DIRECT'] + [node['name'] for node in profile.get('proxies', [])], 'use': list(providers)}]
+        write_private(data / 'config.json', json.dumps(profile, ensure_ascii=False))
+        process = subprocess.Popen([str(core), '-d', str(data), '-f', str(data / 'config.json')],
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        def api(route, **options):
+            return json.loads(controller(data, route, **options))
+        try:
+            deadline = time.monotonic() + 10
+            while True:
+                _delay_cancelled(_cancel)
+                if process.poll() is not None:
+                    raise InstallError('配置测速临时内核启动失败；请检查缓存配置和依赖资源。', code='DELAY_CORE_FAILED')
+                try:
+                    response = api('/proxies', timeout=.2)
+                    group = profile['proxy-groups'][0]['name']
+                    if group in response.get('proxies', {}):
+                        break
+                except (InstallError, OSError, ValueError):
+                    pass
+                if time.monotonic() >= deadline:
+                    raise InstallError('配置测速临时内核启动超时。', code='DELAY_CORE_TIMEOUT', exit_code=7)
+                time.sleep(.05)
+            yield api
+        finally:
+            if process.poll() is None:
+                process.terminate()
+                try:
+                    process.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait(timeout=3)
+
+
+def delay_summary(url='https://www.gstatic.com/generate_204', timeout_ms=5000, as_json=False, *, render=True, _progress=None):
+    """Aggregate bounded HTTPS node probes for every saved configuration."""
+    if _progress is None:
+        with _DelayProgress(enabled=render and not as_json, configs=True) as progress:
+            return delay_summary(url, timeout_ms, as_json, render=render, _progress=progress)
     if not 100 <= timeout_ms <= 60000:
         raise InstallError('测速超时必须在 100–60000 毫秒之间。')
     parsed = urllib.parse.urlsplit(url)
     if parsed.scheme != 'https' or not parsed.hostname or parsed.username or parsed.password:
         raise InstallError('测速 URL 必须是无内嵌凭据的 HTTPS 地址。')
-    live = proxy_inventory(api_json('/proxies')['proxies'])
+    import domino_subscriptions
+    manager = domino_subscriptions.Manager(sys.modules[__name__])
+    active = manager.active_id()
+    results = []
+    if render and not as_json:
+        human_header('配置出网检测', f'{len(manager.registry["items"])} 个配置 · 逐节点 HTTPS 检测')
+    if manager.registry['items']:
+        _progress.start(configs=len(manager.registry['items']))
+    def measure(item):
+        _delay_cancelled(cancel)
+        result = {'name': item['name'], 'active': item['id'] == active,
+                  'total': item.get('node_count'), 'available': None, 'unavailable': None}
+        if not item.get('revision'):
+            result.update(status='uncached', message='未缓存，请先更新或捕获配置。')
+        else:
+            try:
+                nodes = delay(config=item['name'], url=url, timeout_ms=timeout_ms, render=False,
+                              _pool=node_pool, _cancel=cancel, _progress=_progress)
+                available = sum(bool(node['ok']) for node in nodes)
+                result.update(status='tested', total=len(nodes), available=available,
+                              unavailable=len(nodes)-available)
+            except (DomainError, OSError, ValueError, KeyError) as error:
+                result.update(status='error', error_code=error.code if isinstance(error, DomainError) else 'CONFIG_DELAY_FAILED',
+                              message='配置加载或测速失败，请检查缓存和内核；当前配置未改变。')
+        _progress.config_done(item['name'])
+        return result
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+    cancel = Event()
+    node_pool = ThreadPoolExecutor(max_workers=DELAY_NODE_WORKERS)
+    config_pool = ThreadPoolExecutor(max_workers=DELAY_CONFIG_WORKERS)
+    futures = []
+    try:
+        futures = [config_pool.submit(measure, item) for item in manager.registry['items']]
+        results = _delay_results(futures)
+    except BaseException:
+        cancel.set()
+        for future in futures:
+            future.cancel()
+        node_pool.shutdown(wait=False, cancel_futures=True)
+        config_pool.shutdown(wait=True, cancel_futures=True)
+        node_pool.shutdown(wait=True, cancel_futures=True)
+        raise
+    else:
+        config_pool.shutdown(wait=True)
+        node_pool.shutdown(wait=True)
+    _progress.close(final=True)
+    if not render:
+        return results
+    if as_json:
+        show(results, True)
+    elif results:
+        human_table(['配置名称', '节点总数', '可用', '超时/不可用', '检测状态'], [
+            [('● ' if item['active'] else '') + item['name'], item['total'] if item['total'] is not None else '—',
+             (str(item['available']), '32') if item['available'] is not None else '—',
+             (str(item['unavailable']), '31' if item['unavailable'] else '2') if item['unavailable'] is not None else '—',
+             '已检测' if item['status']=='tested' else item['message']] for item in results])
+        human_row('查看明细', 'domino test "配置名"；可用表示该节点本次 HTTPS 请求成功。', wrap=True)
+    else:
+        human_row('配置库为空', '请先用 domino catch 捕获配置，或用 domino add 添加订阅。', wrap=True)
+    return results
+
+
+def delay_usage(label, live, api):
+    """Read current usage only for human output; never use a disposable core's choices."""
+    usage = {'active':None, 'current':None, 'nodes':set(), 'paths':[], 'known':False}
+    try:
+        import domino_subscriptions
+        manager = domino_subscriptions.Manager(sys.modules[__name__])
+        active = manager.active_id()
+        usage['current'] = next((item['name'] for item in manager.registry['items'] if item['id'] == active), None)
+        usage['active'] = label is None or manager.find(label)['id'] == active
+        if not usage['active']:
+            return usage
+        if label is not None:
+            api = lambda route: api_json(route, timeout=1)
+            live = proxy_inventory(api('/proxies')['proxies'], api=api)
+        mode = api('/configs').get('mode')
+        if mode not in ['rule', 'global', 'direct']:
+            return usage
+        details = current_proxy_paths(mode, live, include_nodes=True)
+        usage.update(known=True, paths=[item['path'] for item in details],
+                     nodes={item['node'] for item in details if item['node'] is not None})
+    except (DomainError, OSError, ValueError, KeyError, TypeError):
+        pass
+    return usage
+
+
+def delay(node=None, group=None, url='https://www.gstatic.com/generate_204', timeout_ms=5000, as_json=False, *, name=None, config=None, render=True, _api=None, _label=None, _pool=None, _cancel=None, _progress=None, ui_result=False):
+    if _progress is None:
+        with _DelayProgress(enabled=render and not as_json) as progress:
+            progress.start()
+            return delay(node, group, url, timeout_ms, as_json, name=name, config=config, render=render,
+                         _api=_api, _label=_label, _pool=_pool, _cancel=_cancel, _progress=progress, ui_result=ui_result)
+    if not 100 <= timeout_ms <= 60000:
+        raise InstallError('测速超时必须在 100–60000 毫秒之间。')
+    parsed = urllib.parse.urlsplit(url)
+    if parsed.scheme != 'https' or not parsed.hostname or parsed.username or parsed.password:
+        raise InstallError('测速 URL 必须是无内嵌凭据的 HTTPS 地址。')
+    if config is not None and any(value is not None for value in (name, node, group)):
+        raise InstallError('配置、节点和策略组只能选择一种测速对象。')
+    if _api is None and (config is not None or name is not None):
+        import domino_subscriptions
+        manager = domino_subscriptions.Manager(sys.modules[__name__])
+        selected_config = config or next((item['name'] for item in manager.registry['items'] if item['name'] == name), None)
+        if selected_config is not None:
+            with isolated_delay_config(selected_config, **({'_cancel': _cancel} if _cancel is not None else {})) as isolated_api:
+                return delay(url=url, timeout_ms=timeout_ms, as_json=as_json, render=render,
+                             _api=isolated_api, _label=selected_config, _pool=_pool, _cancel=_cancel, _progress=_progress, ui_result=ui_result)
+    api = _api or api_json
+    live = proxy_inventory(api('/proxies')['proxies'], **({'api': api} if _api else {}))
     if name is not None:
         resolved = resolve_delay_name(name, live, '节点或策略组')
         if isinstance(live[resolved].get('all'), list):
@@ -1154,24 +1569,62 @@ def delay(node=None, group=None, url='https://www.gstatic.com/generate_204', tim
         if not names:
             raise InstallError('没有可测速的节点；请运行 domino nodes 查看配置。')
     from concurrent.futures import ThreadPoolExecutor
+    _progress.nodes(_label, len(names))
     def test(name):
+        _delay_cancelled(_cancel)
         query = urllib.parse.urlencode({'url': url, 'timeout': timeout_ms})
         route = live.get(name,{}).get('_domino_delay','/proxies/' + urllib.parse.quote(name, safe='') + '/delay')+'?'+query
         try:
-            result = api_json(route, timeout=timeout_ms / 1000 + 2)
-            return {'name': name, 'delay_ms': result['delay'], 'ok': True}
+            result = api(route, timeout=timeout_ms / 1000 + 2)
+            row = {'name': name, 'delay_ms': result['delay'], 'ok': True}
         except (InstallError, OSError, ValueError, KeyError):
-            return {'name': name, 'delay_ms': None, 'ok': False}
-    with ThreadPoolExecutor(max_workers=4) as pool:
-        results = list(pool.map(test, names))
+            row = {'name': name, 'delay_ms': None, 'ok': False}
+        _progress.node_done(row['ok'])
+        return row
+    pool = _pool or ThreadPoolExecutor(max_workers=DELAY_NODE_WORKERS)
+    futures = []
+    try:
+        for name in names:
+            _delay_cancelled(_cancel)
+            futures.append(pool.submit(test, name))
+        results = _delay_results(futures, _cancel)
+    except BaseException:
+        for future in futures:
+            future.cancel()
+        if _pool is None:
+            pool.shutdown(wait=False, cancel_futures=True)
+        raise
+    else:
+        if _pool is None:
+            pool.shutdown(wait=True)
     if not render: return results
+    _progress.close(final=True)
     if as_json:
-        show(results, True)
+        if ui_result:
+            usage=delay_usage(_label,live,api)
+            usage['nodes']=sorted(usage['nodes'])
+            show({'results':results,'usage':usage,'configuration':_label},True)
+        else:
+            show(results, True)
     else:
         available=sum(bool(item['ok']) for item in results)
-        human_header('节点测速',f'{len(results)} 节点  ·  {available} 可用  ·  {len(results)-available} 超时/不可用',
+        usage = delay_usage(_label, live, api)
+        config_label = ('● ' if usage['active'] is True else '') + _label if _label else None
+        human_header('节点测速', ('配置 ' + config_label + '  ·  ' if config_label else '') + f'{len(results)} 节点  ·  {available} 可用  ·  {len(results)-available} 超时/不可用',
                      '32' if results and available == len(results) else '33')
-        human_table(['节点名称','延迟'],[[item['name'],(str(item['delay_ms'])+' ms','32') if item['ok'] else ('超时/不可用','31')] for item in results])
+        if _label:
+            human_row('配置状态', ('● 当前使用中', '1;32') if usage['active'] is True else
+                      '未启用 · 当前使用 ' + (usage['current'] or '未关联配置库的配置') if usage['active'] is False else '当前使用状态无法确认')
+        if usage['active']:
+            for index, path in enumerate(usage['paths']):
+                human_row('当前代理' if index == 0 else '', (path, '1;32'))
+            if not usage['known']:
+                human_row('当前节点', '读取失败，本次不标记正在使用的节点')
+        human_table(['节点名称','延迟','使用状态'],[
+            [(('● ' + item['name'], '1;32') if item['name'] in usage['nodes'] else item['name']),
+             (str(item['delay_ms'])+' ms','32') if item['ok'] else ('超时/不可用','31'),
+             ('当前选中','32') if item['name'] in usage['nodes'] else '—'] for item in results])
+        print('\n  ● 表示当前配置或策略组当前选中的节点；实际请求按代理模式和规则分流。')
     return results
 
 
@@ -1236,7 +1689,233 @@ def traffic_samples(watch=False, interval=1.0, count=0):
         previous, before = current, now
 
 
-def traffic(watch=False, interval=1.0, count=0, as_json=False):
+def traffic_reading(current, previous=None, elapsed=0):
+    """Dashboard rates stay unknown until a valid interval, including core resets."""
+    up, down = current.get('uploadTotal', 0), current.get('downloadTotal', 0)
+    valid = (previous is not None and elapsed > 0 and up >= previous.get('uploadTotal', 0)
+             and down >= previous.get('downloadTotal', 0))
+    return {'upload_bytes_per_second': (up-previous.get('uploadTotal', 0))/elapsed if valid else None,
+            'download_bytes_per_second': (down-previous.get('downloadTotal', 0))/elapsed if valid else None,
+            'upload_total': up, 'download_total': down,
+            'connections': len(current.get('connections') or []), 'memory': current.get('memory')}
+
+
+class _TrafficMonitor:
+    def __init__(self, interval):
+        from collections import deque
+        from threading import Event, Lock
+        self.interval, self.stop, self.lock = interval, Event(), Lock()
+        self.history = deque(maxlen=120)
+        self.sample, self.error, self.samples = None, None, 0
+        self.thread = None
+
+    def start(self):
+        from threading import Thread
+        self.thread = Thread(target=self._run, name='domino-traffic-monitor', daemon=True)
+        self.thread.start()
+
+    def _run(self):
+        previous = before = None
+        first = True
+        while not self.stop.is_set():
+            try:
+                current = api_json('/connections', timeout=min(3, max(1, self.interval)))
+                now = time.monotonic()
+                sample = traffic_reading(current, previous, now-before if before is not None else 0)
+                previous, before = {'uploadTotal': sample['upload_total'], 'downloadTotal': sample['download_total']}, now
+                error = None
+            except (DomainError, OSError, ValueError, TypeError, KeyError, AttributeError):
+                previous = before = sample = None
+                error = '控制接口不可用，正在重试…'
+            if self.stop.is_set():
+                break
+            with self.lock:
+                self.sample, self.error = sample, error
+                self.history.append((sample['upload_bytes_per_second'], sample['download_bytes_per_second']) if sample else (None, None))
+                # A healthy first read is a baseline, not a measured interval.
+                self.samples += int(not first or error is not None)
+            first = False
+            if self.stop.wait(self.interval):
+                break
+
+    def snapshot(self):
+        with self.lock:
+            return self.sample, self.error, list(self.history), self.samples
+
+    def close(self):
+        self.stop.set()
+        if self.thread is not None:
+            self.thread.join(timeout=3.2)
+
+
+def traffic_graph(history, index, width):
+    values = [sample[index] for sample in history[-max(1, width):]]
+    peak = max((value for value in values if value is not None), default=None)
+    bars = '▁▂▃▄▅▆▇█'
+    return ''.join('·' if value is None else ' ' if value == 0 or peak == 0
+                   else bars[min(7, int(value/peak*7))] for value in values), peak
+
+
+def traffic_frame(sample, error, history, interval, columns):
+    """The complete content shared by inline and full-screen displays."""
+    def value(key, *, rate=False):
+        number = sample.get(key) if sample else None
+        return human_size(number, rate) if number is not None else '—'
+    rows = [
+        ('Domino · 流量监控', 'title'),
+        (f'仅统计经过 Domino 的流量 · 每 {interval:g} 秒刷新 · {time.strftime("%H:%M:%S")}', 'muted'),
+        ('', 'space'),
+        (error or ('正在连接控制接口…' if sample is None else
+                   '正在采样速率…' if sample['upload_bytes_per_second'] is None else '实时监控中'), 'error' if error else 'muted'),
+        ('', 'space'),
+        ('↑ 上传  ' + value('upload_bytes_per_second', rate=True), 'up'),
+        ('↓ 下载  ' + value('download_bytes_per_second', rate=True), 'down'),
+        ('累计上传  ' + value('upload_total') + '    累计下载  ' + value('download_total'), 'plain'),
+        (f'活跃连接  {sample["connections"] if sample else "—"}    内核内存  ' + value('memory'), 'plain'),
+        ('', 'space')]
+    for index, label, style in [(0, '上传', 'up'), (1, '下载', 'down')]:
+        graph, peak = traffic_graph(history, index, max(1, columns-3))
+        rows += [(label + '近期趋势 · 峰值 ' + (human_size(peak, True) if peak is not None else '—'), 'muted'),
+                 (graph, style)]
+    rows += [('', 'space'), ('q / Esc / Ctrl+C 退出 · 累计值自内核启动计数', 'muted')]
+    return rows
+
+
+def draw_traffic(screen, sample, error, history, interval, styles):
+    import curses
+    height, width = screen.getmaxyx()
+    screen.erase()
+    def line(y, text, style='plain'):
+        if not 0 <= y < height or width < 3:
+            return
+        text = human_text(text)
+        while text and human_width(text) > width-3:
+            text = text[:-1]
+        try:
+            screen.addstr(y, 1, text, styles.get(style, 0))
+        except curses.error:
+            pass
+    rows = traffic_frame(sample, error, history, interval, width)
+    if height < len(rows):
+        rows = [row for row in rows if row[1] != 'space']
+    for y, (text, role) in enumerate(rows[:-1]):
+        line(y, text, role)
+    line(height-1, *rows[-1])
+    screen.refresh()
+
+
+def traffic_dashboard(interval=1.0, count=0):
+    if not .2 <= interval <= 60 or count < 0:
+        raise InstallError('流量刷新间隔必须为 0.2–60 秒；次数不能为负。')
+    try:
+        import curses
+        import termios
+    except ImportError:
+        raise InstallError('终端缺少全屏支持；可用 domino traffic --json 读取单次采样。') from None
+    try:
+        terminal = sys.stdin.fileno()
+        terminal_state = termios.tcgetattr(terminal)
+    except (OSError, ValueError, termios.error):
+        raise InstallError('全屏流量监控需要交互终端；可用 domino traffic --json 读取单次采样。') from None
+    monitor = _TrafficMonitor(interval)
+    def run(screen):
+        styles = {'title': curses.A_BOLD, 'up': curses.A_BOLD, 'down': curses.A_BOLD, 'muted': curses.A_DIM}
+        try: curses.curs_set(0)
+        except curses.error: pass
+        if curses.has_colors() and 'NO_COLOR' not in os.environ:
+            try:
+                curses.start_color()
+                curses.use_default_colors()
+                for index, (name, color) in enumerate([('title', curses.COLOR_CYAN), ('up', curses.COLOR_GREEN),
+                        ('down', curses.COLOR_CYAN), ('error', curses.COLOR_RED)], 1):
+                    curses.init_pair(index, color, -1)
+                    styles[name] = curses.color_pair(index) | curses.A_BOLD
+            except curses.error:
+                pass
+        screen.timeout(100)
+        monitor.start()
+        while True:
+            sample, error, history, samples = monitor.snapshot()
+            draw_traffic(screen, sample, error, history, interval, styles)
+            if count and samples >= count:
+                return
+            if screen.getch() in (ord('q'), ord('Q'), 27, 3):
+                return
+    try:
+        curses.wrapper(run)
+    except KeyboardInterrupt:
+        pass
+    except curses.error:
+        raise InstallError('无法打开流量监控终端；可用 domino traffic --json 读取单次采样。') from None
+    finally:
+        # Preserve caller input settings as well as curses' screen cleanup.
+        try: termios.tcsetattr(terminal, termios.TCSANOW, terminal_state)
+        except (OSError, termios.error): pass
+        monitor.close()
+
+
+def traffic_compact(interval=1.0, count=0, *, _input=None, _output=None):
+    """An inline application owns only its rows and retains the final complete frame."""
+    if not .2 <= interval <= 60 or count < 0:
+        raise InstallError('流量刷新间隔必须为 0.2–60 秒；次数不能为负。')
+    import asyncio
+    try:
+        import domino_tui
+        domino_tui.load_toolkit()
+        from prompt_toolkit import Application
+        from prompt_toolkit.key_binding import KeyBindings
+        from prompt_toolkit.layout import Layout, Window
+        from prompt_toolkit.layout.controls import FormattedTextControl
+        from prompt_toolkit.styles import Style
+    except (ImportError, RuntimeError):
+        raise InstallError('终端显示组件不可用，请更新 Domino 安装包；全屏显示可使用 domino traffic --full。') from None
+    monitor = _TrafficMonitor(interval)
+    bindings = KeyBindings()
+    @bindings.add('q')
+    @bindings.add('Q')
+    @bindings.add('escape')
+    @bindings.add('c-c')
+    def exit_panel(event):
+        event.app.exit()
+    def content():
+        sample, error, history, _ = monitor.snapshot()
+        size = app.output.get_size()
+        rows = traffic_frame(sample, error, history, interval, size.columns)
+        if size.rows < len(rows)+1:
+            rows = [row for row in rows if row[1] != 'space']
+        fragments = []
+        for index, (text, role) in enumerate(rows):
+            if index: fragments.append(('', '\n'))
+            fragments.append(('class:'+role, ' ' + human_text(text)))
+        return fragments
+    styles = {} if 'NO_COLOR' in os.environ else {
+        'title': 'bold ansicyan', 'up': 'bold ansigreen', 'down': 'bold ansicyan',
+        'error': 'ansired', 'muted': 'ansibrightblack'}
+    app = Application(layout=Layout(Window(FormattedTextControl(content), wrap_lines=True,
+                          dont_extend_height=True, always_hide_cursor=True)),
+                      key_bindings=bindings, style=Style.from_dict(styles), full_screen=False,
+                      erase_when_done=False, input=_input, output=_output)
+    async def refresh():
+        while True:
+            app.invalidate()
+            if count and monitor.snapshot()[3] >= count:
+                app.exit()
+                return
+            await asyncio.sleep(.1)
+    try:
+        monitor.start()
+        app.run(pre_run=lambda: app.create_background_task(refresh()))
+    except KeyboardInterrupt:
+        pass
+    finally:
+        monitor.close()
+
+
+def traffic(watch=False, interval=1.0, count=0, as_json=False, *, dashboard=False, compact=False):
+    if dashboard and not as_json:
+        return traffic_dashboard(interval, count)
+    if compact and not as_json:
+        return traffic_compact(interval, count)
     if not as_json:
         human_header('流量','仅统计经过 Domino 的流量')
     for result in traffic_samples(watch,interval,count):
@@ -1491,13 +2170,33 @@ def shell_proxy(action=None, as_json=False, *, render=True):
             show(result, True)
         else:
             enabled = result['enabled']
-            human_header('终端代理', '● 已开启' if enabled else '● 已关闭',
+            human_header('终端代理', '● 策略已开启' if enabled else '● 策略已关闭',
                          '32' if enabled else '31')
-            human_row('策略含义', '已接入的终端会使用 Domino 代理' if enabled else '不再要求已接入的终端使用 Domino 代理')
-            human_row('当前终端', '开启不代表代理变量已同步' if enabled else '关闭不代表代理变量已清空；原有或手动设置的代理可能仍保留')
-            human_row('检查变量', 'env | grep -i proxy（请在当前终端执行）')
-            human_row('手动同步', '. "$HOME/.config/domino/proxy.env"')
-            human_row('作用边界', '不改变系统代理；已接入终端在下次提示符同步，已运行程序不受影响')
+            human_row('作用', '让终端（Terminal）中支持代理环境变量的程序使用代理', wrap=True)
+            human_row('操作', '使用 Domino 代理' if enabled else '恢复原代理设置，保留手动修改')
+            try:
+                number = domino_shell.proxy_port(app)
+            except ValueError:
+                number = None
+            human_row('代理端口', str(number) if number else '未配置')
+            print()
+            human_row('开启目标', '以下为开启 Domino 终端代理时设置的变量', wrap=True)
+            desired = domino_shell._desired(number) if number else {}
+            for lower in ('http_proxy', 'https_proxy', 'all_proxy', 'no_proxy'):
+                human_row(lower + ' / ' + lower.upper(), desired.get(lower, '未配置'), wrap=True)
+            if action is None:
+                print()
+                human_row('当前环境', '本次命令继承的已导出变量（同步前）；地址不含账号密码', wrap=True)
+                for lower in ('http_proxy', 'https_proxy', 'all_proxy', 'no_proxy'):
+                    upper = lower.upper()
+                    names = [lower] if os.environ.get(lower) == os.environ.get(upper) else [lower, upper]
+                    for name in names:
+                        label = lower + ' / ' + upper if len(names) == 1 else name
+                        human_row(label, domino_shell.display_value(name, os.environ.get(name)), wrap=True)
+            print()
+            human_row('生效', '已接入终端返回命令行后同步；on/off 后用 domino shell status 查看', wrap=True)
+            if not result['integration_available']:
+                human_row('终端接入', '未检测到完整集成；安装后加载 ~/.config/domino/proxy.env', wrap=True)
     return result
 
 
@@ -1506,7 +2205,7 @@ def overview():
     app, service = current_installation()
     path = app / 'data/config.json'
     result = {'installed': path.is_file(), 'active': False, 'reachable': False, 'groups': [],
-              'node_count': 0, 'connections': 0, 'upload_total': 0, 'download_total': 0,
+              'node_count': None, 'connections': 0, 'upload_total': 0, 'download_total': 0,
               'stats_available': False, 'client': 'Domino', 'service': service.name}
     if not path.is_file():
         result['error'] = '尚未安装运行环境，请先运行安装程序。'
@@ -1521,14 +2220,18 @@ def overview():
         result['service'] = 'local.domino.mihomo'
         import domino_macos
         result['system_proxy'] = domino_macos.system_proxy_overview(config['mixed-port'])
+    elif sys.platform == 'linux':
+        import domino_linux
+        result['system_proxy'] = domino_linux.system_proxy_overview(config['mixed-port'])
     result['active'] = systemctl('is-active')
     try:
         runtime = api_json('/configs', timeout=1.5)
         proxies = proxy_inventory(api_json('/proxies', timeout=1.5)['proxies'])
         stats = api_json('/connections', timeout=1.5)
-        result.update(reachable=True, active=True, stats_available=True, mode=runtime.get('mode', result['mode']),
+        result.update(reachable=True, active=True, stats_available=True, node_count=0, mode=runtime.get('mode', result['mode']),
                       connections=len(stats.get('connections') or []),
-                      upload_total=stats.get('uploadTotal', 0), download_total=stats.get('downloadTotal', 0))
+                      upload_total=stats.get('uploadTotal', 0), download_total=stats.get('downloadTotal', 0),
+                      memory=stats.get('memory'),log_level=runtime.get('log-level'))
         for name, item in proxies.items():
             if isinstance(item.get('all'), list):
                 if name == 'GLOBAL' and result['mode'] != 'global':
@@ -1582,6 +2285,7 @@ def main(argv=None):
     p = sub.add_parser('env')
     p.add_argument('--unset', action='store_true')
     sub.add_parser('overview')
+    sub.add_parser('catch-options')
     sub.add_parser('agent')
     p=sub.add_parser('scan')
     p.add_argument('--source')
@@ -1594,12 +2298,16 @@ def main(argv=None):
     p = sub.add_parser('delay')
     choice = p.add_mutually_exclusive_group(required=True)
     choice.add_argument('--name')
+    choice.add_argument('--config')
+    choice.add_argument('--summary', action='store_true')
     choice.add_argument('--all', action='store_true')
     choice.add_argument('--node')
     choice.add_argument('--group')
     p.add_argument('--url', default='https://www.gstatic.com/generate_204')
     p.add_argument('--timeout', type=int, default=5000)
     p.add_argument('--json', action='store_true')
+    p.add_argument('--progress', action='store_true', help=argparse.SUPPRESS)
+    p.add_argument('--ui-result',action='store_true',help=argparse.SUPPRESS)
     p = sub.add_parser('connections')
     choice = p.add_mutually_exclusive_group()
     choice.add_argument('--close')
@@ -1607,6 +2315,9 @@ def main(argv=None):
     p.add_argument('--json', action='store_true')
     p = sub.add_parser('traffic')
     p.add_argument('--watch', action='store_true')
+    display = p.add_mutually_exclusive_group()
+    display.add_argument('--dashboard', action='store_true', help=argparse.SUPPRESS)
+    display.add_argument('--compact', action='store_true', help=argparse.SUPPRESS)
     p.add_argument('--interval', type=float, default=1)
     p.add_argument('--count', type=int, default=0)
     p.add_argument('--json', action='store_true')
@@ -1644,16 +2355,25 @@ def main(argv=None):
     args = parser.parse_args(argv)
     formatted = args.action in ['status','nodes','select','rollback','mode','log-level','delay','connections',
                                'traffic','rules','providers','proxy','shell','configs','start','stop','restart','scan']
-    with human_output(formatted and not getattr(args,'json',False),color=True if args.color else None):
+    live_traffic = getattr(args,'dashboard',False) or getattr(args,'compact',False)
+    with human_output(formatted and not getattr(args,'json',False) and not live_traffic,color=True if args.color else None):
         return _run_command(args)
 
 
 def _run_command(args):
     try:
+        if args.action=='catch-options':
+            import domino_cli
+            items=[]
+            for path in domino_cli.capture_candidates(include_saved=True):
+                identity=domino_cli.source_identity(path)
+                items.append({'path':str(path),'name':identity['profile_name'] if identity else path.name})
+            show(items,True)
+            return
         if args.action=='scan':
             import domino_cli
             return domino_cli.inspect_source(args) if args.source else domino_cli.list_sources(args)
-        if args.action in ['install', 'rollback', 'configs', 'rules','agent']:
+        if args.action in ['install', 'rollback', 'configs', 'rules','agent','delay','traffic']:
             def cancelled(*_):
                 raise KeyboardInterrupt
             signal.signal(signal.SIGHUP, cancelled)
@@ -1686,11 +2406,17 @@ def _run_command(args):
             with deployment_lock():
                 set_option(args.action, args.set, args.json)
         elif args.action == 'delay':
-            delay(args.node, args.group, args.url, args.timeout, args.json, name=args.name)
+            with _DelayProgress(enabled=not args.json or args.ui_result, force=args.progress, configs=args.summary) as progress:
+                if args.summary:
+                    delay_summary(args.url, args.timeout, args.json, _progress=progress)
+                else:
+                    progress.start()
+                    delay(args.node, args.group, args.url, args.timeout, args.json,
+                          name=args.name, config=args.config, _progress=progress,ui_result=args.ui_result)
         elif args.action == 'connections':
             connections(args.close, args.all, args.json)
         elif args.action == 'traffic':
-            traffic(args.watch, args.interval, args.count, args.json)
+            traffic(args.watch, args.interval, args.count, args.json, dashboard=args.dashboard, compact=args.compact)
         elif args.action == 'rules':
             if args.add_rule is not None or args.remove_rule is not None:
                 with deployment_lock():
@@ -1701,11 +2427,8 @@ def _run_command(args):
         elif args.action == 'providers':
             providers(args.kind, args.update, args.json)
         elif args.action == 'proxy':
-            if sys.platform != 'darwin':
-                raise InstallError('系统代理开关当前支持 macOS；Linux 应用请使用代理环境变量或手动设置代理。')
-            import domino_macos
             with deployment_lock():
-                domino_macos.system_proxy(sys.modules[__name__], args.set, args.service, args.json, args.non_interactive)
+                system_proxy(args.set,args.service,args.json,args.non_interactive)
         elif args.action == 'shell':
             if args.set:
                 with deployment_lock():

@@ -14,10 +14,10 @@ import urllib.request
 
 import domino_cli as cli
 
-CORE=Path(os.environ.get('DOMINO_TEST_CORE',str(Path.home()/'.local/share/domino/mihomo')))
+CORE=Path(os.environ['DOMINO_TEST_CORE']) if os.environ.get('DOMINO_TEST_CORE') else None
 
 
-@unittest.skipUnless(CORE.is_file(),'requires a disposable Mihomo binary')
+@unittest.skipUnless(CORE and CORE.is_file(),'set DOMINO_TEST_CORE to a disposable Mihomo binary')
 class IndependentBundleTests(unittest.TestCase):
     def test_each_adjacent_copy_runs_after_its_source_is_removed(self):
         with tempfile.TemporaryDirectory(prefix='domino-independent-') as directory:

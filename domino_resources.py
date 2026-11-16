@@ -37,17 +37,45 @@ def asset_allowed(url,tag):
     return url.startswith(prefix) and not (parsed.username or parsed.password or parsed.fragment or parsed.query) and '..' not in parsed.path.split('/')
 
 
+def geo_requirements(profile, data):
+    """Geo dependencies referenced by rules, including logical and provider rules."""
+    rules = []
+    def add(values):
+        if isinstance(values, list):
+            rules.extend(value for value in values if isinstance(value, str))
+    add(profile.get('rules', []))
+    for values in profile.get('sub-rules', {}).values():
+        add(values)
+    for provider in profile.get('rule-providers', {}).values():
+        add(provider.get('payload', []))
+        relative = provider.get('path')
+        if not relative or provider.get('format') == 'mrs':
+            continue
+        path = data / relative
+        if path.is_file() and path.stat().st_size < 8388608:
+            if provider.get('format') == 'text':
+                rules.extend(path.read_text().splitlines())
+            else:
+                from domino_cli import load_yaml
+                payload = load_yaml(path)
+                if isinstance(payload, dict):
+                    add(payload.get('payload', []))
+    needed = set()
+    for rule in rules:
+        text = rule.upper()
+        if re.search(r'(?:^|\()\s*(?:SRC-)?GEOIP\s*,', text):
+            needed.add('geoip.dat' if profile.get('geodata-mode') else 'Country.mmdb')
+        if re.search(r'(?:^|\()\s*GEOSITE\s*,', text):
+            needed.add('geosite.dat')
+        if re.search(r'(?:^|\()\s*(?:SRC-)?IP-ASN\s*,', text):
+            needed.add('ASN.mmdb')
+    return needed
+
+
 def prepare_geo(profile,data,download,proxy=None):
     base=resource_base()
     if not base: return
-    text=json.dumps(profile,ensure_ascii=False).upper()
-    providers=data/'providers'
-    if providers.is_dir():
-        text+=' '.join(path.read_text(errors='ignore').upper() for path in providers.rglob('*') if path.is_file() and path.stat().st_size<8388608)
-    needed=set()
-    if 'GEOIP' in text: needed.add('geoip.dat' if profile.get('geodata-mode') else 'Country.mmdb')
-    if 'GEOSITE' in text: needed.add('geosite.dat')
-    if 'IP-ASN' in text or 'SRC-IP-ASN' in text: needed.add('ASN.mmdb')
+    needed=geo_requirements(profile, data)
     files={'geoip':'geoip.dat','mmdb':'Country.mmdb','geosite':'geosite.dat','asn':'ASN.mmdb'}
     profile['geox-url']={key:base+'geo/'+name for key,name in files.items()}
     if not needed: return

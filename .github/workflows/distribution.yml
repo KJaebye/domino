@@ -1,0 +1,83 @@
+name: Distribution smoke tests
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  ubuntu:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        with:
+          python-version: '3.9'
+      - run: python -m pip install '.[dev]'
+      - run: python -m unittest tests.test_distribution tests.test_release -q
+      - run: python scripts/build_release.py && python scripts/verify_artifacts.py
+      - name: Build a signed apt repository with a disposable CI key
+        shell: bash
+        run: |
+          export GNUPGHOME="$(mktemp -d)"
+          chmod 700 "$GNUPGHOME"
+          gpg --batch --passphrase '' --quick-generate-key 'Domino CI <ci@example.invalid>' ed25519 sign 1d
+          fingerprint="$(gpg --batch --with-colons --list-secret-keys | awk -F: '$1=="fpr" {print $10; exit}')"
+          python scripts/build_distribution.py --output /tmp/domino-distribution --sign-key "$fingerprint"
+          gpg --verify /tmp/domino-distribution/apt/dists/stable/InRelease
+          rm -rf "$GNUPGHOME"
+      - name: Install and remove through apt without service or HOME changes
+        shell: bash
+        run: |
+          echo 'deb [signed-by=/tmp/domino-distribution/apt/domino-archive-keyring.gpg] file:/tmp/domino-distribution/apt stable main' > /tmp/domino-ci.list
+          sudo apt-get update -o Dir::Etc::sourcelist=/tmp/domino-ci.list -o Dir::Etc::sourceparts=- -o APT::Get::List-Cleanup=0
+          sudo apt-get install -y --no-install-recommends -o Dir::Etc::sourcelist=/tmp/domino-ci.list -o Dir::Etc::sourceparts=- domino-proxy
+          dpkg-deb --info /tmp/domino-distribution/*.deb
+          test -z "$(dpkg-query -L domino-proxy | grep -E '/(systemd|LaunchAgents)/' || true)"
+          temporary_home="$(mktemp -d)"
+          HOME="$temporary_home" /usr/bin/domino --version
+          HOME="$temporary_home" /usr/bin/domino --help
+          test -z "$(ls -A "$temporary_home")"
+          sudo apt-get remove -y domino-proxy
+          test -z "$(ls -A "$temporary_home")"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: deb-${{ matrix.os }}
+          path: /tmp/domino-distribution
+  homebrew:
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        with:
+          python-version: '3.13'
+      - run: python -m pip install '.[dev]' && python scripts/build_release.py
+      - name: Install the runtime from a local, unpublished tap
+        shell: bash
+        run: |
+          brew tap-new domino-ci/local
+          python - <<'PY'
+          from pathlib import Path
+          import re, subprocess
+          release = Path('dist/release').resolve()
+          formula = (release / 'domino.rb.in').read_text()
+          runtime = next(release.glob('domino-runtime-*.tar.gz'))
+          formula = re.sub(r'^  url .*$', '  url "' + runtime.as_uri() + '"', formula, flags=re.M)
+          tap = Path(subprocess.check_output(['brew', '--repository', 'domino-ci/local'], text=True).strip())
+          (tap / 'Formula/domino.rb').write_text(formula)
+          PY
+          brew install domino-ci/local/domino
+          brew test domino-ci/local/domino
+          temporary_home="$(mktemp -d)"
+          HOME="$temporary_home" "$(brew --prefix domino-ci/local/domino)/bin/domino" --version
+          test -z "$(ls -A "$temporary_home")"
+          brew uninstall domino-ci/local/domino
+          test -z "$(ls -A "$temporary_home")"

@@ -124,6 +124,24 @@ def _node_count(profile, data):
     return count
 
 
+def _capture_digest(source):
+    """Compare portable content, ignoring client-only ports, secrets and metadata."""
+    import hashlib
+    import domino_cli as tool
+    from domino_sources import read_source
+    raw, metadata = read_source(source)
+    if raw.get('mode') == 'direct':
+        raw['mode'] = 'rule'
+    profile = tool.sanitize_profile(raw, {}, tool.DEFAULT_PROXY_PORT, tool.DEFAULT_API_PORT)
+    profile.pop('secret', None)
+    from domino_resources import geo_requirements
+    needed = geo_requirements(profile, source)
+    # Unused shared Geo caches do not distinguish otherwise identical profiles.
+    content = {'config': profile, 'files': {n: h for n, h in metadata['files'].items()
+               if n != 'config.json' and (n not in GEO_FILES or n in needed)}}
+    return hashlib.sha256(json.dumps(content, sort_keys=True, separators=(',', ':'), ensure_ascii=False).encode()).hexdigest()
+
+
 def _registry_root(ctx):
     root = Path(ctx.HOME) / '.config/domino/subscriptions'
     _safe_path(root)
@@ -393,7 +411,7 @@ class Manager:
         self.ctx.human_header('配置',f'{len(result["configs"])} 个配置 · 在线订阅 / 快照')
         self.ctx.human_row('当前配置',(current,'1'))
         if not result['configs']:
-            print('\n  添加订阅：domino configs add "名称"')
+            print('\n  添加订阅：domino add "名称"')
             return
         print()
         rows=[]
@@ -420,8 +438,34 @@ class Manager:
         self.save()
         self.ctx.write_private(self.data / 'subscription.json', json.dumps({'id': item['id']}))
 
-    def register_prepared(self, bundle, envelope):
+    def capture(self, source, raw, proxy=None, *, core=None, resource_dirs=()):
+        """Validate and cache a private external profile without touching runtime."""
+        import domino_cli as tool
+        from domino_sources import create_source, derive_runtime
+        _safe_directory(self.root)
+        with tempfile.TemporaryDirectory(prefix='.capture-', dir=self.root) as directory:
+            bundle = Path(directory)
+            data = bundle / 'data'
+            data.mkdir(mode=0o700)
+            create_source(raw, source, data / 'source', proxy=proxy, geo_dirs=(self.data,), require_geo=True, resource_dirs=resource_dirs)
+            digest = _capture_digest(data / 'source')
+            for item in self.registry['items']:
+                if item.get('revision'):
+                    cached_source = self.cached(item) / 'source'
+                    if cached_source.is_dir() and _capture_digest(cached_source) == digest:
+                        return item, False
+            profile = derive_runtime(data / 'source', data, {}, tool.DEFAULT_PROXY_PORT, tool.DEFAULT_API_PORT)
+            self.ctx.write_private(data / 'config.json', json.dumps(profile, ensure_ascii=False))
+            binary = Path(core).expanduser() if core else self.app / 'mihomo'
+            if not binary.is_file():
+                raise self.ctx.InstallError('缺少配置校验内核，请先安装 Domino 或使用 --core。')
+            self.ctx.run([str(binary), '-t', '-d', str(data), '-f', str(data / 'config.json')],
+                         capture_output=True, text=True, timeout=90, stage='本机配置校验')
+            return self.register_prepared(bundle, {'version': 1, 'kind': 'snapshot'}, activate=False), True
+
+    def register_prepared(self, bundle, envelope, *, activate=True):
         from domino_sources import create_source, origin_info, read_source
+        saved_registry = copy.deepcopy(self.registry)
         prepared = bundle / 'data'
         baseline = json.loads((prepared / 'config.json').read_text())
         if (prepared / 'rules-base.json').is_file():
@@ -464,6 +508,10 @@ class Manager:
                                 existing = prior
                         except FileNotFoundError:
                             pass
+            # A changed capture of the active source becomes a separate snapshot;
+            # its active marker and cache revision continue to describe the runtime.
+            if not activate and existing and existing['id'] == self.active_id():
+                existing = None
             name = existing['name'] if existing else envelope.get('name')
             if not name:
                 if envelope['kind'] == 'subscription':
@@ -506,10 +554,13 @@ class Manager:
                 item['selections'] = json.loads(selections.read_text()) if selections.is_file() else {}
                 self.replace(item) if existing else self.registry['items'].append(item)
                 self.save()
-                self.ctx.write_private(self.data / 'subscription.json', json.dumps({'id': item['id']}))
+                if activate:
+                    self.ctx.write_private(self.data / 'subscription.json', json.dumps({'id': item['id']}))
             except BaseException:
                 # Installer registry backup owns full rollback; a failed cache
                 # construction alone can always discard its unreferenced revision.
+                if not activate:
+                    self.registry = saved_registry
                 if not any(v.get('revision') == revision for v in self.registry['items']):
                     shutil.rmtree(destination, ignore_errors=True)
                 raise
@@ -752,10 +803,46 @@ class Manager:
                     raise RecoveryError('当前配置快照登记失败且恢复未完成。') from error
                 raise
 
+    def source_subscription_url(self, item):
+        """Recover only the captured Clash profile's explicitly recorded subscription."""
+        import domino_cli as tool
+        from domino_sources import read_source
+        message = '本地快照没有可用订阅地址；请在“修改地址”中填写 HTTPS 订阅地址后更新配置。'
+        try:
+            _, origin = read_source(self.cached(item) / 'source')
+            kind = origin.get('capture_kind')
+            if kind not in ('verge-profile', 'verge-runtime') or not origin.get('profile_id'):
+                raise ValueError()
+            original = Path(origin['original_path'])
+            if not original.is_absolute():
+                raise ValueError()
+            root = original.parent.parent if kind == 'verge-profile' else original.parent
+            index = _safe_path(root / 'profiles.yaml')
+            if index.stat().st_size > 2 * 1024 * 1024:
+                raise ValueError()
+            entries = tool.load_yaml(index)['items']
+            matches = [entry for entry in entries if isinstance(entry, dict) and entry.get('uid') == origin['profile_id']]
+            if len(matches) != 1 or matches[0].get('type') != 'remote':
+                raise ValueError()
+            entry = matches[0]
+            if not isinstance(entry.get('url'), str) or not isinstance(entry.get('file'), str) or not entry['file']:
+                raise ValueError()
+            filename = Path(entry['file'])
+            if filename.is_absolute() or '..' in filename.parts or '\\' in str(filename):
+                raise ValueError()
+            if kind == 'verge-profile' and (root / 'profiles' / filename).resolve() != original.resolve():
+                raise ValueError()
+            return self.url(entry['url'])
+        except (DomainError, OSError, ValueError, TypeError, KeyError, RuntimeError):
+            raise self.ctx.InstallError(message, code='SUBSCRIPTION_URL_REQUIRED') from None
+
     def update(self, item):
-        if not item.get('url'):
-            raise self.ctx.InstallError('本地快照没有订阅地址，不能在线更新。')
-        updated = self.fetch(item)
+        candidate = copy.deepcopy(item)
+        if not candidate.get('url'):
+            candidate.update(url=self.source_subscription_url(item), kind='subscription')
+            for key in ('source_identity', 'source_digest'):
+                candidate.pop(key, None)
+        updated = self.fetch(candidate)
         try:
             if self.active_id() == item['id']:
                 self.apply(updated)
@@ -768,7 +855,7 @@ class Manager:
 
     def execute(self, args, *, render=True):
         if args.url is not None and not (args.add or args.set_url):
-            raise self.ctx.InstallError('--url 需用于 domino configs add 或 domino configs set-url。')
+            raise self.ctx.InstallError('--url 需用于 domino add 或 domino set-url。')
         if args.new_name is not None and not args.rename:
             raise self.ctx.InstallError('--new-name 需与 --rename 配合使用。')
         if args.add:

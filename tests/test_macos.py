@@ -107,6 +107,22 @@ class MacTests(unittest.TestCase):
             socket.return_value.__enter__.return_value.connect_ex.return_value = 1
             mac.install(self.ctx, self.bundle)
 
+    def test_package_initializer_preserves_pipx_symlink_during_failed_upgrade(self):
+        launcher = self.home / '.local/bin/domino'
+        launcher.parent.mkdir(parents=True)
+        target = self.root / 'pipx-launcher'
+        target.write_text('package managed executable')
+        launcher.symlink_to(target)
+        self.ctx.owned_cli = common.owned_cli
+        self.manifest['package_managed_cli'] = True
+        self.write_manifest()
+        self.perform_install()
+        with patch.object(self.ctx, 'probe', side_effect=common.InstallError('test health failure')):
+            with self.assertRaises(common.InstallError):
+                self.perform_install()
+        self.assertTrue(launcher.is_symlink())
+        self.assertEqual(target.read_text(), 'package managed executable')
+
     def test_install_uses_user_launchagent_and_restores_shell_after_failed_upgrade(self):
         self.perform_install()
         self.assertTrue(self.active)
@@ -895,12 +911,63 @@ export NO_PROXY="$no_proxy"
                 mac.system_proxy(self.ctx, 'off', render=False)
         self.assertEqual(adapter.writes, [])
 
-    def test_start_is_proxy_neutral(self):
+    def test_start_and_restart_connect_system_proxy_after_controller_is_ready(self):
         self.service_plist()
-        with patch.object(mac, 'start') as start, patch.object(mac, 'system_proxy') as proxy, redirect_stdout(io.StringIO()):
-            mac.service_action(self.ctx, 'start')
+        for action in ['start', 'restart']:
+            calls = []
+            def controller(*args, **kwargs):
+                calls.append('ready')
+                if calls.count('ready') == 1: raise common.InstallError('starting')
+                return b'{}'
+            def proxy(*args, **kwargs):
+                calls.append(('proxy', args[1], kwargs['batch']))
+                return {'proxies': proxies(17897)}
+            with patch.object(mac, 'start', side_effect=lambda _: calls.append('start')), \
+                    patch.object(mac, 'stop', side_effect=lambda _: calls.append('stop')), \
+                    patch.object(self.ctx, 'controller', side_effect=controller), patch.object(mac.time, 'sleep'), \
+                    patch.object(mac, 'system_proxy', side_effect=proxy), \
+                    redirect_stdout(io.StringIO()) as output:
+                mac.service_action(self.ctx, action, batch=True)
+            self.assertEqual(calls, (['stop'] if action == 'restart' else []) + ['start', 'ready', 'ready', ('proxy', 'on', True)])
+            self.assertIn('系统代理已接通', output.getvalue())
+
+    def test_start_proxy_failure_keeps_running_service_and_reports_partial_state(self):
+        self.service_plist()
+        from domino_model import DomainError
+        with patch.object(mac, 'start') as start, patch.object(mac, 'stop') as stop, \
+                patch.object(mac, 'system_proxy', side_effect=DomainError('需要认证', code='AUTH_REQUIRED', exit_code=4)), \
+                redirect_stdout(io.StringIO()) as output, self.assertRaises(common.InstallError) as caught:
+            mac.service_action(self.ctx, 'start', batch=True)
         start.assert_called_once_with(self.home)
+        stop.assert_not_called()
+        self.assertEqual((caught.exception.code,caught.exception.exit_code,caught.exception.effect), ('AUTH_REQUIRED',4,'unknown'))
+        self.assertIn('服务已启动，但系统代理未接通', str(caught.exception))
+        self.assertNotIn('已开启', output.getvalue())
+
+    def test_start_does_not_change_proxy_before_controller_becomes_ready(self):
+        self.service_plist()
+        with patch.object(mac, 'start'), patch.object(self.ctx, 'controller', side_effect=common.InstallError('not ready')), \
+                patch.object(mac.time, 'sleep'), patch.object(mac, 'system_proxy') as proxy, \
+                self.assertRaisesRegex(common.InstallError, '控制接口未就绪'):
+            mac.service_action(self.ctx, 'start')
         proxy.assert_not_called()
+
+    def test_unified_start_stop_roundtrip_restores_previous_proxy_without_touching_shell(self):
+        self.service_plist()
+        (self.app/'data').mkdir(parents=True)
+        (self.app/'data/config.json').write_text('{"mixed-port":17897}')
+        policy = self.app/'shell-policy.json'
+        policy.write_text('{"enabled":true}')
+        rc = self.home/'.zshrc'
+        rc.write_text('# existing shell settings\n')
+        with self.proxy_network(proxies()) as adapter, patch.object(mac, 'start'), patch.object(mac, 'stop'), \
+                patch.object(mac, 'state', return_value=(True,True)), redirect_stdout(io.StringIO()):
+            for _ in range(2): mac.service_action(self.ctx, 'start', batch=True)
+            self.assertEqual(adapter.current, proxies(17897))
+            mac.service_action(self.ctx, 'stop', batch=True)
+            self.assertEqual(adapter.current, proxies())
+        self.assertEqual(policy.read_text(),'{"enabled":true}')
+        self.assertEqual(rc.read_text(),'# existing shell settings\n')
 
 
 if __name__ == '__main__':

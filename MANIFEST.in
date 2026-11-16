@@ -1,0 +1,13 @@
+include README.md README.pypi.md CHANGELOG.md NOTICE LICENSE* SECURITY.md CONTRIBUTING.md CLAUDE.md install.sh domino
+recursive-include docs *.md
+recursive-include assets *.gif *.png *.md
+recursive-include licenses *.txt
+recursive-include scripts *.py
+recursive-include tests *.py
+recursive-include .github *.yml *.md
+include .gitignore .gitattributes .editorconfig
+prune dist
+prune build
+prune .venv
+prune .test-resources
+global-exclude __pycache__ *.py[cod] .DS_Store

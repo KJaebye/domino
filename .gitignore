@@ -23,3 +23,15 @@ private/
 .DS_Store
 .pytest_cache/
 *.whl
+.ruff_cache/
+.mypy_cache/
+.tox/
+htmlcov/
+*.sqlite
+*.sqlite3
+*.db
+
+# Generated Debian packages and archive signatures
+*.deb
+*.changes
+*.buildinfo

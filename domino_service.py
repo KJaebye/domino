@@ -33,7 +33,7 @@ OPERATIONS={
     'capabilities':spec('Discover protocol, operations, schemas and platform capabilities',installed=False),
     'status.get':spec('Read service state and proxy health',obj({'check_exit':BOOLEAN}),installed=False),
     'source.inspect':spec('Inspect a transferable source configuration',obj({'path':STRING}),installed=False),
-    'source.list':spec('List runtime and saved source configurations; probe runtime endpoints only',installed=False),
+    'source.list':spec('List runtime, external saved and Domino-managed configurations; probe runtime endpoints only',installed=False),
     'nodes.list':spec('List proxy groups and nodes',obj({'group':STRING})),
     'configs.list':spec('List saved configurations with stable IDs',installed=False),
     'mode.get':spec('Read proxy mode'),
@@ -42,8 +42,9 @@ OPERATIONS={
     'traffic.sample':spec('Take one bounded traffic sample',obj({'interval':{'type':'number','minimum':.2,'maximum':60}})),
     'rules.list':spec('Read active or custom rules',obj({'match':STRING,'limit':{'type':'integer','minimum':1,'maximum':100000},'custom':BOOLEAN})),
     'providers.list':spec('List proxy or rule providers',obj({'kind':{'type':'string','enum':['proxy','rule']}}),{'type':'array','items':OBJECT}),
-    'proxy.status':spec('Read system proxy settings',obj({'service':STRING}),installed=False,platforms=['darwin']),
-    'delay.test':spec('Measure node or group HTTPS delay',obj({'name':STRING,'node':STRING,'group':STRING,
+    'proxy.status':spec('Read system proxy settings or report an unavailable desktop session',obj({'service':STRING}),installed=False),
+    'delay.summary':spec('Summarize HTTPS node reachability for all saved configurations', obj({'url':STRING,'timeout':{'type':'integer','minimum':100,'maximum':60000}}), installed=False),
+    'delay.test':spec('Measure configuration, node or group HTTPS delay',obj({'config':STRING,'name':STRING,'node':STRING,'group':STRING,
         'url':STRING,'timeout':{'type':'integer','minimum':100,'maximum':60000}}),{'type':'array','items':OBJECT}),
 }
 
@@ -82,11 +83,11 @@ OPERATIONS.update({
     'shell.status':spec('Read terminal proxy policy (not parent-shell environment)',installed=False),
     'shell.on':spec('Enable terminal proxy policy',write=True),
     'shell.off':spec('Disable terminal proxy policy',write=True),
-    'proxy.on':spec('Enable system proxy with a backup',obj({'service':STRING}),platforms=['darwin'],write=True),
-    'proxy.off':spec('Restore the preceding system proxy',obj({'service':STRING}),platforms=['darwin'],write=True),
-    'service.start':spec('Start the owned service without prompting',write=True),
-    'service.stop':spec('Stop the owned service without prompting',write=True),
-    'service.restart':spec('Restart the owned service without prompting',write=True),
+    'proxy.on':spec('Enable the supported desktop system proxy with a backup',obj({'service':STRING}),write=True),
+    'proxy.off':spec('Restore the preceding desktop system proxy',obj({'service':STRING}),write=True),
+    'service.start':spec('Start the owned service and connect the available desktop system proxy without prompting',write=True),
+    'service.stop':spec('Restore the desktop system proxy, then stop the owned service without prompting',write=True),
+    'service.restart':spec('Restart the owned service and connect the available desktop system proxy without prompting',write=True),
     'connections.close':spec('Close a connection by ID',obj({'id':STRING},['id']),write=True),
     'connections.clear':spec('Close all current connections',write=True),
     'providers.update':spec('Refresh one HTTP or file provider',obj({'kind':{'type':'string','enum':['proxy','rule']},'name':STRING},['name']),write=True),
@@ -104,7 +105,7 @@ CONFIGS=obj({'active':NULL_STRING,'active_id':dict(ID,type=['string','null']),
     'current_source':STRING,'configs':{'type':'array','items':SUBSCRIPTION}},['active','active_id','configs'],extra=True)
 STATUS=obj({**{key:BOOLEAN for key in ['installed','active','enabled','healthy','awaiting_subscription','requires_source_online','controller_reachable','exit_checked']},
     **{key:NULL_STRING for key in ['service','version','arch','subscription','mode','exit_country','deployment_method','autostart_scope']},
-    'proxy_port':INTEGER},['installed','active','enabled','healthy'],extra=True)
+    'proxy_port':INTEGER,'system_proxy':OBJECT},['installed','active','enabled','healthy'],extra=True)
 NODES=obj({'mode':STRING,'groups':{'type':'array','items':obj({'name':STRING,'type':STRING,'current':NULL_STRING,'choices':STRINGS,'selectable':BOOLEAN},extra=True)},
     'nodes':{'type':'array','items':obj({'name':STRING,'type':STRING},['name','type'])}},extra=True)
 PROVIDERS={'type':'array','items':obj({'name':STRING,'type':NULL_STRING,'vehicleType':NULL_STRING,
@@ -115,6 +116,9 @@ IMPORT_SOURCE=obj({'status':{'type':'string','enum':['known','unknown','invalid'
 PROFILE_SOURCE={'source_kind':{'type':'string','enum':['profile','import-snapshot']},'profile_id':STRING,'profile_name':STRING,
     'client_current':{'type':['boolean','null']},'check_note':STRING,
     'import_source':IMPORT_SOURCE,'current_config':STRING}
+SCAN_CONFIGS=obj({'active':NULL_STRING,'current_source':STRING,'error':STRING,
+    'configs':{'type':'array','items':obj({key:value for key,value in SUBSCRIPTION['properties'].items() if key!='id'},
+        ['name','kind','active','cached'],extra=True)}},['configs'],extra=True)
 RESULT_SCHEMAS={
     'bundle.export':obj({'output':STRING,'bundle_sha256':{'type':'string','pattern':'[a-f0-9]{64}'},'version':STRING,'arch':STRING,'system':STRING},['output','bundle_sha256','version','arch','system']),
     'deployment.apply':STATUS,
@@ -126,9 +130,11 @@ RESULT_SCHEMAS={
         'compatible_config_found':BOOLEAN,'proxy':NULL_STRING,'default':BOOLEAN,'config_error':STRING,
         'healthy':BOOLEAN,'exit_checked':BOOLEAN,'check_error':STRING,
         'check_code':STRING,'check_stage':STRING,'check_hint':STRING,'check_details':OBJECT,**PROFILE_SOURCE},
-        ['name','source','config','compatible_config_found','proxy','default','healthy','exit_checked'])},'warnings':STRINGS},['sources']),
+        ['name','source','config','compatible_config_found','proxy','default','healthy','exit_checked'])},
+        'managed_configs':SCAN_CONFIGS,'warnings':STRINGS},['sources']),
     'rules.list':obj({'total':INTEGER,'source':STRING,'rules':{'type':'array','items':{'oneOf':[{'type':'string'},OBJECT]}}},['total','rules']),
     'providers.list':PROVIDERS,'providers.update':PROVIDERS,
+    'delay.summary':{'type':'array','items':obj({'name':STRING,'active':BOOLEAN,'total':{'type':['integer','null']},'available':{'type':['integer','null']},'unavailable':{'type':['integer','null']},'status':{'type':'string','enum':['tested','uncached','error']},'message':STRING,'error_code':STRING},['name','active','total','available','unavailable','status'])},
     'delay.test':{'type':'array','items':obj({'name':STRING,'delay_ms':{'type':['number','null']},'ok':BOOLEAN},['name','delay_ms','ok'])},
     'traffic.sample':obj({**{key:NUMBER for key in ['upload_bytes_per_second','download_bytes_per_second','upload_total','download_total','connections']},'memory':{'type':['number','null']}},extra=True),
     'connections.list':obj({'uploadTotal':{'type':['number','null']},'downloadTotal':{'type':['number','null']},'connections':{'type':'array','items':obj({'id':NULL_STRING,'host':NULL_STRING,'port':{'type':['string','integer','null']},'network':NULL_STRING,'process':NULL_STRING,'rule':NULL_STRING,'chains':STRINGS,'upload':NUMBER,'download':NUMBER},extra=True)}},extra=True),
@@ -197,7 +203,8 @@ class Application:
         for path in [app/'shell-policy.json',app/'data/config.json',app/'data/subscription.json',
                      app/'data/source/metadata.json',app/'data/source/config.json',
                      self.ctx.HOME/'.config/domino/subscriptions/index.json',
-                     self.ctx.HOME/'.config/domino/rules.json',self.ctx.HOME/'.config/domino/system-proxy.json']:
+                     self.ctx.HOME/'.config/domino/rules.json',self.ctx.HOME/'.config/domino/system-proxy.json',
+                     self.ctx.HOME/'.config/domino/linux-system-proxy.json']:
             digest.update(str(path.relative_to(self.ctx.HOME)).encode())
             content=path.read_bytes() if path.is_file() else b'<absent>'
             try: content=json.dumps(json.loads(content),sort_keys=True,separators=(',',':')).encode()
@@ -220,6 +227,11 @@ class Application:
                         'pac':domino_macos.network('-getautoproxyurl',service),
                         'discovery':domino_macos.network('-getproxyautodiscovery',service)}
                 except (DomainError,RuntimeError,OSError): routing={'available':False}
+                digest.update(json.dumps(routing,sort_keys=True).encode())
+            elif platform.system().lower()=='linux':
+                import domino_linux
+                try: routing=domino_linux.Settings().state()
+                except DomainError: routing={'available':False}
                 digest.update(json.dumps(routing,sort_keys=True).encode())
         return digest.hexdigest()
 
@@ -278,12 +290,14 @@ class Application:
             return read_logs(ctx,arguments.get('lines',100))
         if operation=='shell.status': return ctx.shell_proxy(render=False)
         if operation=='proxy.status':
-            import domino_macos
-            return domino_macos.system_proxy(ctx,service=arguments.get('service'),render=False)
+            return ctx.system_proxy(service=arguments.get('service'),render=False)
+        if operation=='delay.summary':
+            return ctx.delay_summary(url=arguments.get('url','https://www.gstatic.com/generate_204'),
+                timeout_ms=arguments.get('timeout',5000),render=False)
         if operation=='delay.test':
-            if sum(key in arguments for key in ['node','name','group'])>1:
+            if sum(key in arguments for key in ['node','name','group','config'])>1:
                 raise DomainError('只能指定一种测速对象。',code='INVALID_ARGUMENT',exit_code=2)
-            return ctx.delay(node=arguments.get('node'),group=arguments.get('group'),name=arguments.get('name'),
+            return ctx.delay(node=arguments.get('node'),group=arguments.get('group'),name=arguments.get('name'),config=arguments.get('config'),
                 url=arguments.get('url','https://www.gstatic.com/generate_204'),timeout_ms=arguments.get('timeout',5000),render=False)
         raise DomainError('未支持的操作。',code='UNSUPPORTED_OPERATION',exit_code=3)
 
@@ -326,9 +340,27 @@ class Application:
                 result.update(version=manifest.get('version'),arch=manifest.get('arch'),proxy_port=manifest.get('proxy_port'),
                     changes=['kernel','configuration','background service','management CLI'],requires_sudo=platform.system().lower()=='linux')
             return result
-        if operation.startswith('service.') and not operation.endswith('restart'):
+        if operation in ['service.start', 'service.stop']:
             active=self.ctx.systemctl('is-active')
             result['would_change']=bool(active)!=(operation=='service.start')
+            if platform.system().lower() == 'darwin':
+                import domino_macos
+                app,_=self.ctx.current_installation()
+                config=json.loads((app/'data/config.json').read_text())
+                routing=domino_macos.system_proxy_overview(config['mixed-port'])['routing']
+                proxy_change=(routing!='domino' if operation=='service.start' else
+                              routing not in ['off','other','pac'] or (self.ctx.HOME/'.config/domino/system-proxy.json').exists())
+                result['would_change'] = result['would_change'] or proxy_change
+                result['changes'] = ['owned service', 'system proxy']
+            elif platform.system().lower() == 'linux':
+                import domino_linux
+                app,_=self.ctx.current_installation()
+                config=json.loads((app/'data/config.json').read_text())
+                routing=domino_linux.system_proxy_overview(config['mixed-port'])['routing']
+                record=domino_linux.record_path(self.ctx).exists()
+                proxy_change=(routing not in ['domino','unsupported'] if operation=='service.start' else routing in ['domino','mixed','unknown'] or record)
+                result['would_change'] = result['would_change'] or proxy_change
+                result['changes'] = ['owned service'] + (['system proxy'] if routing!='unsupported' or record else [])
         if operation=='service.rollback':
             backup=self.ctx.select_backup(arguments.get('backup'))
             return dict(result,backup=backup.name,would_change=True,changes=['owned service','configuration','environment files'])
@@ -484,8 +516,7 @@ class Application:
         if operation in ['shell.on','shell.off']:
             return ctx.shell_proxy(operation.split('.')[1],render=False)
         if operation.startswith('proxy.'):
-            import domino_macos
-            return domino_macos.system_proxy(ctx,operation.split('.')[1],service=arguments.get('service'),batch=True,render=False)
+            return ctx.system_proxy(operation.split('.')[1],service=arguments.get('service'),non_interactive=True,render=False)
         if operation.startswith('service.'):
             if operation=='service.rollback':
                 if platform.system().lower()=='darwin':

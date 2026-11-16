@@ -1,0 +1,18 @@
+Domino third-party notices
+
+Domino manages Mihomo as a separate executable. Public CLI wheels and runtime
+archives do not contain a Mihomo binary or user proxy configurations. Installation
+downloads a selected upstream release; private deployment archives can contain it.
+
+Mihomo: https://github.com/MetaCubeX/mihomo
+License: GNU General Public License version 3, reproduced in
+licenses/mihomo-GPL-3.0.txt. The upstream source and release tags are available at
+the project URL. Preserve the upstream notices when redistributing the core.
+
+Python dependencies bundled in CLI runtime archives:
+- prompt_toolkit: BSD 3-Clause, https://github.com/prompt-toolkit/python-prompt-toolkit
+- wcwidth: MIT, https://github.com/jquast/wcwidth
+- PyYAML: MIT, https://github.com/yaml/pyyaml
+
+Dependency license texts accompany the bundled copies under cli/_vendor/licenses.
+Pillow is an optional documentation build dependency; it is not bundled at runtime.

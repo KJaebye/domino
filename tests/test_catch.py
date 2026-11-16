@@ -12,6 +12,7 @@ import unittest
 from unittest.mock import patch
 
 import domino_cli as tool
+import install_domino as control
 
 
 class CatchTests(unittest.TestCase):
@@ -20,6 +21,7 @@ class CatchTests(unittest.TestCase):
         self.addCleanup(self.stack.close)
         self.home = Path(self.stack.enter_context(tempfile.TemporaryDirectory()))
         self.stack.enter_context(patch.object(Path, 'home', return_value=self.home))
+        self.stack.enter_context(patch.multiple(control, HOME=self.home, APP=self.home / '.local/share/domino'))
         self.stack.enter_context(patch.object(tool.sys.stdin, 'isatty', return_value=True))
         self.out = self.stack.enter_context(redirect_stdout(io.StringIO()))
         self.err = self.stack.enter_context(redirect_stderr(io.StringIO()))
@@ -42,14 +44,19 @@ class CatchTests(unittest.TestCase):
     def run_catch(self, *extra):
         return tool.main(['catch', '--source', str(self.source), *extra])
 
-    def test_bare_command_is_short_static_help(self):
+    def test_bare_command_is_grouped_static_overview(self):
         with patch.object(tool, 'build_parser') as parser, patch.object(tool, 'cache_dir') as cache, \
              patch.object(tool, 'collect_sources') as scan, patch.object(tool, 'discover_sources') as discover:
             self.assertEqual(tool.main([]), 0)
         text = self.out.getvalue()
-        for command in ['catch', 'USER@IP', 'status', 'nodes', 'ui', '-h']:
+        self.assertIn('usage: domino [USER@IP] COMMAND [ARGS] [options]', text)
+        for title in ['命令概览', '常用入口', '节点与检测', '服务与代理']:
+            self.assertIn(title, text)
+        for command in ['USER@IP', 'ui', 'scan', 'list', 'catch', 'nodes', 'select', 'test',
+                        'start', 'stop', 'status', 'shell on', 'shell off', 'shell status', 'traffic', '-h']:
             self.assertIn('domino ' + command, text)
-        for command in ['connections', 'providers', 'rollback', 'traffic']:
+        self.assertIn('等同 domino USER@IP deploy', text)
+        for command in ['connections', 'providers', 'rollback']:
             self.assertNotIn(command, text)
         for call in [parser, cache, scan, discover, self.install, self.network, self.ssh]:
             call.assert_not_called()
@@ -121,11 +128,12 @@ class CatchTests(unittest.TestCase):
         duplicate.symlink_to(self.source)
         invalid = self.config('invalid.json', {'mode': 'rule'})
         with patch.object(tool, 'discover_sources', return_value=[owned, legacy, alias, self.source, duplicate, invalid]), \
+             patch('domino_subscriptions.Manager.capture', return_value=({'name': 'fixture'}, True)), \
              patch.object(tool, 'check_source_proxy') as probe:
             self.assertEqual(tool.capture_candidates(), [self.source])
             self.assertEqual(tool.main(['catch', '--yes']), 0)
             probe.assert_not_called()
-        self.install.assert_called_once()
+        self.install.assert_not_called()
 
     def test_no_external_source_fails_without_installing(self):
         self.assertEqual(tool.main(['catch', '--yes']), 1)
@@ -267,6 +275,90 @@ class CatchTests(unittest.TestCase):
         self.assertEqual(reply['error']['code'], 'UNSUPPORTED_OPERATION')
         prompt.assert_not_called()
         self.install.assert_not_called()
+
+    def installed(self):
+        self.config('.local/share/domino/data/config.json')
+        (self.home / '.local/share/domino/mihomo').write_text('test kernel')
+        return self.stack.enter_context(patch.object(control, 'run'))
+
+    def test_catch_passes_explicit_resource_directories_to_import(self):
+        self.installed()
+        resources = self.home / 'shared'
+        resources.mkdir()
+        with patch('domino_subscriptions.Manager.capture', return_value=({'name': 'fixture'}, True)) as capture:
+            self.assertEqual(self.run_catch('--yes', '--resource-dir', str(resources)), 0)
+        self.assertEqual(capture.call_args.kwargs['resource_dirs'], [str(resources)])
+        self.install.assert_not_called()
+
+    def test_installed_menu_includes_saved_profiles_and_all(self):
+        self.installed()
+        root = 'Library/Application Support/io.github.clash-verge-rev.clash-verge-rev'
+        first = self.config(root + '/profiles/first.json')
+        second = self.config(root + '/profiles/second.json', dict(self.raw, mode='global'))
+        self.config(root + '/profiles.yaml', {'current': 'a', 'items': [
+            {'uid': 'a', 'file': first.name, 'type': 'remote', 'name': 'Alpha'},
+            {'uid': 'b', 'file': second.name, 'type': 'local', 'name': 'Beta'}]})
+        with patch('builtins.input', side_effect=['all', 'yes']), \
+             patch.object(tool, 'live_selections') as live:
+            self.assertEqual(tool.main(['catch']), 0)
+        import domino_subscriptions
+        result = domino_subscriptions.Manager(control).listing()
+        self.assertEqual({v['name'] for v in result['configs']}, {'Alpha', 'Beta'})
+        self.assertIsNone(result['active'])
+        self.assertIn('Alpha', self.out.getvalue())
+        self.assertIn('all', self.out.getvalue())
+        live.assert_not_called()
+        self.install.assert_not_called()
+
+    def test_all_deduplicates_contents_and_preserves_runtime_on_repeated_capture(self):
+        validation = self.installed()
+        second = self.config('other/config.json', dict(self.raw, **{'mixed-port': 9999, 'secret': 'OTHER-SECRET'}))
+        runtime = self.home / '.local/share/domino/data/config.json'
+        before = runtime.read_bytes()
+        with patch.object(tool, 'discover_sources', return_value=[self.source, second]), \
+             patch('builtins.input') as prompt:
+            self.assertEqual(tool.main(['catch', 'all', '--yes']), 0)
+            import domino_subscriptions
+            manager = domino_subscriptions.Manager(control)
+            index = manager.index.read_bytes()
+            revisions = sorted(p.name for p in (manager.root / 'cache').iterdir())
+            self.assertEqual(tool.main(['catch', 'all', '--yes']), 0)
+            self.assertEqual(manager.index.read_bytes(), index)
+            self.assertEqual(sorted(p.name for p in (manager.root / 'cache').iterdir()), revisions)
+        self.assertEqual(len(manager.registry['items']), 1)
+        self.assertEqual(runtime.read_bytes(), before)
+        self.assertFalse((runtime.parent / 'subscription.json').exists())
+        validation.assert_called_once()
+        self.install.assert_not_called()
+        prompt.assert_not_called()
+        self.assertNotIn('TEST-PRIVATE-PASSWORD', self.out.getvalue() + self.err.getvalue())
+
+    def test_installed_number_selects_only_one_and_does_not_touch_service_or_proxy(self):
+        self.installed()
+        second = self.config('other/config.json', dict(self.raw, mode='global'))
+        with patch.object(tool, 'discover_sources', return_value=[self.source, second]), \
+             patch('builtins.input', side_effect=['2', 'yes']), \
+             patch.object(control, 'api_json') as api, patch.object(control, 'systemctl') as service:
+            self.assertEqual(tool.main(['catch']), 0)
+        import domino_subscriptions
+        manager = domino_subscriptions.Manager(control)
+        item, = manager.registry['items']
+        self.assertEqual(tool.load_yaml(manager.cached(item) / 'source/config.json')['mode'], 'global')
+        api.assert_not_called()
+        service.assert_not_called()
+        self.install.assert_not_called()
+
+    def test_all_conflicts_with_source_and_batch_failure_keeps_successful_captures(self):
+        self.installed()
+        self.assertEqual(tool.main(['catch', 'all', '--source', str(self.source), '--yes']), 1)
+        bad = self.config('bad/config.json', dict(self.raw, **{'proxy-providers': {'bad': {'type': 'file', 'path': 'missing.yaml'}}}))
+        with patch.object(tool, 'capture_candidates', return_value=[bad, self.source]):
+            self.assertEqual(tool.main(['catch', 'all', '--yes']), 1)
+        import domino_subscriptions
+        self.assertEqual(len(domino_subscriptions.Manager(control).registry['items']), 1)
+        self.assertIn('失败 1', self.out.getvalue())
+        self.install.assert_not_called()
+
 
 
 if __name__ == '__main__':

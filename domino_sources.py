@@ -154,10 +154,42 @@ def _validate_profile(raw):
                 _fail()
 
 
-def create_source(raw, source: Path, destination: Path, *, proxy=None, metadata=None, online=False, _offline=False):
+class ResourceResolver:
+    """Resolve explicit references in deterministic, source-specific directories."""
+    def __init__(self, source, directories=()):
+        source = Path(source).expanduser().absolute()
+        roots = [source.parent]
+        verge = Path.home() / 'Library/Application Support/io.github.clash-verge-rev.clash-verge-rev'
+        if (source.resolve().is_relative_to((verge / 'profiles').resolve())
+                or source.resolve() == (verge / 'clash-verge.yaml').resolve()):
+            roots.append(verge)
+        roots.extend(Path(path).expanduser().absolute() for path in directories)
+        self.roots = list(dict.fromkeys(roots))
+
+    def find(self, value, *, relative_to=()):
+        if not isinstance(value, str) or not value or '\\' in value or '\0' in value or '://' in value:
+            raise DomainError('本地资源引用路径无效。', code='INVALID_RESOURCE_PATH', exit_code=2)
+        path = Path(value).expanduser()
+        candidates = [path] if path.is_absolute() else [root / path for root in (*relative_to, *self.roots)]
+        for candidate in candidates:
+            if candidate.is_symlink() or _unsafe_parents(candidate):
+                raise DomainError('本地资源引用包含符号链接，未读取。', code='INVALID_RESOURCE_PATH', exit_code=2)
+            if candidate.is_file():
+                return candidate.resolve()
+        return None
+
+    def require(self, value, kind, *, relative_to=()):
+        path = self.find(value, relative_to=relative_to)
+        if path is None:
+            raise DomainError('缺少' + kind + '文件；请检查配置引用，或使用 --resource-dir 指定资源目录。',
+                              code='SOURCE_RESOURCE_MISSING', exit_code=3)
+        return path
+
+
+def create_source(raw, source: Path, destination: Path, *, proxy=None, metadata=None, online=False, _offline=False, geo_dirs=(), require_geo=False, resource_dirs=()):
     """Materialize dependencies once, retaining the parsed pre-sanitize configuration."""
     import domino_cli as tool
-    from domino_resources import prepare_geo
+    from domino_resources import geo_requirements, prepare_geo
     destination, source = Path(destination), Path(source)
     created = False
     try:
@@ -177,30 +209,28 @@ def create_source(raw, source: Path, destination: Path, *, proxy=None, metadata=
                         _fail()
                     if provider.get('type') == 'http':
                         provider.pop('path', None)
+        resolver = ResourceResolver(source, resource_dirs)
         # Source/client caches are permitted only for explicit local imports.
         if _offline:
             for kind in ('proxy-providers', 'rule-providers'):
                 for provider in profile.get(kind, {}).values():
                     if provider.get('type') in ('http', 'file'):
                         value = provider.get('path')
-                        if not isinstance(value, str) or not (source.parent / value).is_file():
-                            _fail()
-        tool.provider_resources(profile, source.parent, destination, proxy)
+                        resolver.require(value, 'provider 缓存')
+        origins = tool.provider_resources(profile, source.parent, destination, proxy, resolver=resolver, allow_download=not _offline)
 
-        def certificates(content):
+        def certificates(content, relative_to=()):
             for node, key, value in _walk_certs(content):
                 if online:
                     _fail()
-                original = Path(value) if Path(value).is_absolute() else source.parent / value
-                if not original.is_file():
-                    _fail()
+                original = resolver.require(value, '证书/私钥', relative_to=relative_to)
                 payload = original.read_bytes()
                 relative = Path('certs') / (hashlib.sha256(payload).hexdigest()[:24] + '.pem')
                 _write(destination / relative, payload)
                 node[key] = relative.as_posix()
 
         certificates(profile)
-        for provider in profile.get('proxy-providers', {}).values():
+        for name, provider in profile.get('proxy-providers', {}).items():
             if not provider.get('path'):
                 continue
             path = _relative(destination, provider['path'])
@@ -210,14 +240,32 @@ def create_source(raw, source: Path, destination: Path, *, proxy=None, metadata=
             if not isinstance(payload, dict) or not isinstance(payload.get('proxies'), list) or any(not isinstance(n, dict) for n in payload['proxies']):
                 _fail()
             tool.validate_independent_nodes(payload['proxies'])
-            certificates(payload)
+            original = origins.get(('proxy-providers', name))
+            certificates(payload, (original.parent,) if original else ())
             _write(path, _canonical(payload))
         # Reuse existing Geo snapshots without downloading when available.
         for name in ('Country.mmdb', 'geoip.metadb', 'geoip.dat', 'geosite.dat', 'ASN.mmdb'):
             if not online and (source.parent / name).is_file():
                 _write(destination / name, (source.parent / name).read_bytes())
+        # Geo shares the same source/client roots, plus the known installed
+        # public database directory. Providers and keys never borrow runtime files.
+        fallback = ([] if online else resolver.roots) + [Path(path) for path in geo_dirs]
+        needed = geo_requirements(profile, destination)
+        for name in sorted(needed):
+            if (destination / name).is_file():
+                continue
+            for directory in fallback:
+                candidate = directory / name
+                if not candidate.is_symlink() and not _unsafe_parents(candidate) and candidate.is_file():
+                    _write(destination / name, candidate.read_bytes())
+                    break
         if not _offline:
             prepare_geo(profile, destination, tool.download_resource, proxy)
+        missing = sorted(name for name in needed if not (destination / name).is_file())
+        if require_geo and missing:
+            raise DomainError('捕获缺少 Geo 数据库：' + '、'.join(missing) +
+                              '。请先让来源客户端完成 Geo 数据更新，或配置 Domino 的 Geo 资源源后重试；未更改当前配置。',
+                              code='GEO_RESOURCE_MISSING', exit_code=3)
         _write(destination / 'config.json', _canonical(profile))
         files = _manifest(destination)
         info.update(snapshot_digest=_digest(files), files=files)
@@ -229,7 +277,7 @@ def create_source(raw, source: Path, destination: Path, *, proxy=None, metadata=
     except BaseException as error:
         if created and destination.is_dir() and not destination.is_symlink():
             shutil.rmtree(destination)
-        if isinstance(error, (KeyboardInterrupt, SystemExit)):
+        if isinstance(error, (KeyboardInterrupt, SystemExit)) or (isinstance(error, DomainError) and error.code in {'GEO_RESOURCE_MISSING', 'SOURCE_RESOURCE_MISSING', 'INVALID_RESOURCE_PATH'}):
             raise
         _fail()
 

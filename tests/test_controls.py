@@ -11,6 +11,31 @@ import domino_cli as tool
 
 
 class ControlTests(unittest.TestCase):
+    def test_status_does_not_claim_system_is_connected_when_only_proxy_endpoint_is_healthy(self):
+        result={'installed':True,'active':True,'enabled':True,'healthy':True,'proxy_port':17897,
+                'system_proxy':{'routing':'off','ports':[]}}
+        text=control.status_text(result)
+        self.assertIn('系统代理未接通',text)
+        self.assertIn('domino start',text)
+        result['system_proxy']['routing']='domino'
+        self.assertIn('代理出网正常',control.status_text(result))
+
+    def test_status_json_includes_system_routing_and_keeps_endpoint_health_separate(self):
+        with tempfile.TemporaryDirectory() as directory:
+            app=Path(directory);(app/'data').mkdir()
+            (app/'data/config.json').write_text('{"mixed-port":17897}')
+            (app/'manifest.json').write_text('{"platform":"darwin"}')
+            import domino_macos
+            with patch.object(control,'current_installation',return_value=(app,Path('domino.service'))), \
+                    patch.object(control,'systemctl',return_value=True),patch.object(control,'controller',return_value=b'{}'), \
+                    patch.object(control,'probe',return_value={'healthy':True}), \
+                    patch.object(domino_macos,'system_proxy_overview',return_value={'routing':'off','ports':[]}), \
+                    redirect_stdout(io.StringIO()) as output:
+                self.assertEqual(control.status(True),0)
+            result=json.loads(output.getvalue())
+            self.assertTrue(result['healthy'])
+            self.assertEqual(result['system_proxy']['routing'],'off')
+
     def test_pending_install_status_checks_controller_without_claiming_proxy_health(self):
         with tempfile.TemporaryDirectory() as directory:
             app=Path(directory)
@@ -73,15 +98,15 @@ class ControlTests(unittest.TestCase):
         self.assertEqual([item['name'] for item in json.loads(output.getvalue())],['美国'])
 
     def test_simple_delay_syntax_routes_local_and_remote_and_preserves_legacy_forms(self):
-        cases=[(['delay'],None,'--all'),(['delay','自动选择'],None,'--name=自动选择'),
-               (['delay','美国TRI002','nvidia@192.168.8.21'],'nvidia@192.168.8.21','--name=美国TRI002'),
-               (['delay','all','lab-alias'],'lab-alias','--all'),
-               (['delay','nvidia@192.168.8.21'],'nvidia@192.168.8.21','--all'),
-               (['delay','192.168.8.21'],'192.168.8.21','--all'),
-               (['delay','[2001:db8::21]'],'[2001:db8::21]','--all'),
-               (['delay','localhost'], 'localhost','--all'),
-               (['delay','localhost','--node','Japan'],'localhost','--node=Japan'),
-               (['delay','--group','自动选择','lab-alias'],'lab-alias','--group=自动选择')]
+        cases=[(['test'],None,'--summary'),(['test','自动选择'],None,'--name=自动选择'),
+               (['test','美国TRI002','nvidia@192.168.8.21'],'nvidia@192.168.8.21','--name=美国TRI002'),
+               (['test','all','lab-alias'],'lab-alias','--summary'),
+               (['nvidia@192.168.8.21','test'],'nvidia@192.168.8.21','--summary'),
+               (['192.168.8.21','test'],'192.168.8.21','--summary'),
+               (['[2001:db8::21]','test'],'[2001:db8::21]','--summary'),
+               (['localhost','test'], 'localhost','--summary'),
+               (['localhost','test','--node','Japan'],'localhost','--node=Japan'),
+               (['lab-alias','test','--group','自动选择'],'lab-alias','--group=自动选择')]
         for argv,target,selector in cases:
             with self.subTest(argv=argv):
                 args=tool.normalize_command(tool.build_parser().parse_args(argv))
@@ -176,17 +201,18 @@ class ControlTests(unittest.TestCase):
             self.assertNotIn('PRIVATE', output.getvalue())
 
     def test_all_new_management_commands_support_localhost_and_remote(self):
-        commands = [['mode', '--set', 'global'], ['log-level', '--set', 'info'],
-                    ['delay', '--node', 'Japan'], ['connections', '--close', 'ID'],
+        commands = [['mode', '--set', 'global'], ['log', '--set', 'info'],
+                    ['test', '--node', 'Japan'], ['connections', '--close', 'ID'],
                     ['traffic', '--watch', '--count', '2'], ['rules', '--match', 'google'],
                     ['providers', '--update', 'airport']]
         for command in commands:
             with self.subTest(command=command), patch.object(tool, 'run') as run, patch.object(tool, 'SSH') as ssh:
-                self.assertEqual(tool.main([command[0], 'localhost', *command[1:]]), 0)
-                self.assertEqual(run.call_args.args[0][2], command[0])
+                backend = {'test': 'delay', 'log': 'log-level'}.get(command[0], command[0])
+                self.assertEqual(tool.main(['localhost', *command]), 0)
+                self.assertEqual(run.call_args.args[0][2], backend)
                 ssh.assert_not_called()
-                self.assertEqual(tool.main([command[0], 'alice@host', *command[1:]]), 0)
-                self.assertEqual(ssh.return_value.__enter__.return_value.action.call_args.args[0], command[0])
+                self.assertEqual(tool.main(['alice@host', *command]), 0)
+                self.assertEqual(ssh.return_value.__enter__.return_value.action.call_args.args[0], backend)
 
 
 if __name__ == '__main__':

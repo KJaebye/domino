@@ -5,6 +5,7 @@ import ast
 from contextlib import contextmanager, nullcontext
 from datetime import datetime, timezone
 import hashlib
+import importlib.metadata
 import json
 import os
 from pathlib import Path
@@ -20,8 +21,17 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 import domino_cli as cli
 
+DISTRIBUTION = 'domino-proxy'
+WHEEL_NAME = DISTRIBUTION.replace('-', '_')
 
-SOURCE_FILES = ('pyproject.toml', 'README.md', 'CHANGELOG.md') + cli.CLI_MODULES
+def wheel_name(version, distribution=DISTRIBUTION):
+    return distribution.replace('-', '_') + f'-{version}-py3-none-any.whl'
+
+
+DOCUMENT_FILES = ('README.md','README.pypi.md','CHANGELOG.md','NOTICE','SECURITY.md','CONTRIBUTING.md') + tuple(
+    sorted(path.relative_to(ROOT).as_posix() for pattern in ['LICENSE','docs/*.md','assets/*','licenses/*']
+           for path in ROOT.glob(pattern) if path.is_file()))
+SOURCE_FILES = ('pyproject.toml',) + cli.CLI_MODULES + DOCUMENT_FILES
 
 
 def source_version(inputs):
@@ -35,11 +45,11 @@ def source_version(inputs):
     sections = re.split(r'(?m)^\[project\][ \t]*(?:#.*)?$', inputs['pyproject.toml'].decode('utf-8'))
     project = re.split(r'(?m)^\s*\[', sections[1], maxsplit=1)[0] if len(sections) == 2 else ''
     declared = re.findall(r'(?m)^version[ \t]*=[ \t]*(.*)$', project)
-    package = re.fullmatch(r'''(["'])(0\.\d+(?:\.\d+)?)\1[ \t]*(?:#.*)?''', declared[0]) if len(declared) == 1 else None
+    package = re.fullmatch(r'''(["'])(0\.\d+\.\d+)\1[ \t]*(?:#.*)?''', declared[0]) if len(declared) == 1 else None
     if (len(versions) != 1 or not isinstance(versions[0], str)
-            or not re.fullmatch(r'0\.\d+(?:\.\d+)?', versions[0]) or package is None
+            or not re.fullmatch(r'0\.\d+\.\d+', versions[0]) or package is None
             or versions[0] != package[2] or versions[0] != cli.VERSION):
-        raise ValueError('CLI VERSION and [project] version must match and use 0.x or 0.x.x')
+        raise ValueError('CLI VERSION and [project] version must match and use 0.x.y')
     return versions[0]
 
 
@@ -50,6 +60,7 @@ def hashes(inputs):
 def formula_text(archive, version, digest, base):
     return '''class Domino < Formula
   desc "Command-line proxy management and independent deployment"
+  homepage "https://github.com/KJaebye/domino"
   url "BASE/ARCHIVE"
   version "VERSION"
   sha256 "DIGEST"
@@ -57,19 +68,26 @@ def formula_text(archive, version, digest, base):
 
   def install
     libexec.install "cli"
-    { "domino" => "domino_cli", "domino-install" => "domino_install" }.each do |name, mod|
+    { "domino" => "package_cli", "domino-install" => "package_install" }.each do |name, entry|
       (bin/name).write <<~EOS
         #!#{Formula["python@3.13"].opt_bin}/python3.13
         import sys
         sys.path[:0] = ["#{libexec}/cli", "#{libexec}/cli/_vendor"]
-        from #{mod} import main
-        raise SystemExit(main())
+        from domino_install import #{entry}
+        raise SystemExit(#{entry}())
       EOS
+      (bin/name).chmod 0755
     end
+    doc.install "README.md", "CHANGELOG.md", "NOTICE", "docs", "licenses"
+    doc.install "LICENSE" if File.exist?("LICENSE")
   end
 
-  def post_install
-    system bin/"domino-install", "--batch"
+  def caveats
+    <<~EOS
+      CLI installed. To initialize your local proxy service, run as your normal user:
+        domino-install
+      Package upgrades do not change running services, configuration, or system proxy.
+    EOS
   end
 
   test do
@@ -80,11 +98,17 @@ end
 
 
 def build(source, artifacts, inputs, version, base_url):
+    from packaging.specifiers import SpecifierSet
+    for dependency in ['prompt-toolkit','wcwidth','PyYAML']:
+        requirement=importlib.metadata.metadata(dependency).get('Requires-Python','')
+        if requirement and '3.9' not in SpecifierSet(requirement):
+            raise RuntimeError(f'{dependency} does not support Python 3.9; install .[dev] before building the runtime')
     for name, content in inputs.items():
+        (source / name).parent.mkdir(parents=True,exist_ok=True)
         (source / name).write_bytes(content)
     subprocess.run([sys.executable, '-m', 'pip', 'wheel', '--no-build-isolation', '--no-deps',
                     '--no-index', str(source), '--wheel-dir', str(artifacts), '--quiet'], check=True)
-    wheel = artifacts / f'domino-{version}-py3-none-any.whl'
+    wheel = artifacts / wheel_name(version)
     if not wheel.is_file() or set(artifacts.iterdir()) != {wheel}:
         raise RuntimeError('Wheel build did not produce exactly the expected versioned wheel')
     package = source.parent / f'domino-{version}'
@@ -95,7 +119,8 @@ def build(source, artifacts, inputs, version, base_url):
         (package / 'cli' / name).write_bytes(inputs[name])
     if not all((package / 'cli/_vendor' / name).is_dir() for name in ['yaml', 'prompt_toolkit', 'wcwidth']):
         raise RuntimeError('Install project dependencies before building the runtime archive')
-    for name in ('README.md', 'CHANGELOG.md'):
+    for name in DOCUMENT_FILES:
+        (package / name).parent.mkdir(parents=True,exist_ok=True)
         (package / name).write_bytes(inputs[name])
     for name, module in [('domino', 'domino_cli'), ('domino-install', 'domino_install')]:
         binary = package / 'bin' / name
@@ -142,7 +167,7 @@ def previous_release(output):
     version = data.get('version', '')
     if not isinstance(version, str) or not re.fullmatch(r'0\.\d+(?:\.\d+)?', version):
         raise ValueError('Invalid previous release version')
-    expected = {f'domino-{version}-py3-none-any.whl', f'domino-runtime-{version}.tar.gz'}
+    expected = {wheel_name(version, data.get('distribution', 'domino')), f'domino-runtime-{version}.tar.gz'}
     entries = data.get('files', [])
     names = [item['name'] for item in entries]
     if (len(names) != 3 or len(set(names)) != 3
@@ -168,9 +193,9 @@ def previous_release(output):
 
 def flat_preflight(output, version):
     snapshot = previous_release(output)
-    for path in (output / f'domino-{version}-py3-none-any.whl',
+    for path in (output / wheel_name(version),
                  output / f'domino-runtime-{version}.tar.gz',
-                 output.parent / f'domino-{version}-py3-none-any.whl'):
+                 output.parent / wheel_name(version)):
         if path.exists() or path.is_symlink():
             raise FileExistsError('Version already built; do not overwrite: ' + str(path))
     if snapshot:
@@ -216,7 +241,7 @@ def publish_flat(artifacts, output, version, previous):
             publish(old, target)
             history_target = target
         # Versioned packages are exclusive, including the traditional wheel copy in dist/.
-        wheel = artifacts / f'domino-{version}-py3-none-any.whl'
+        wheel = artifacts / wheel_name(version)
         for source, target in [(wheel, output.parent / wheel.name),
                                (wheel, output / wheel.name),
                                (artifacts / f'domino-runtime-{version}.tar.gz',
@@ -298,7 +323,7 @@ def main():
                 raise RuntimeError('Sources changed during the build; no release delivered. Rebuild from a stable tree.')
             entries = [{'name': path.name, 'sha256': hashlib.sha256(path.read_bytes()).hexdigest(),
                         'bytes': path.stat().st_size} for path in sorted(paths)]
-            manifest = {'schema_version': 1, 'version': version, 'published': False,
+            manifest = {'schema_version': 1, 'distribution': DISTRIBUTION, 'version': version, 'published': False,
                         'built_at': datetime.now(timezone.utc).isoformat(timespec='seconds'),
                         'python': sys.version.split()[0], 'source_files': source_hashes,
                         'build_script_sha256': hashlib.sha256(builder).hexdigest(), 'files': entries}

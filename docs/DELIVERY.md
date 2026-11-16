@@ -2,9 +2,9 @@
 
 ## 版本规则
 
-- 大版本采用 `0.x`（`0.13`、`0.14`），小更新/debug 修复采用 `0.x.x`（`0.13.1`、`0.13.2`），大版本不补末尾 `.0`。
+- 统一采用三段版本号 `0.x.y`；功能版本使用 `0.13.0`、`0.14.0`，小更新/debug 修复使用 `0.13.1`、`0.13.2`，保留末尾 `.0`。
 - 每批可交付代码变更更新 `domino_cli.py` / `pyproject.toml` 的版本与 `CHANGELOG.md`。中间调试不反复编号；完成后验证并构建，不把不同代码长期放在同一已交付版本下。
-- 本次将此前未逐次编号的功能与修复归档为 `0.13`；旧 `0.12.0` 产物保留，不编造中间发布记录。软件版本不等于 Mihomo 内核版本。
+- 本次将此前未逐次编号的功能与修复归档为 `0.13.0`；旧 `0.12.0` 产物保留，不编造中间发布记录。软件版本不等于 Mihomo 内核版本。
 - 源码、构建、安装版同步、服务重启和公共发布是独立动作；构建不会修改用户安装。真实安装同步仍需明确授权。
 
 ## 工程交付范围
@@ -26,8 +26,10 @@
 ## 构建本地发布产物
 
 ```bash
-# 先运行改动相关测试，再做一次完整回归：
-.venv/bin/python scripts/verify.py
+# 频繁开发的小功能只运行改动相关测试，例如：
+.venv/bin/python -m unittest discover -s tests -p test_delay_configs.py
+# 较大重构、正式发布前或明确要求时，才运行完整回归：
+# .venv/bin/python scripts/verify.py
 # 构建前检查 CLI / wheel 版本一致，拒绝重复版本，保留旧包：
 .venv/bin/python scripts/build_release.py
 # 可选：SSH 载荷相关改动再运行受控 SSH 验证
@@ -38,30 +40,31 @@
 
 ```text
 dist/
-  domino-0.13-py3-none-any.whl        # 各版本 wheel，旧包保留
+  domino_proxy-0.16.1-py3-none-any.whl      # 各版本 wheel，旧包保留
   verification.json                  # 最近一次源码回归，不是安装同步证明
   installed-verification.json        # 实际安装验证记录，不因构建而改写
   ssh-verification.json              # SSH 验证记录，未重跑不能冒充当前通过
   release/
-    domino-0.13-py3-none-any.whl
-    domino-runtime-0.13.tar.gz
+    domino_proxy-0.16.1-py3-none-any.whl
+    domino-runtime-0.16.1.tar.gz
     domino.rb.in                     # 有 --base-url 时为 domino.rb
     release.json                     # 当前发行清单，published: false
     SHA256SUMS                       # 当前发行产物及清单的摘要
     history/0.12.0/                  # 更新固定名称文件前原样归档的旧发行
+    history/0.13/                    # 更正版本名称前的构建，保留原始名称
 ```
 
 `dist/release/` 中历史版本的 wheel/runtime 原地保留；当前清单只列本次产物，不将旧包混进新清单。已有旧发行须先通过原清单/摘要校验，再将其产物、Formula、清单与 SHA256SUMS 原样归档，随后更新当前固定名称文件；失败尝试恢复旧元数据并移除本次新包。旧版本归档已存在、旧清单损坏、输出为符号链接或同版本包已存在时拒绝构建。默认构建锁用于防止脚本并行交付；进程被强制终止时需人工检查锁、清单和历史归档，不宣称断电原子性。
 
 runtime 含纯 Python UI/YAML 依赖及其许可证，不包含 Mihomo 内核或用户配置。同源码特殊复建可用 `--output` 指定全新目录，此时只生成该目录的独立产物，不更新默认 `dist/` 和 `dist/release/`；指定目录已存在（包括空目录或符号链接）则拒绝。后续代码变更应升版本，不以新目录代替版本管理。
 
-如已有公共地址，应在首次构建时指定 `--base-url https://你的发布域名/releases/0.13`，而不是向同一目录连续构建两次。也可为另一种分发形式显式选择新目录。模板地址必须替换为真实地址；生成带地址 Formula 也不会上传或发布。
+如已有公共地址，应在首次构建时指定 `--base-url https://你的发布域名/releases/0.16.1`，而不是向同一目录连续构建两次。也可为另一种分发形式显式选择新目录。模板地址必须替换为真实地址；生成带地址 Formula 也不会上传或发布。
 
 构建暂存显式源码列表，wheel/runtime 使用同一份项目模块快照。`release.json` 记录 UTC 时间、Python 版本、逐文件源码摘要、构建脚本摘要、产物大小和 SHA-256；SHA256SUMS 同时覆盖产物和清单。构建中源码变化会失败；暂存完成后交付，版本化包使用排他创建，固定名称元数据最后更新，release.json 最后落地。只有当前 release.json 与 SHA256SUMS 及所有列出的产物相符才视为完成。源码摘要不是 Git commit，也不意味着构建字节级可复现。
 
 交付前逐项校验 SHA256SUMS、wheel METADATA Version、模块与源码摘要，在临时 HOME、源码目录外实际运行打包 CLI 的 `--version`、`shell status`、`configs list`，区分源码回归与产物冒烟。可变的 `dist/verification.json` 不自动作为某个包的验证证书；只有本轮真实执行的测试才能报告为通过。构建需要当前环境已安装项目依赖和 setuptools；wheel 构建不从网络解析依赖，也不自动安装依赖。
 
-Homebrew 模板通过 `post_install` 调用完整安装入口。该流程尚未经过真实 tap 安装验收；包管理器执行上下文、网络、launchd 和 Linux sudo 条件仍需实测。pip/pipx 安装 wheel 不执行系统服务安装钩子；完整一键入口是 `pipx run --spec WHEEL domino-install` 或源安装脚本。
+pip、Homebrew 与 apt 包只安装 CLI，不执行服务初始化钩子。完整本机安装由普通用户显式执行 `domino-install`；发布脚本、签名 apt 源与渠道验收见 [分发指南](DISTRIBUTION.md)。
 
 ## 直连资源布局
 
@@ -104,3 +107,14 @@ python3 scripts/build_resources.py --base-url https://你的域名/domino/ \
 `scripts/verify.py` 输出 `dist/verification.json`，记录系统、架构、Python、测试数和跳过项。`DOMINO_TEST_CORE` 可指定临时校验内核。GitHub Actions 覆盖 Linux/macOS 与 Python 3.9/3.13/3.14 的自动回归，真实执行结果以 CI 为准，未运行的矩阵不能记为通过。
 
 `scripts/verify_ssh.py` 仅监听回环地址，临时生成测试密钥并启动用户级 sshd，使用临时 HOME 执行写操作，结束后停止进程和清理目录；某些系统不允许普通用户启动 sshd 时返回未验证状态，不修改系统 Remote Login。
+
+
+## GitHub 发布准备
+
+1. 在干净检出中安装 `.[dev]`，运行 `scripts/check_repository.py`，确认公开文件、文档链接、最低 Python 语法和凭据模式检查通过。
+2. 按 [平台支持](PLATFORMS.md) 运行完整 CI；本地完整回归显式设置临时 `DOMINO_TEST_CORE`，使用 `scripts/verify.py --require-core`。
+3. 同步版本、更新变更记录，运行 `scripts/build_release.py` 和 `scripts/verify_artifacts.py`；再用 `python -m twine check dist/release/*.whl` 检查包元数据。
+4. `Release artifacts` 工作流先等待 macOS / Ubuntu 验证，再准备 CLI wheel/runtime、SHA256SUMS 和清单供下载。它不会创建公开 Release，也不发布 PyPI。
+5. 人工确认许可证、第三方声明和本轮平台结果，再创建与版本一致的 Git tag / GitHub Release，仅上传公共 CLI 产物。不要上传 `domino export` 生成的私有部署包、用户配置或本机报告目录。
+
+公共 runtime 和 wheel 都包含 README、文档、动图及第三方声明。仓库源码以 `MANIFEST.in` 限定源码分发内容；不包含缓存、虚拟环境、内核或私有配置。Actions 固定提交 SHA，并使用只读仓库权限；依赖更新通过 Dependabot 提议。

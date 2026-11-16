@@ -46,7 +46,7 @@ def main():
                 except OSError: time.sleep(.1)
             known=work/'known_hosts'
             known.write_text(f'[127.0.0.1]:{port} '+(work/'host.pub').read_text())
-            args=cli.build_parser().parse_args(['status',getpass.getuser()+'@127.0.0.1','--ssh-port',str(port),'--identity',str(work/'client'),'--batch'])
+            args=cli.build_parser().parse_args([getpass.getuser()+'@127.0.0.1','status','--ssh-port',str(port),'--identity',str(work/'client'),'--batch'])
             args.machine_mode=True
             ssh=cli.SSH(args)
             ssh.options+=['-F','/dev/null','-o','UserKnownHostsFile='+str(known),'-o','StrictHostKeyChecking=yes']
@@ -67,6 +67,12 @@ def main():
                     results.append(result)
                 if results[0]['operation_id']!=results[1]['operation_id'] or not results[1]['replayed']:
                     raise RuntimeError('SSH replay contract failed')
+                listing=subprocess.run(ssh.action_argv('cli','list','--json'),capture_output=True,text=True,timeout=30)
+                if listing.returncode or not any(item['name']=='SSH fixture' for item in json.loads(listing.stdout)['configs']):
+                    raise RuntimeError('SSH flat CLI list failed')
+                uncached=subprocess.run(ssh.action_argv('delay','--config','SSH fixture'),capture_output=True,text=True,timeout=30)
+                if uncached.returncode!=1 or '尚未下载' not in uncached.stderr or 'ModuleNotFoundError' in uncached.stderr:
+                    raise RuntimeError('SSH config delay payload failed')
                 fixture=work/'fixture'
                 (fixture/'data').mkdir(parents=True)
                 (fixture/'mihomo').write_text('#!/bin/sh\nexit 0\n')
@@ -85,7 +91,7 @@ def main():
                     result=decode_response(response.stdout,request['transport_token'])
                     if response.returncode or not result['ok'] or not result['data']['dry_run']: raise RuntimeError('SSH upload preview failed')
                 if list(home.glob('.domino-deploy.*')): raise RuntimeError('Staging cleanup failed')
-            report={'ok':True,'transport':'OpenSSH loopback','operations':['configs.add','request replay','deployment.apply upload and dry-run'],'system_service_changed':False}
+            report={'ok':True,'transport':'OpenSSH loopback','operations':['configs.add','request replay','flat CLI list','config delay uncached validation','deployment.apply upload and dry-run'],'system_service_changed':False}
             (ROOT/'dist').mkdir(exist_ok=True)
             (ROOT/'dist/ssh-verification.json').write_text(json.dumps(report,indent=2)+'\n')
             print(json.dumps(report))
