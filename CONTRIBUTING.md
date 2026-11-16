@@ -52,6 +52,8 @@ DOMINO_TEST_CORE="$PWD/.test-resources/mihomo" .venv/bin/python scripts/verify.p
 
 测试使用临时 HOME、合成配置、受控 HTTP 服务和临时内核。请勿通过切换真实配置、下载私人订阅或重启正在使用的服务验证改动。没有 `DOMINO_TEST_CORE` 时，临时内核集成测试会明确跳过；`--require-core` 禁止这种跳过。
 
+日常 push、PR 和标签推送不自动运行完整 GitHub Actions 矩阵。发版前可在 Actions 中手动运行 `Verify`，或运行会先执行完整验证的 `Release artifacts`；上传 PyPI 使用独立的手动工作流 `Publish to PyPI`。
+
 ## 提交与发布
 
 - 使用 `domino [USER@IP] COMMAND` 语法，配置管理使用顶层命令。
