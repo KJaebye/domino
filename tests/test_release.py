@@ -222,7 +222,8 @@ class ReleaseTests(unittest.TestCase):
 
     def test_version_preflight_rejects_missing_invalid_or_mismatched_versions(self):
         path = self.root / 'pyproject.toml'
-        for content in ['[project]\nname="domino"\n', '[project]\nversion="1.2.3"\n',
+        major = int(build_release.cli.VERSION.split('.')[0]) + 1
+        for content in ['[project]\nname="domino"\n', f'[project]\nversion="{major}.0.0"\n',
                         '[project]\nversion="0.13"\n', '[project]\nversion="0.13.1.2"\n', '[other]\nversion="' + build_release.cli.VERSION + '"\n']:
             with self.subTest(content=content):
                 path.write_text(content)

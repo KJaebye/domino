@@ -31,7 +31,7 @@ from urllib.parse import urlsplit
 from urllib.request import getproxies
 from domino_model import DomainError
 
-VERSION = '1.0.1'
+VERSION = '1.2.3'
 PACKAGE_MANAGED = False
 DESCRIPTION = '捕获本机代理，并一键部署到指定 IP 的设备上，让翻墙像 domino 一样简单。'
 SUBSCRIPTION_USER_AGENT = 'clash.meta'
@@ -41,7 +41,7 @@ RELEASE_API = 'https://api.github.com/repos/MetaCubeX/mihomo/releases/latest'
 REMOTE_SCRIPT = Path(__file__).with_name('install_domino.py')
 CLI_MODULES = ('domino_cli.py','install_domino.py','domino_macos.py','domino_linux.py','domino_tui.py',
                'domino_subscriptions.py','domino_install.py','domino_model.py',
-               'domino_store.py','domino_service.py','domino_resources.py','domino_logs.py','domino_agent.py','domino_agent_backend.py','domino_shell.py','domino_sources.py','domino_completion.py','domino_uninstall.py','domino_client_sources.py')
+               'domino_store.py','domino_service.py','domino_resources.py','domino_logs.py','domino_agent.py','domino_agent_backend.py','domino_shell.py','domino_sources.py','domino_completion.py','domino_uninstall.py','domino_client_sources.py','domino_cli_sync.py')
 DEFAULT_CLASH = Path.home() / 'Library/Application Support/io.github.clash-verge-rev.clash-verge-rev'
 DEFAULT_SOCKET = Path('/tmp/verge/verge-mihomo.sock')
 
@@ -808,7 +808,8 @@ def live_selections(args, raw, source):
     if getattr(args, 'subscription', None) or (args.command == 'init' and args.source):
         return {}
     if managed_source_identity(source) or source_identity(source).get('source_kind') == 'profile':
-        print('提示：导入保存配置，保留文件内默认节点；不读取客户端运行选择或执行合并/脚本。', file=sys.stderr)
+        if args.command != 'deploy' or getattr(args, 'verbose', False):
+            print('提示：导入保存配置，保留文件内默认节点；不读取客户端运行选择或执行合并/脚本。', file=sys.stderr)
         return {}
     controller = args.controller
     socket = args.controller_socket
@@ -821,7 +822,8 @@ def live_selections(args, raw, source):
         else:
             controller = raw.get('external-controller')
     if not controller and not socket:
-        print('提示：未连接源 Clash 控制接口，将保留配置中的默认节点。', file=sys.stderr)
+        if args.command != 'deploy' or getattr(args, 'verbose', False):
+            print('提示：未连接源 Clash 控制接口，将保留配置中的默认节点。', file=sys.stderr)
         return {}
     url = controller or 'http://localhost'
     if '://' not in url:
@@ -1061,7 +1063,10 @@ def prepare_source(args, arch, work):
     valid = archive.is_file() and hashlib.sha256(archive.read_bytes()).hexdigest() == expected
     if not valid:
         pending = work / 'binary.gz'
-        print(f'下载官方 Mihomo {tag} / {arch}…', flush=True)
+        if getattr(args, 'command', None) == 'deploy' and not getattr(args, 'verbose', False):
+            deployment_progress('下载', f'Mihomo {tag} / {arch}…')
+        else:
+            print(f'下载官方 Mihomo {tag} / {arch}…', flush=True)
         download_resource('Mihomo 内核', asset['browser_download_url'], pending, proxy)
         if hashlib.sha256(pending.read_bytes()).hexdigest() != expected:
             raise ToolError('官方二进制 SHA-256 校验失败。')
@@ -1117,6 +1122,7 @@ def prepare_source(args, arch, work):
     manifest['deployment_method'] = 'independent'
     manifest['requires_source_online'] = False
     manifest['platform'] = system
+    manifest['cli_version'] = VERSION
     if getattr(args, 'base_install', False):
         manifest['awaiting_subscription'] = True
     private_write(bundle / 'manifest.json', json.dumps(manifest))
@@ -1135,8 +1141,9 @@ def prepare_source(args, arch, work):
         for item in sorted(bundle.iterdir()):
             tf.add(item, arcname=item.name)
     package.chmod(0o600)
-    print(f'安装包就绪：{tag} / {arch}，{len(profile.get("proxies", []))} 个内联节点，'
-          f'{len(profile.get("proxy-providers", {}))} 个节点 provider。', flush=True)
+    if args.command != 'deploy' or getattr(args, 'verbose', False):
+        print(f'安装包就绪：{tag} / {arch}，{len(profile.get("proxies", []))} 个内联节点，'
+              f'{len(profile.get("proxy-providers", {}))} 个节点 provider。', flush=True)
     return package, manifest
 
 
@@ -1200,6 +1207,8 @@ class SSH:
             self.options += ['-o', 'BatchMode=yes']
         if getattr(args,'machine_mode',False):
             self.options += ['-o','ConnectTimeout=10','-o','ConnectionAttempts=1']
+        if args.command == 'deploy' and not getattr(args, 'verbose', False):
+            self.options += ['-o', 'LogLevel=ERROR']
         self.temp = None
 
     def __enter__(self):
@@ -1230,6 +1239,7 @@ class SSH:
         if action == 'proxy': names += ['domino_macos', 'domino_linux']
         if action == 'traffic': names += ['domino_tui']
         if action in ['agent','scan','configs','rollback','delay','cli','catch-options']: names += ['domino_subscriptions','domino_macos','domino_linux','domino_cli','domino_store','domino_service','domino_resources','domino_logs','domino_tui','domino_install','domino_agent','domino_agent_backend','domino_sources','domino_completion','domino_uninstall','domino_client_sources']
+        if action == 'cli': names += ['domino_cli_sync']
         modules={name:compact_remote_source(Path(__file__).with_name(name+'.py').read_text()) for name in names}
         backend = compact_remote_source(REMOTE_SCRIPT.read_text())
         code = ('import sys,types;from pathlib import Path\n'
@@ -1251,9 +1261,13 @@ class SSH:
         import base64,bz2
         code = 'import base64,bz2;exec(compile(bz2.decompress(base64.b85decode('+repr(base64.b85encode(bz2.compress(code.encode(),9)).decode())+')),"<domino-remote>","exec"))'
         command = 'python3 -c ' + shlex.quote(code) + ' ' + shlex.join([action, *options])
-        # Reserve 1 KiB below Linux's per-argument bound, including user arguments.
-        if len(command.encode()) >= 128*1024-1024:
-            raise ToolError('远端命令过长，请缩短参数；机器请求请用 --input 通过标准输入传入。')
+        # Arguments are already included; retain room below the per-argument
+        # bound for the terminating NUL and transport framing.
+        if len(command.encode()) >= 128*1024-256:
+            if len(shlex.join([action, *options]).encode()) >= 128*1024-1024:
+                raise ToolError('远端命令过长，请缩短参数；机器请求请用 --input 通过标准输入传入。')
+            from domino_cli_sync import streamed_remote_argv
+            return streamed_remote_argv(self.command_argv, code, action, options, tty)
         return self.command_argv(command, tty)
 
     def info(self):
@@ -1308,8 +1322,48 @@ def update_vscode(target, proxy_port, path=None):
     private_write(path, json.dumps(settings, ensure_ascii=False, indent=2) + '\n')
 
 
+def deployment_progress(label, message):
+    import install_domino as output
+    output.human_row(label, (message, '2'), wrap=True)
+    sys.stdout.flush()
+
+
+def deployment_summary(target, result):
+    import install_domino as output
+    before, after = result.get('cli_before'), result['cli_version']
+    country = result.get('exit_country') or '地区未返回'
+    nodes = result.get('node_count')
+    proxy = country + (f' · {nodes} 个节点' if type(nodes) is int else '')
+    if result.get('provider_count'):
+        proxy += f' · {result["provider_count"]} 个节点集'
+    command = 'domino ' + shlex.quote(target)
+    version = f'{before} → {after}' if before and before != after else after
+    if result.get('kept_newer'):
+        version += '（保留目标新版）'
+    with output.human_output():
+        output.human_header('部署完成', target)
+        output.human_row('代理出网', proxy)
+        if result.get('system_proxy_supported') is not None:
+            output.human_row('系统代理', '已接通' if result.get('system_proxy_enabled') else '无 GNOME 桌面会话')
+        output.human_row('CLI 版本', version)
+        enabled = result.get('shell_enabled')
+        if type(enabled) is bool:
+            output.human_row('终端代理', '已开启' if enabled else '已关闭；开启：' + command + ' shell on', wrap=True)
+        output.human_row('查看状态', command + ' status', wrap=True)
+
+
 def deploy(args, ssh, info, work):
+    verbose = getattr(args, 'verbose', False)
+    if not verbose:
+        deployment_progress('准备', '配置与内核…')
     package, manifest = prepare(args, normalize_arch(info['arch']), work)
+    from domino_cli_sync import SyncError, license_text, make_wheel
+    files = {name: (globals()['SOURCE_MODULES'][name].encode() if name in globals().get('SOURCE_MODULES', {})
+                    else Path(__file__).with_name(name).read_bytes()) for name in CLI_MODULES}
+    try:
+        wheel = make_wheel(files, work / f'domino_proxy-{VERSION}-py3-none-any.whl', VERSION, license_text())
+    except SyncError as error:
+        raise ToolError(str(error)) from None
     stage = ssh.call('umask 077; mktemp -d "$HOME/.domino-deploy.XXXXXXXX"',
                      capture_output=True, text=True).stdout.strip()
     expected_parent = Path(info['home'])
@@ -1318,8 +1372,19 @@ def deploy(args, ssh, info, work):
     try:
         with package.open('rb') as payload:
             ssh.call('tar -xzf - -C ' + shlex.quote(stage), stdin=payload)
-        ssh.call('python3 ' + shlex.quote(stage + '/' + REMOTE_SCRIPT.name) + ' install ' + shlex.quote(stage), tty=not args.batch)
-        print('目标设备部署成功，已验证独立代理出网。', flush=True)
+        with wheel.open('rb') as payload:
+            ssh.call('umask 077; cat > ' + shlex.quote(stage + '/' + wheel.name), stdin=payload)
+        ssh.call('python3 ' + shlex.quote(stage + '/cli/domino_cli_sync.py') + ' ' + shlex.quote(stage) + ' ' + VERSION +
+                 (' --verbose' if verbose else ''),
+                 tty=not args.batch)
+        response = ssh.call('cat ' + shlex.quote(stage + '/deployment-summary.json'), capture_output=True, text=True)
+        try:
+            result = json.loads(response.stdout)
+            if (not isinstance(result, dict) or result.get('schema') != 1 or not re.fullmatch(r'\d+\.\d+\.\d+', result['cli_version'])
+                    or not result.get('verified')):
+                raise ValueError()
+        except (ValueError, TypeError, KeyError):
+            raise ToolError('部署已执行，但无法核实最终结果；请运行 domino ' + shlex.quote(ssh.target) + ' status。') from None
         if args.vscode:
             try:
                 update_vscode(ssh.target, manifest['proxy_port'],
@@ -1329,7 +1394,7 @@ def deploy(args, ssh, info, work):
             print('本地 VS Code 主机代理已更新。')
         if args.restart_vscode:
             ssh.action('restart-vscode')
-        print(f'检查状态：domino {shlex.quote(ssh.target)} status')
+        deployment_summary(ssh.target, result)
     finally:
         # Only remove the validated, freshly created staging directory.
         try:
@@ -1462,7 +1527,7 @@ def build_parser(*, advanced_delay_help=False, installing=False, machine_mode=Fa
     source_group.add_argument('--subscription', help='返回完整 Clash/Mihomo 配置的 HTTPS 订阅链接')
     p = sub.add_parser('catch', parents=[source_options], help='选择并捕获外部代理配置',
                        description='选择本机 Clash/Mihomo 运行配置或保存配置；catch all 捕获全部。\n'
-                                   '已有安装只保存配置库，保持当前配置、服务和代理开关；首次安装需确认初始化。')
+                                   '捕获成功后自动开启 Domino；已有安装保留当前配置和节点选择。')
     p.add_argument('capture_scope', nargs='?', choices=['all'], help='捕获所有兼容配置，并跳过重复项')
     p.add_argument('--source', help='明确选择本地 Clash/Mihomo 配置文件')
     p.add_argument('--yes', action='store_true', help='接受捕获影响，跳过最终确认；多个来源仍需选择或指定 all')
@@ -1485,7 +1550,8 @@ def build_parser(*, advanced_delay_help=False, installing=False, machine_mode=Fa
     manage_parent = target_options(optional=True)
     p = sub.add_parser('deploy', parents=[target_parent, source_parent], help='将代理部署到指定电脑',
                        prog='domino', usage='domino USER@IP deploy [options]',
-                       description='将当前兼容配置部署到指定电脑；自动完成检查、安装、服务启动和出网验证。')
+                       description='选择本机兼容配置部署到指定电脑；未指定来源时，交互终端先显示配置选择菜单。')
+    p.add_argument('--verbose', action='store_true', help='显示配置路径、完整安装过程和终端接入说明')
     p.add_argument('--vscode', action='store_true', help='同时更新本机 VS Code 对该目标的代理设置')
     p.add_argument('--vscode-settings', help='VS Code 用户 settings.json 路径')
     p.add_argument('--restart-vscode', action='store_true', help='停止目标当前用户的 VS Code/Codex 进程以应用环境')
@@ -1839,14 +1905,14 @@ def owned_source(path):
                for root in roots)
 
 
-def capture_candidates(*, include_saved=False):
+def source_candidates(*, include_saved=False, include_owned=False):
     candidates = []
     seen = set()
     profiles, _ = read_verge_profiles() if include_saved else ({}, [])
     for path in [*discover_sources(), *profiles]:
         try:
             resolved = path.resolve()
-            if owned_source(path) or resolved in seen:
+            if (not include_owned and owned_source(path)) or resolved in seen:
                 continue
             seen.add(resolved)
             if source_details(path)['compatible_config_found']:
@@ -1855,6 +1921,35 @@ def capture_candidates(*, include_saved=False):
                 RuntimeError, argparse.ArgumentTypeError):
             continue
     return candidates
+
+
+def capture_candidates(*, include_saved=False):
+    return source_candidates(include_saved=include_saved)
+
+
+def select_deployment_source(args):
+    """Choose a local source before connecting, downloading, or changing a target."""
+    if args.source or args.subscription or not sys.stdin.isatty():
+        return args
+    paths = source_candidates(include_saved=True, include_owned=True)
+    if not paths:
+        raise ToolError('未发现兼容配置，请用 --source 指定配置，或用 --subscription 提供完整配置订阅。')
+    source_choices(paths, title='选择部署配置', summary=f'{len(paths)} 个本机配置 · 目标 {args.target}',
+                   compact=not getattr(args, 'verbose', False))
+    try:
+        value = input('  选择配置    编号（回车取消）：').strip()
+    except EOFError:
+        value = ''
+    if not value:
+        import install_domino as output
+        with output.human_output():
+            output.human_header('部署已取消', '未修改目标设备。', '33')
+        return None
+    if not value.isascii() or not value.isdecimal() or not 1 <= int(value) <= len(paths):
+        raise ToolError('配置编号无效，未部署。')
+    selected = copy.copy(args)
+    selected.source = str(paths[int(value) - 1].resolve())
+    return selected
 
 
 def capture_input(label, hint):
@@ -1875,20 +1970,28 @@ def capture_cancelled():
         output.human_header('捕获已取消', '未修改本机 Domino。', '33')
 
 
-def capture_choices(paths, *, allow_all=True):
+def source_choices(paths, *, title, summary, allow_all=False, compact=False):
     import install_domino as output
+    saved = False
     with output.human_output():
-        output.human_header('选择捕获配置', f'{len(paths)} 个外部配置 · 重复项自动跳过')
+        output.human_header(title, summary)
         for index, path in enumerate(paths, 1):
-            if index > 1: print()
+            if index > 1 and not compact: print()
             identity = source_identity(path)
             if source_name(path, identity):
                 name = source_name(path, identity)
             elif path.name == 'clash-verge.yaml':
                 name = 'Clash Verge · 运行配置'
+            elif owned_source(path):
+                name = ('robot-clash' if path.parent.parent.name == 'robot-clash' else 'Domino') + ' · 当前配置'
             else:
                 name = path.name
+            if compact and identity.get('source_kind') == 'profile':
+                saved = True
+                name += '（当前保存项）' if identity.get('client_current') else '（已保存）'
             output.human_row(str(index), (name, '1'), wrap=True)
+            if compact:
+                continue
             if identity:
                 output.human_row('配置选择', (profile_status(identity), '2'), wrap=True)
                 if identity.get('check_note') and source_name(path, identity).startswith('v2rayN'):
@@ -1897,15 +2000,36 @@ def capture_choices(paths, *, allow_all=True):
             except ValueError: display = str(path)
             output.human_row('配置文件', (display, '2'), wrap=True)
         print()
+        if compact:
+            if saved:
+                output.human_row('保存配置', '使用文件内默认节点', wrap=True)
+            return
         if allow_all:
             output.human_row('all', ('全部配置', '1'))
         output.human_row('选择方式', '输入编号或 all；回车取消。' if allow_all else '输入配置编号；回车取消。', wrap=True)
+
+
+def capture_choices(paths, *, allow_all=True):
+    source_choices(paths, title='选择捕获配置', summary=f'{len(paths)} 个外部配置 · 重复项自动跳过',
+                   allow_all=allow_all)
 
 
 def capture_status(label, text, tone):
     import install_domino as output
     with output.human_output():
         output.human_row(label, (text, tone), wrap=True)
+
+
+def start_after_capture(args):
+    """Start Domino using its current configuration, just like `domino start`."""
+    import install_domino as output
+    try:
+        with output.deployment_lock():
+            output.service_action('start', non_interactive=args.batch)
+    except (DomainError, OSError, ValueError, RuntimeError) as error:
+        reason = str(error) if isinstance(error, DomainError) else type(error).__name__
+        raise ToolError('配置已保存，但自动开启 Domino 失败：' + reason,
+                        code=getattr(error, 'code', 'OPERATION_FAILED'), effect='unknown') from None
 
 
 def catch(args):
@@ -1938,12 +2062,11 @@ def catch(args):
                         raise ToolError('配置编号无效，未捕获。')
                     paths = [paths[int(value) - 1]]
     installed = (Path.home() / '.local/share/domino/data/config.json').is_file()
-    # Fresh setup retains the existing bootstrap path. Installed targets only gain
-    # cached profiles: no service, API, proxy, shell, or runtime writes.
+    # Save selected sources before starting Domino with its current configuration.
     if installed:
         with output.human_output():
             output.human_header('捕获配置到 Domino', f'{len(paths)} 个来源 · 重复项跳过')
-            output.human_row('运行影响', '仅保存到配置库；保留当前配置、节点、服务和系统/终端代理状态。', wrap=True)
+            output.human_row('运行影响', '保存到配置库，保留当前配置和节点选择；完成后自动启动 Domino 并接通系统代理。终端代理策略保持不变。', wrap=True)
             if any(source_name(path, {}).startswith('v2rayN') for path in paths if source_name(path, {})):
                 output.human_row('捕获范围', 'v2rayN 仅导入节点快照，不迁移其分流、DNS 或客户端设置。', wrap=True)
         if not args.yes and capture_input('确认捕获', '[y/N] ').lower() not in ('y', 'yes'):
@@ -1978,10 +2101,12 @@ def catch(args):
                 raise ToolError('来源配置数据结构无效，未导入。') from None
             if not installed or len(paths) == 1:
                 raise
+    if added + skipped:
+        start_after_capture(args)
     with output.human_output():
         output.human_header('捕获完成', f'新增/更新 {added} · 跳过 {skipped} · 失败 {failed}', '33' if failed else '32')
         output.human_row('查看配置', 'domino list')
-        output.human_row('启用配置', 'domino switch "配置名"')
+        output.human_row('切换配置', 'domino switch "配置名"')
     return 1 if failed else 0
 
 
@@ -2039,7 +2164,7 @@ def _install_capture(args):
         environment = ('不更新终端代理集成' if args.no_shell_env else
                        '更新命令 PATH 和终端代理集成；全新安装默认关闭，已有策略按安装器规则保留或迁移')
         output.human_row('环境影响', environment, wrap=True)
-        output.human_row('来源客户端', '保持运行，不修改其配置或节点选择；不自动开启系统代理或 TUN。', wrap=True)
+        output.human_row('来源客户端', '保持运行，不修改其配置或节点选择；初始化后自动开启 Domino 并接通系统代理，不开启 TUN。', wrap=True)
         output.human_row('配置登记', '保存独立导入源快照并设为 Domino 当前配置；已有在线订阅保留，不自动导入其他发现项。', wrap=True)
     if not args.yes and capture_input('确认导入', '[y/N] ').lower() not in ['y', 'yes']:
         capture_cancelled()
@@ -2049,7 +2174,7 @@ def _install_capture(args):
     with output.human_output():
         output.human_header('初始化完成', '独立代理已就绪')
         output.human_row('查看状态', 'domino status')
-        output.human_row('系统代理', 'domino proxy on')
+        output.human_row('下一步', '捕获完成后自动开启 Domino 并接通系统代理')
     return 0
 
 
@@ -2594,6 +2719,11 @@ def main(argv=None, *, installing=False):
             else:
                 manage(args)
             return 0
+        if args.command == 'deploy':
+            destination(args.target, args.user)
+            args = select_deployment_source(args)
+            if args is None:
+                return 0
         with SSH(args) as ssh:
             if args.command in management:
                 if args.command == 'ui':

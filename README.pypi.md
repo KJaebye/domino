@@ -38,9 +38,10 @@ venv 安装后再运行 `domino-install`，由它下载 Mihomo 并配置本机�
 ```bash
 domino catch
 domino list
-domino switch '配置名'
-domino start
+domino status
 ```
+
+捕获成功后自动启动 Domino 并接通系统代理；已有安装保留当前配置和节点选择，切换配置使用 `domino switch '配置名'`。
 
 仅管理远端时，完成上面的 venv 和 pip 安装即可：
 

@@ -26,6 +26,11 @@ class CatchTests(unittest.TestCase):
         self.out = self.stack.enter_context(redirect_stdout(io.StringIO()))
         self.err = self.stack.enter_context(redirect_stderr(io.StringIO()))
         self.install = self.stack.enter_context(patch.object(tool, 'initialize'))
+        self.real_start = control.service_action
+        self.start = self.stack.enter_context(patch.object(control, 'service_action'))
+        self.proxy = self.stack.enter_context(patch.object(control, 'system_proxy', return_value={'supported': True}))
+        from domino_subscriptions import Manager
+        self.apply = self.stack.enter_context(patch.object(Manager, 'apply'))
         self.ssh = self.stack.enter_context(patch.object(tool, 'SSH'))
         self.network = self.stack.enter_context(patch.object(tool, 'download_resource'))
         self.stack.enter_context(patch.object(tool, 'discover_proxy', return_value=None))
@@ -102,6 +107,8 @@ class CatchTests(unittest.TestCase):
         self.install.assert_not_called()
         self.network.assert_not_called()
         self.ssh.assert_not_called()
+        self.start.assert_not_called()
+        self.proxy.assert_not_called()
 
     def test_noninteractive_requires_yes_and_batch_is_not_consent(self):
         with patch.object(tool.sys.stdin, 'isatty', return_value=False), patch.object(tool.sys, 'platform', 'darwin'), \
@@ -285,7 +292,8 @@ class CatchTests(unittest.TestCase):
         self.installed()
         resources = self.home / 'shared'
         resources.mkdir()
-        with patch('domino_subscriptions.Manager.capture', return_value=({'name': 'fixture'}, True)) as capture:
+        with patch('domino_subscriptions.Manager.capture', return_value=({'name': 'fixture'}, True)) as capture, \
+                patch.object(tool, 'start_after_capture'):
             self.assertEqual(self.run_catch('--yes', '--resource-dir', str(resources)), 0)
         self.assertEqual(capture.call_args.kwargs['resource_dirs'], [str(resources)])
         self.install.assert_not_called()
@@ -333,7 +341,7 @@ class CatchTests(unittest.TestCase):
         prompt.assert_not_called()
         self.assertNotIn('TEST-PRIVATE-PASSWORD', self.out.getvalue() + self.err.getvalue())
 
-    def test_installed_number_selects_only_one_and_does_not_touch_service_or_proxy(self):
+    def test_installed_number_saves_the_choice_and_starts_without_switching_configuration(self):
         self.installed()
         second = self.config('other/config.json', dict(self.raw, mode='global'))
         with patch.object(tool, 'discover_sources', return_value=[self.source, second]), \
@@ -346,6 +354,8 @@ class CatchTests(unittest.TestCase):
         self.assertEqual(tool.load_yaml(manager.cached(item) / 'source/config.json')['mode'], 'global')
         api.assert_not_called()
         service.assert_not_called()
+        self.apply.assert_not_called()
+        self.start.assert_called_once_with('start', non_interactive=False)
         self.install.assert_not_called()
 
     def test_all_conflicts_with_source_and_batch_failure_keeps_successful_captures(self):
@@ -357,7 +367,85 @@ class CatchTests(unittest.TestCase):
         import domino_subscriptions
         self.assertEqual(len(domino_subscriptions.Manager(control).registry['items']), 1)
         self.assertIn('失败 1', self.out.getvalue())
+        self.start.assert_called_once()
         self.install.assert_not_called()
+
+    def test_capture_finishes_saving_before_starting_current_configuration(self):
+        self.installed()
+        import domino_subscriptions
+        runtime = self.home / '.local/share/domino/data/config.json'
+        before = runtime.read_bytes()
+        def start(*args, **kwargs):
+            self.assertTrue(domino_subscriptions.Manager(control).registry['items'])
+            self.assertEqual(runtime.read_bytes(), before)
+        self.start.side_effect = start
+        self.assertEqual(self.run_catch('--yes', '--batch'), 0)
+        self.start.assert_called_once_with('start', non_interactive=True)
+        self.apply.assert_not_called()
+        self.assertIn('捕获完成', self.out.getvalue())
+
+    def test_all_keeps_current_config_and_duplicates_still_start_domino(self):
+        self.installed()
+        with patch.object(tool, 'capture_candidates', return_value=[self.source]):
+            self.assertEqual(tool.main(['catch', 'all', '--yes']), 0)
+            self.assertEqual(tool.main(['catch', 'all', '--yes']), 0)
+        self.apply.assert_not_called()
+        self.assertEqual(self.start.call_count, 2)
+
+    def test_fresh_install_automatically_starts_after_initialization(self):
+        calls = []
+        def initialize(args):
+            self.installed()
+            calls.append('initialize')
+        self.install.side_effect = initialize
+        self.start.side_effect = lambda *a, **k: calls.append('start')
+        self.assertEqual(self.run_catch('--yes'), 0)
+        self.assertEqual(calls, ['initialize', 'start'])
+        self.apply.assert_not_called()
+
+    def test_capture_uses_existing_start_behavior_on_macos_and_linux(self):
+        import domino_macos
+        self.installed()
+        self.start.side_effect = self.real_start
+        service = self.home / 'service.plist'
+        service.write_text('fixture')
+        for platform in ['darwin', 'linux']:
+            with self.subTest(platform=platform), patch.object(control.sys, 'platform', platform), \
+                    patch.object(control, 'owned_service'), patch.object(control, 'sudo'), \
+                    patch.object(control, 'controller', return_value=b'{}'), \
+                    patch.object(domino_macos, 'owned'), patch.object(domino_macos, 'start') as mac_start, \
+                    patch.object(domino_macos, 'paths', return_value=(service, self.home / 'logs')), \
+                    patch.object(domino_macos, 'system_proxy', return_value={
+                        'proxies': {'web': {'port': 17897}}}) as mac_proxy:
+                self.proxy.return_value = {'supported': True, 'proxies': {'http': {'port': 17897}}}
+                self.assertEqual(self.run_catch('--yes'), 0)
+                if platform == 'darwin':
+                    mac_start.assert_called_once_with(self.home)
+                    mac_proxy.assert_called_once()
+                else:
+                    self.proxy.assert_called_once_with('on', render=False)
+        self.apply.assert_not_called()
+
+    def test_capture_failure_never_starts_or_connects_proxy(self):
+        self.installed()
+        with patch('domino_subscriptions.Manager.capture', side_effect=tool.ToolError('配置无效')):
+            self.assertEqual(self.run_catch('--yes'), 1)
+        self.start.assert_not_called()
+        self.proxy.assert_not_called()
+
+    def test_start_and_proxy_failures_keep_capture_and_report_incomplete_activation(self):
+        import domino_subscriptions
+        for reason in ['服务启动失败', '服务已启动，但系统代理未接通']:
+            with self.subTest(reason=reason):
+                self.installed()
+                self.start.reset_mock()
+                self.start.side_effect = control.InstallError(reason)
+                self.out.seek(0); self.out.truncate()
+                self.assertEqual(self.run_catch('--yes'), 1)
+                self.start.side_effect = None
+                self.assertTrue(domino_subscriptions.Manager(control).registry['items'])
+                self.assertIn('配置已保存，但自动开启 Domino 失败', self.err.getvalue())
+                self.assertNotIn('捕获完成', self.out.getvalue())
 
 
 

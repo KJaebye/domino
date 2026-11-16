@@ -616,6 +616,14 @@ def install(bundle):
         raise InstallError('部署未完成，已恢复原状态；备份：'+str(backup),code='APPLY_ROLLED_BACK',effect='rolled_back') from None
     finally:
         globals().pop('_domino_registry_backup', None)
+    if manifest.get('deployment_output'):
+        write_private(bundle / 'deployment-result.json', json.dumps({
+            'schema': 1, 'exit_country': health.get('exit_country') if health else None,
+            'node_count': len(config.get('proxies', [])),
+            'provider_count': len(config.get('proxy-providers', {})),
+            'shell_enabled': shell_state[0]['enabled'] if shell_state[0] is not None else None,
+            'backup': backup.name,
+            'proxy_port': proxy_port, 'awaiting_subscription': bool(pending)}))
     print('服务已运行并启用开机自启；代理端口：' + str(proxy_port))
     if health is None:
         print('基础环境已就绪，待添加订阅：domino add "名称"；domino switch "名称"。')
