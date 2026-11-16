@@ -30,7 +30,8 @@ home=Path.home();app=home/'app';(app/'data').mkdir(parents=True)
 (app/'data/config.json').write_text('{"mixed-port":17897}')
 shell=app/'shell-policy.json';shell.write_text('unchanged')
 ctx=SimpleNamespace(HOME=home,current_installation=lambda:(app,None),systemctl=lambda _:True,
-                    controller=lambda *a,**k:b'{}',write_private=control.write_private)
+                    controller=lambda *a,**k:b'{}',write_private=control.write_private,
+                    subscription_pending=control.subscription_pending)
 settings=linux.Settings();original=settings.state()
 for _ in range(2):
  result=linux.system_proxy(ctx,'on',render=False)

@@ -1,4 +1,7 @@
 import hashlib
+import gzip
+import io
+from contextlib import redirect_stdout
 import json
 from pathlib import Path
 import tempfile
@@ -12,6 +15,35 @@ from domino_model import DomainError
 
 
 class ResourceSourceTests(unittest.TestCase):
+    def test_ci_prefetched_metadata_keeps_version_and_archive_hash_checks(self):
+        from scripts import fetch_test_core as fetch
+        tag='v1.19.33';name='mihomo-darwin-arm64-'+tag+'.gz'
+        archive=gzip.compress(b'isolated-test-core')
+        url='https://github.com/MetaCubeX/mihomo/releases/download/'+tag+'/'+name
+        metadata={'tag_name':tag,'assets':[{'name':name,'digest':'sha256:'+hashlib.sha256(archive).hexdigest(),
+                                          'browser_download_url':url}]}
+        for case in ['valid','tampered','wrong-version']:
+            with self.subTest(case=case),tempfile.TemporaryDirectory() as directory:
+                root=Path(directory);source=root/'release.json';source.write_text(json.dumps(metadata));target=root/'mihomo'
+                arguments=['fetch_test_core.py','--release-json',str(source),'--output',str(target)]
+                if case=='wrong-version':arguments+=['--version','v1.2.3']
+                def download(address,path,*args,**kwargs):
+                    self.assertEqual(address,url)
+                    path.write_bytes(archive if case!='tampered' else gzip.compress(b'tampered'))
+                with patch.object(fetch.sys,'argv',arguments), \
+                        patch.object(fetch.platform,'machine',return_value='arm64'), \
+                        patch.object(fetch.platform,'system',return_value='Darwin'), \
+                        patch.object(fetch.cli,'download',side_effect=download) as request, \
+                        patch.object(resources,'resource_base',return_value=None), redirect_stdout(io.StringIO()):
+                    if case=='valid':
+                        fetch.main()
+                        self.assertEqual(target.read_bytes(),b'isolated-test-core')
+                        request.assert_called_once()
+                    else:
+                        with self.assertRaisesRegex(RuntimeError,'mismatch'):fetch.main()
+                        self.assertFalse(target.exists())
+                        if case=='wrong-version':request.assert_not_called()
+
     def test_http2_failure_retries_once_with_http11_without_exposing_credentials(self):
         for code in [16,92,95]:
             with self.subTest(code=code),tempfile.TemporaryDirectory() as directory:

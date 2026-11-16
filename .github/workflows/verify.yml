@@ -37,7 +37,13 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y zsh dbus-x11 dconf-cli dconf-service gsettings-desktop-schemas
       - run: python -m pip install '.[dev]'
       - run: python scripts/check_repository.py
-      - run: python scripts/fetch_test_core.py --output .test-resources/mihomo
+      - name: Fetch test core using authenticated release metadata
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p .test-resources
+          gh api repos/MetaCubeX/mihomo/releases/tags/v1.19.33 > .test-resources/release.json
+          python scripts/fetch_test_core.py --release-json .test-resources/release.json --output .test-resources/mihomo
       - run: python scripts/verify.py --require-core
         env:
           DOMINO_TEST_CORE: ${{ github.workspace }}/.test-resources/mihomo

@@ -45,7 +45,9 @@ class BootstrapTests(unittest.TestCase):
         import domino_install
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory)
-            with patch.object(Path,'home',return_value=root), patch.object(tool,'initialize') as install:
+            with patch.object(Path,'home',return_value=root), patch.object(tool,'sys') as runtime, patch.object(tool,'initialize') as install:
+                runtime.stdin.isatty.return_value=True
+                runtime.platform='linux'
                 self.assertEqual(domino_install.main([]),0)
                 self.assertTrue(install.call_args.args[0].base_install)
                 self.assertEqual(domino_install.main(['--subscription','https://example.test/config']),0)
@@ -55,6 +57,18 @@ class BootstrapTests(unittest.TestCase):
                 path.write_text('{}')
                 self.assertEqual(domino_install.main([]),0)
                 self.assertFalse(install.call_args.args[0].base_install)
+
+    def test_linux_noninteractive_installer_requires_explicit_batch(self):
+        import domino_install
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.object(Path,'home',return_value=Path(directory)), \
+                    patch.object(tool.sys.stdin,'isatty',return_value=False), \
+                    patch.object(tool.sys,'platform','linux'), \
+                    patch.object(tool,'initialize') as install, redirect_stdout(io.StringIO()):
+                self.assertEqual(domino_install.main([]),1)
+                install.assert_not_called()
+                self.assertEqual(domino_install.main(['--batch']),0)
+                self.assertTrue(install.call_args.args[0].batch)
 
     def test_reinstall_of_pending_environment_preserves_ports(self):
         with tempfile.TemporaryDirectory() as directory:

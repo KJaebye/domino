@@ -4,6 +4,7 @@
 pip resolves declared dependencies using the configured public package index.
 """
 import json
+import hashlib
 import os
 from pathlib import Path
 import subprocess
@@ -34,16 +35,32 @@ def verify(release):
             return result.stdout
         run([str(binary / 'python'), '-m', 'pip', 'install', '--disable-pip-version-check', str(wheel)])
         run([str(binary / 'python'), '-m', 'pip', 'check'])
-        assert run([str(binary / 'domino'), '--version']).strip() == version
-        assert 'usage:' in run([str(binary / 'domino'), '--help'])
-        assert 'usage:' in run([str(binary / 'domino-install'), '--help'])
-        assert json.loads(run([str(binary / 'domino'), 'shell', 'status', '--json']))['policy_only']
-        assert json.loads(run([str(binary / 'domino'), '--output', 'json', 'capabilities']))['data']['application_version'] == version
+        def snapshot():
+            return {p.relative_to(home).as_posix(): ('link', os.readlink(p)) if p.is_symlink() else
+                    ('file', hashlib.sha256(p.read_bytes()).hexdigest()) if p.is_file() else ('directory', '')
+                    for p in home.rglob('*')}
+        # pip/platform cache files belong to installation, not a subsequent CLI query.
+        assert not any((home / path).exists() for path in ['.config/domino', '.local/share/domino',
+                       'Library/LaunchAgents/local.domino.mihomo.plist']), 'Package install initialized Domino'
+        baseline = snapshot()
+        def unchanged(stage):
+            current = snapshot()
+            changed = sorted(name for name in set(current) | set(baseline) if current.get(name) != baseline.get(name))
+            assert not changed, stage + ' changed HOME: ' + ', '.join(changed)
+        def query(args):
+            output = run(args)
+            unchanged('Query ' + ' '.join(Path(value).name if i == 0 else value for i, value in enumerate(args)))
+            return output
+        assert query([str(binary / 'domino'), '--version']).strip() == version
+        assert 'usage:' in query([str(binary / 'domino'), '--help'])
+        assert 'usage:' in query([str(binary / 'domino-install'), '--help'])
+        assert json.loads(query([str(binary / 'domino'), 'shell', 'status', '--json']))['policy_only']
+        assert json.loads(query([str(binary / 'domino'), '--output', 'json', 'capabilities']))['data']['application_version'] == version
         run([str(binary / 'python'), '-I', '-c', 'import prompt_toolkit,yaml,domino_install; assert not domino_install.domino_cli.PACKAGE_MANAGED'])
-        assert not list(home.iterdir()), 'CLI smoke changed HOME'
+        unchanged('CLI and dependency import')
         run([str(binary / 'python'), '-m', 'pip', 'uninstall', '-y', 'domino-proxy'])
         assert not (binary / 'domino').exists() and not (binary / 'domino-install').exists()
-        assert not list(home.iterdir()), 'Package removal changed HOME'
+        unchanged('Package removal')
     return {'version': version, 'ok': True, 'wheel_install_dependencies_and_remove': True,
             'isolated_venv': True, 'configuration_unchanged': True, 'native_install_changed': False}
 

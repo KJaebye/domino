@@ -18,12 +18,16 @@ def main():
     parser=argparse.ArgumentParser()
     parser.add_argument('--version',default='v1.19.33')
     parser.add_argument('--output',type=Path,required=True)
+    parser.add_argument('--release-json',type=Path,help='Release metadata already fetched by authenticated CI')
     args=parser.parse_args()
     with tempfile.TemporaryDirectory(prefix='domino-test-core-') as work:
         work=Path(work)
-        metadata=work/'release.json'
-        cli.download(release_url(args.version,cli.RELEASE_API),metadata)
+        metadata=args.release_json or work/'release.json'
+        if not args.release_json:
+            cli.download(release_url(args.version,cli.RELEASE_API),metadata)
         tag,asset=cli.release_asset(json.loads(metadata.read_text()),cli.normalize_arch(platform.machine()),platform.system().lower())
+        if args.version != 'latest' and tag != args.version:
+            raise RuntimeError('Core release version mismatch')
         archive=work/'core.gz'
         cli.download(asset['browser_download_url'],archive)
         if hashlib.sha256(archive.read_bytes()).hexdigest()!=asset['digest'].split(':')[1]:
