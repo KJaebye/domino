@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "domino-proxy"
-version = "0.17.8"
+version = "0.17.11"
 description = "Deploy independent proxy access over SSH and manage local or remote Domino services"
 readme = "README.pypi.md"
 license = "GPL-3.0-only"
@@ -44,7 +44,7 @@ domino-install = "domino_install:package_install"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
-py-modules = ["domino_cli", "install_domino", "domino_macos", "domino_linux", "domino_tui", "domino_subscriptions", "domino_install", "domino_model", "domino_store", "domino_service", "domino_resources", "domino_logs", "domino_agent", "domino_agent_backend", "domino_shell", "domino_sources", "domino_completion"]
+py-modules = ["domino_cli", "install_domino", "domino_macos", "domino_linux", "domino_tui", "domino_subscriptions", "domino_install", "domino_model", "domino_store", "domino_service", "domino_resources", "domino_logs", "domino_agent", "domino_agent_backend", "domino_shell", "domino_sources", "domino_completion", "domino_uninstall"]
 
 [tool.setuptools.data-files]
 "share/doc/domino" = ["README.md", "README.pypi.md", "CHANGELOG.md", "NOTICE", "LICENSE*", "SECURITY.md", "CONTRIBUTING.md"]

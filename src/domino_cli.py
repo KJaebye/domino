@@ -31,7 +31,7 @@ from urllib.parse import urlsplit
 from urllib.request import getproxies
 from domino_model import DomainError
 
-VERSION = '0.17.8'
+VERSION = '0.17.11'
 PACKAGE_MANAGED = False
 DESCRIPTION = '捕获本机代理，并一键部署到指定 IP 的设备上，让翻墙像 domino 一样简单。'
 SUBSCRIPTION_USER_AGENT = 'clash.meta'
@@ -41,7 +41,7 @@ RELEASE_API = 'https://api.github.com/repos/MetaCubeX/mihomo/releases/latest'
 REMOTE_SCRIPT = Path(__file__).with_name('install_domino.py')
 CLI_MODULES = ('domino_cli.py','install_domino.py','domino_macos.py','domino_linux.py','domino_tui.py',
                'domino_subscriptions.py','domino_install.py','domino_model.py',
-               'domino_store.py','domino_service.py','domino_resources.py','domino_logs.py','domino_agent.py','domino_agent_backend.py','domino_shell.py','domino_sources.py','domino_completion.py')
+               'domino_store.py','domino_service.py','domino_resources.py','domino_logs.py','domino_agent.py','domino_agent_backend.py','domino_shell.py','domino_sources.py','domino_completion.py','domino_uninstall.py')
 DEFAULT_CLASH = Path.home() / 'Library/Application Support/io.github.clash-verge-rev.clash-verge-rev'
 DEFAULT_SOCKET = Path('/tmp/verge/verge-mihomo.sock')
 
@@ -1148,22 +1148,24 @@ class SSH:
 
     def action_argv(self, action, *options, tty=False):
         names=['domino_model','domino_shell']
-        if action in ['start', 'stop', 'restart', 'status', 'logs', 'overview']:
+        if action in ['start', 'stop', 'restart', 'status', 'logs', 'overview', 'uninstall']:
             names += ['domino_macos', 'domino_linux']
+        if action == 'uninstall': names += ['domino_uninstall']
         if action == 'proxy': names += ['domino_macos', 'domino_linux']
         if action == 'traffic': names += ['domino_tui']
-        if action in ['agent','scan','configs','rollback','delay','cli','catch-options']: names += ['domino_subscriptions','domino_macos','domino_linux','domino_cli','domino_store','domino_service','domino_resources','domino_logs','domino_tui','domino_install','domino_agent','domino_agent_backend','domino_sources','domino_completion']
+        if action in ['agent','scan','configs','rollback','delay','cli','catch-options']: names += ['domino_subscriptions','domino_macos','domino_linux','domino_cli','domino_store','domino_service','domino_resources','domino_logs','domino_tui','domino_install','domino_agent','domino_agent_backend','domino_sources','domino_completion','domino_uninstall']
         modules={name:remote_source(Path(__file__).with_name(name+'.py').read_text()) for name in names}
         backend = remote_source(REMOTE_SCRIPT.read_text())
         code = ('import sys,types;from pathlib import Path\n'
-                '__domino_sources='+repr(modules)+'\n__domino_backend='+repr(backend)+'\n'
+                '__domino_sources='+json.dumps(modules,ensure_ascii=False,separators=(',',':'))+'\n__domino_backend='+json.dumps(backend,ensure_ascii=False)+'\n'
                 'for name,source in __domino_sources.items():\n'
                 ' m=types.ModuleType(name);m.__file__=str(Path.home()/".local/share/domino/cli"/(name+".py"));sys.modules[name]=m;exec(compile(source,m.__file__,"exec"),m.__dict__)\n'
                 'if "domino_cli" in sys.modules: sys.modules["domino_cli"].SOURCE_MODULES={**{name+".py":source for name,source in __domino_sources.items()},"install_domino.py":__domino_backend}\n'
+                'sys.modules["install_domino"]=sys.modules["__main__"]\n'
                 'exec(compile(__domino_backend,"<domino-backend>","exec"))')
         if action == 'cli':
             code = ('import sys,tempfile;from pathlib import Path\n'
-                    '__sources='+repr({**{name+'.py':text for name,text in modules.items()}, 'install_domino.py':backend})+'\n'
+                    '__sources='+json.dumps({**{name+'.py':text for name,text in modules.items()}, 'install_domino.py':backend},ensure_ascii=False,separators=(',',':'))+'\n'
                     'with tempfile.TemporaryDirectory(prefix="domino-command-") as directory:\n'
                     ' root=Path(directory)\n'
                     ' for name,source in __sources.items(): (root/name).write_text(source)\n'
@@ -1590,6 +1592,11 @@ def build_parser(*, advanced_delay_help=False, installing=False, machine_mode=Fa
     p.add_argument('shell', choices=['zsh', 'bash'])
     p = sub.add_parser('rollback', parents=[manage_parent], help='恢复本机或指定电脑上一次部署前的服务和环境文件')
     p.add_argument('--backup', help='指定本工具生成的备份 ID，默认最近一次')
+    p = sub.add_parser('uninstall', parents=[manage_parent], help='卸载运行环境并清理终端接入、配置及备份',
+                       usage='domino [USER@IP] uninstall [options]',
+                       description='恢复 Domino 接管的代理，停止并移除服务，删除内核、配置库、备份和默认缓存。仅清理 Domino 的终端标记区块；包管理器安装的 CLI 由原包管理器卸载。')
+    p.add_argument('--yes', action='store_true', help='确认删除运行配置、配置库与备份')
+    p.add_argument('--dry-run', action='store_true', help='只预览清理范围，不修改任何文件或服务')
     p = sub.add_parser('export', parents=[source_parent], help='导出内核和配置，供目标电脑离线安装',
                        formatter_class=argparse.RawDescriptionHelpFormatter,
                        description='将 Mihomo 内核、节点与分流规则、相关资源及 Domino 管理程序打包为 .tar.gz。\n'
@@ -1728,6 +1735,7 @@ def common_operations():
             ('domino start', f'开启 Domino，接通系统代理（默认端口 {DEFAULT_PROXY_PORT}）'),
             ('domino stop', '关闭 Domino，恢复系统代理设置'),
             ('domino status', '查看服务、系统代理和出网状态'),
+            ('domino uninstall', '卸载运行环境，清理配置和终端接入'),
             ('domino shell on', '终端使用 Domino 代理'),
             ('domino shell off', '恢复终端原代理设置'),
             ('domino shell status', '查看终端代理状态'),
@@ -2147,7 +2155,9 @@ def management_options(args):
         options += ['--json']
     if args.command == 'rollback' and args.backup:
         options += ['--backup', args.backup]
-    privileged = (args.command in ['start', 'stop', 'restart', 'logs', 'rollback', 'proxy'] or
+    if args.command == 'uninstall':
+        options += [flag for flag, enabled in [('--yes', args.yes), ('--dry-run', args.dry_run)] if enabled]
+    privileged = (args.command in ['start', 'stop', 'restart', 'logs', 'rollback', 'proxy', 'uninstall'] or
                   (args.command == 'configs' and (args.add or args.set_url) and args.url is None))
     if privileged and args.batch and args.command != 'configs':
         options += ['--non-interactive']
@@ -2421,6 +2431,8 @@ def main(argv=None, *, installing=False):
         from domino_completion import main as complete
         return complete(arguments[1:])
     machine_flags = ['--protocol-version','--non-interactive','--input','--if-revision','--request-id','--dry-run']
+    if arguments[:1] == ['uninstall'] or len(arguments) > 1 and arguments[1] == 'uninstall':
+        machine_flags.remove('--dry-run')
     json_mode = '--output=json' in arguments or any(arguments[i:i+2] == ['--output','json'] for i in range(len(arguments)-1))
     if not installing and arguments and (arguments[0].split('=',1)[0] == '--output' or
             any(value.split('=',1)[0] in machine_flags for value in arguments) or (json_mode and 'export' not in arguments[:2])):
@@ -2490,7 +2502,7 @@ def main(argv=None, *, installing=False):
                 private_write(output, package.read_bytes())
                 print('离线安装包已导出：' + str(output))
             return 0
-        management = ['status', 'nodes', 'select', 'start', 'stop', 'restart', 'logs', 'rollback',
+        management = ['status', 'nodes', 'select', 'start', 'stop', 'restart', 'logs', 'rollback', 'uninstall',
                       'mode', 'log', 'test', 'connections', 'traffic', 'rules', 'providers', 'configs', 'proxy', 'shell', 'ui', 'env', 'scan']
         if args.command in management and is_local_target(args.target):
             if args.user or args.ssh_port or args.identity:
