@@ -18,7 +18,7 @@
 | 3 结构化写操作 | 订阅、规则、节点、模式、系统代理、服务、provider、私有安装包、导出、上传与恢复；预检、修订校验、去重、操作记录与逐项批量结果 | 有界日志读取已开放；持续事件流仍待扩展，见 Agent 文档 |
 | 4 本机/SSH 一致性 | 同版应用服务随 SSH 调用传输；结果分帧排除登录横幅 | 临时真实 OpenSSH 验证写入、去重、私有包上传与目标预检；不是指定 Linux 目标的完整服务安装实测 |
 | 5 兼容配置导入 | 只读发现、扫描和导入 Clash/Mihomo 配置；支持 Verge 常见有效配置和只读 Unix socket 来源 | 管理操作仅针对 Domino 自有运行时；来源兼容性仍需验证 |
-| 6 冷启动分发 | wheel、`domino-install`、带 UI/YAML 依赖的运行包、Homebrew 模板、可配置 HTTPS 内核/Geo 源和摘要校验 | 云端资源地址、PyPI 包名/发布权限、Homebrew tap与实际渠道发布尚待落实；项目许可证已选定 GPL-3.0-only |
+| 6 冷启动分发 | wheel、`domino-install`、带 UI/YAML 依赖的运行包、Homebrew 模板、可配置 HTTPS 内核/Geo 源和摘要校验 | PyPI 已发布 `domino-proxy`；公共 runtime 地址、Homebrew tap 与 apt 源仍待上线，见 [分发指南](DISTRIBUTION.md)；项目许可证为 GPL-3.0-only |
 | 7 可靠性交付 | 安装/规则/模式失败恢复、独立操作记录、真实内核相邻复制回归、跨平台 CI 工作流 | 已验证 macOS ARM64；Linux ARM64/x86_64、macOS Intel 的真实安装与恢复矩阵尚未跑完 |
 
 所有测试在临时目录/进程中运行，不替换测试机正在使用的订阅、节点或系统代理。相邻复制回归在删除源配置和停止上一实例后验证下一实例仍能通过本地代理请求；不代表已完成真实机场的跨设备网络验收。
