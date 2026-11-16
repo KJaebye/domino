@@ -19,9 +19,11 @@
 - 配置管理使用顶层 `list/add/switch/update/remove/rename/set-url`；旧 configs 组仅保留隐藏兼容。TUI 使用对应斜杠命令。
 - `select NAME` 只表示当前配置的节点；交互时多匹配进入候选菜单，非交互仍要求唯一匹配，`test NAME` 只表示本机测速对象，不推断 NAME 为远端。交互终端的 `traffic` 默认内嵌完整动态面板并保留历史，内容和功能与 `traffic --full` 相同，只有后者使用全屏，JSON / 重定向保留单次采样；日志级别使用 `log [LEVEL]`，日志内容使用 `logs`；旧 `log-level` 命令已移除，不保留 CLI/TUI 别名，也不把它误作 SSH 目标；旧 `delay` 仅保留隐藏兼容；协议操作名 `configs.*`、`delay.*` 保持稳定，不随人类命令名称修改。
 
-- macOS 与 Ubuntu GNOME 桌面的日常开关统一使用 `start/stop/status`：start/restart 等待内核就绪后接通系统代理，stop 先恢复系统代理再停服，status 一并展示；原 proxy 命令仅保留隐藏兼容。终端 shell 策略保持独立；Ubuntu / Linux 使用 systemd 管理服务，无 GNOME 会话时明确显示无桌面系统代理，不更改终端策略或全局环境。首次安装、catch 和 CLI 更新不因该联动自动改变系统代理。
+- macOS 与 Ubuntu GNOME 桌面的日常开关统一使用 `start/stop/status`：start/restart 等待内核就绪后接通系统代理，stop 先恢复系统代理再停服，status 一并展示；原 proxy 命令仅保留隐藏兼容。终端 shell 策略保持独立；Ubuntu / Linux 使用 systemd 管理服务，无 GNOME 会话时明确显示无桌面系统代理，不更改终端策略或全局环境。按用户要求，catch 成功后自动启动并接通系统代理；已有安装保留当前配置和节点选择，不自动切换新捕获项。普通安装和 CLI 更新不因该联动自动改变系统代理。
 
 ## 环境与安全边界
+
+- 远端部署按用户要求以较新 CLI 兼容旧部署格式，不降级目标较新版本。pipx / 用户 venv 的旧命令通过随包 wheel 离线同步，保留入口链接，部署完成核验实际命令版本；系统包或未知环境不强制覆盖。远程部署在显示完成前自动接通并读回核验目标系统代理，不能要求用户另跑 start；无 GNOME 桌面时如实显示不支持，终端代理策略保持独立。普通只读管理命令不因版本差异自动升级。
 
 - 构建不等于安装同步，不等于对外发布。修改安装版 CLI、环境加载器、rc 文件、服务配置或真实代理设置，需要用户明确授权；更新 CLI 不顺带重启服务或 VS Code。
 - 不自动 catch、切换配置/节点、下载真实订阅或迁移现有安装来验证代码。使用临时 HOME、合成配置和受控服务。

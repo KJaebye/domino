@@ -205,6 +205,18 @@ class TransactionTests(unittest.TestCase):
     def test_deploy_uninstall_redeploy_preserves_current_pip_console_script(self):
         self.assert_package_redeploy()
 
+    def test_deploy_result_reports_public_facts_without_terminal_integration(self):
+        path = self.bundle / 'manifest.json'
+        manifest = json.loads(path.read_text())
+        manifest.update(deployment_output='compact', shell_env=False)
+        path.write_text(json.dumps(manifest))
+        remote.install(self.bundle)
+        report = json.loads((self.bundle / 'deployment-result.json').read_text())
+        self.assertEqual(report['exit_country'], 'US')
+        self.assertEqual(report['proxy_port'], 7897)
+        self.assertIsNone(report['shell_enabled'])
+        self.assertNotIn('TEST-CREDENTIAL', json.dumps(report))
+
     def test_deploy_uninstall_redeploy_preserves_pipx_console_symlink(self):
         self.assert_package_redeploy(symlink=True)
 

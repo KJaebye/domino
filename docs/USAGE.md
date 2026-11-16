@@ -47,7 +47,7 @@ domino catch --source '/path/config.yaml'    # 明确选择配置来源
 
 `domino catch` 列出本机可捕获的 Clash/Mihomo 运行配置和 Clash Verge 保存配置，配置名称与文件路径分行展示，路径用 `~` 缩写并按终端宽度换行；保存配置标注客户端当前项。输入编号捕获一个，输入 `all` 捕获全部，回车取消。也可直接运行 `domino catch all`，或用 `domino catch --source PATH` 指定文件。Domino 和旧版 robot-clash 自有配置不列为外部来源；辅助 merge/script 配置不作为独立来源。这里的“可捕获”表示配置兼容，不保证节点实际出网可用。
 
-已有本机 Domino 时，捕获**只保存到配置库**：不切换当前配置，不重启服务，不修改节点选择、系统代理、终端代理策略或环境文件。捕获后用 `domino list` 查看，需启用时显式执行 `domino switch "配置名"`。因此原来已开启的代理保持开启，原来关闭的代理也保持关闭。捕获保存文件默认节点，不查询来源客户端的运行选择或执行客户端脚本；外部客户端保持原样。
+捕获成功后会**自动开启 Domino**，无需再运行 `domino start`：调用与 `domino start` 相同的流程，启动服务并接通 macOS / Ubuntu GNOME 系统代理。已有安装保留当前配置和节点选择，不自动切换到新捕获项；需要切换时使用 `domino switch "配置名"`。重复配置会跳过登记，但仍自动开启。终端代理策略保持独立，无 GNOME 桌面时仅启动服务并提示使用 `domino shell on`。捕获保存文件默认节点，不查询来源客户端的运行选择或执行客户端脚本；外部客户端配置保持原样。
 
 导入时统一解析文件依赖：相对路径先按配置文件目录查找，再查已识别的 Clash Verge 共享目录；provider 内的相对证书/私钥优先按该 provider 的原目录解析，再回退配置与共享目录。Geo 数据库还可复用 Domino 已有数据库。自定义客户端工作目录可用 `--resource-dir PATH` 显式补充，可重复指定；绝对路径按原引用读取，不按文件名递归搜索其他目录。
 
@@ -57,13 +57,13 @@ domino catch --source '/path/to/config.yaml' --resource-dir '/path/to/shared'
 domino export --arch arm64 --source '/path/to/config.yaml' --resource-dir '/path/to/shared' --output ./device-proxy.tar.gz
 ```
 
-找到的 provider、证书、私钥和 Geo 数据库会复制到 Domino 私有快照及运行资源目录，改写为包内引用；删除源目录后仍可独立使用。文件缺失时给出资源类型及补充目录的提示；必需 Geo 数据缺失会在内核校验前明确失败。在线订阅不读取其引用的本机 provider/证书文件。整个过程不修改来源文件、当前配置或代理开关。
+找到的 provider、证书、私钥和 Geo 数据库会复制到 Domino 私有快照及运行资源目录，改写为包内引用；删除源目录后仍可独立使用。文件缺失时给出资源类型及补充目录的提示；必需 Geo 数据缺失会在内核校验前明确失败。在线订阅不读取其引用的本机 provider/证书文件。资源复制不修改来源文件；全部所选配置完成捕获后，再按上述规则启用 Domino。
 
 按可携带配置内容及依赖资源摘要去重，忽略客户端端口、控制密钥等运行设置。相同内容无论文件名或来源是否不同，以及是否已经登记为在线订阅，均跳过，不创建新配置或缓存版本。内容变化时可更新同一来源的非当前快照并保留用户命名；若对应快照正在使用，另存为新快照，保留当前配置和原缓存版本。不会从外部客户端索引借用在线订阅地址。
 
-本机尚未安装 Domino 时，先按原安装流程确认并初始化第一个配置，其余配置只加入配置库；全新安装不自动开启系统代理或 TUN。已有旧版 robot-clash 的迁移影响仍在安装确认中显示。批量捕获逐项校验和登记，单项失败不影响已经成功的配置，最后显示新增/更新、跳过和失败数量；存在失败时退出码为 1。
+本机尚未安装 Domino 时，确认并初始化第一个配置，其余配置加入配置库，捕获完成后同样自动开启系统代理，不开启 TUN。已有旧版 robot-clash 的迁移影响仍在安装确认中显示。批量捕获逐项校验和登记，单项失败不影响已经成功的配置；部分成功时仍使用当前配置自动开启 Domino，并以退出码 1 报告捕获失败。取消或全部捕获失败不启动。自动启动、配置加载或系统代理接通失败时保留已保存配置，明确报告未完成开启并返回失败。
 
-脚本可用 `domino catch all --yes --batch` 或 `domino catch --source PATH --yes --batch`。`--yes` 接受捕获影响并跳过最终确认，多个来源仍须明确指定 `all` 或 `--source`；`--batch` 只禁止首次安装的密码询问，不代表同意。已有安装的捕获不需要服务或来源控制接口在线。完整选项见 `domino catch -h`；catch 暂不提供机器协议；UI 使用 `/catch` 选择单个外部配置或全部配置，单个配置在可筛选、可点击的面板中选择；`/catch all` 也保留为快捷写法，最终捕获仍复用 CLI 的确认和去重流程，结束后返回控制台。
+脚本可用 `domino catch all --yes --batch` 或 `domino catch --source PATH --yes --batch`。`--yes` 接受捕获影响并跳过最终确认，多个来源仍须明确指定 `all` 或 `--source`；`--batch` 禁止安装和自动开启时的认证密码询问，不代表同意。捕获来源无需控制接口在线；自动开启需要 Domino 内核就绪，Linux 需要相应 sudo 授权。完整选项见 `domino catch -h`；catch 暂不提供机器协议；UI 使用 `/catch` 选择单个外部配置或全部配置，单个配置在可筛选、可点击的面板中选择；`/catch all` 也保留为快捷写法，最终捕获仍复用 CLI 的确认和去重流程，结束后返回控制台。
 
 命令统一采用 `domino [USER@IP] CMD [参数] [选项]`：本机省略目标，远端目标必须写在命令前，也支持 IP 或 SSH 别名。名称参数不再被猜测成目标，例如 `domino test feiniao` 测本机配置，`domino user@host test feiniao` 测远端配置。
 
@@ -102,7 +102,7 @@ TUI 对应 `/list`、`/add`、`/switch`、`/update`、`/rename`、`/remove`、`/
 ./install.sh --proxy-port 17898 --api-port 19092
 ```
 
-安装、跨设备部署和 `export` 默认使用代理端口 `17897`、API 端口 `19091`，无需填写端口参数。没有订阅时会显示“待添加订阅”：后台服务和控制接口已经就绪，基础配置拒绝代理流量，尚不具备代理出网能力。全新 macOS / Linux 安装默认关闭系统代理和终端代理策略；安装 shell 加载器并不代表开启代理，重装和迁移的策略保留规则见下文。配置好订阅后，可用 `domino start` 开启 Domino 并接通系统代理，终端代理独立用 `domino shell on`。安装成功后运行 `~/.local/bin/domino ui` 进入持续交互工作台；`~/.local/bin` 已在 PATH 中时可直接使用 `domino ui`。
+安装、跨设备部署和 `export` 默认使用代理端口 `17897`、API 端口 `19091`，无需填写端口参数。没有订阅时会显示“待添加订阅”：后台服务和控制接口已经就绪，基础配置拒绝代理流量，尚不具备代理出网能力。普通本机初始化默认关闭系统代理和终端代理策略；远程部署完成后自动接通目标机支持的桌面系统代理，终端代理策略保持独立；安装 shell 加载器并不代表开启代理，重装和迁移的策略保留规则见下文。配置好订阅后，可用 `domino start` 开启 Domino 并接通系统代理，终端代理独立用 `domino shell on`。安装成功后运行 `~/.local/bin/domino ui` 进入持续交互工作台；`~/.local/bin` 已在 PATH 中时可直接使用 `domino ui`。
 
 重复运行安装程序时保留已有配置作为来源，优先复用已安装版本对应的内核压缩包缓存，并按照安装记录中的 SHA-256 重新校验。缓存缺失或校验失败、首次安装、显式指定 `--mihomo-version` 时仍查询官方版本信息。下载错误会区分订阅、provider、GitHub 版本信息和内核安装包。重新安装会重启服务；日常更新订阅使用 `domino update "名称"`。
 
@@ -224,7 +224,7 @@ UI 内支持 `/rules add "完整规则"`、`/rules remove "完整规则"` 和 `/
 
 ## 配置管理
 
-使用 `domino list` 统一管理完整 Clash/Mihomo 配置订阅和本地快照，选择其中一个作为本机当前配置；不会自动合并不同机场的节点和规则。`scan` 列出本机发现的导入来源，`configs` 只列出已登记到 Domino 的配置，因此两者数量不必相同。已有安装执行 `catch` 只将配置快照登记到配置库，保留当前项；首次安装或安装器文件导入成功后会登记快照并设为当前，保留其他在线订阅；不会因为扫描发现了其他配置就自动加入配置库。捕获配置直接使用来源配置名，重名时追加六位随机字母数字后缀，例如 `xlink-xqEiJS`，不把来源说明放入名称。同一来源重复捕获保留已有名称（包括手动重命名）；已有配置不会自动改名。
+使用 `domino list` 统一管理完整 Clash/Mihomo 配置订阅和本地快照，选择其中一个作为本机当前配置；不会自动合并不同机场的节点和规则。`scan` 列出本机发现的导入来源，`configs` 只列出已登记到 Domino 的配置，因此两者数量不必相同。已有安装执行 `catch` 将配置快照登记到配置库并自动开启 Domino，保留当前项和节点选择；首次安装或安装器文件导入成功后会登记快照并设为当前，保留其他在线订阅；不会因为扫描发现了其他配置就自动加入配置库。捕获配置直接使用来源配置名，重名时追加六位随机字母数字后缀，例如 `xlink-xqEiJS`，不把来源说明放入名称。同一来源重复捕获保留已有名称（包括手动重命名）；已有配置不会自动改名。
 
 ```bash
 domino list    # 查看名称、当前项、节点数、更新时间和来源主机
@@ -288,7 +288,7 @@ domino restart   # 重启并重新接通支持的桌面系统代理
 
 远端将目标放在命令前，例如 `domino user@host start`，操作的是目标电脑。macOS 与 Ubuntu GNOME 桌面开启当前用户的 HTTP、HTTPS、SOCKS 系统代理，指向 Domino 的 `127.0.0.1:17897`（默认端口），并保存原设置；自定义端口时使用实际值，`start` / `restart` 的结果及 `status` 都显示实际目标地址。重复开启保留仍由 Domino 接管项目的原始备份。关闭时只恢复仍指向 Domino 的项目，保留已由用户关闭或其他客户端接管的设置。恢复失败时保留记录并停止后续停服操作，避免留下指向已停止内核的系统代理。启动后接通失败会明确报告部分状态，不显示成功；可用 `domino status` / `domino logs` 排查。已有 PAC 或认证代理仍须先处理，修改系统代理可能需要管理员认证。
 
-首次安装和 `catch` 不自动接通系统代理；配置好订阅后显式运行 `domino start`。Ubuntu GNOME 桌面通过当前用户的 GSettings 与会话 D-Bus 管理代理；SSH 调用可使用同一用户已有的 GNOME 会话。Ubuntu Server / 无 GNOME 会话时沿用 systemd 服务管理，明确提示代理入口已就绪，终端应用使用 `domino shell on`；不修改 `/etc/environment`、APT 配置或其他用户的代理。该桌面代理机制参见 [GNOME 官方文档](https://help.gnome.org/gnome-help/net-proxy.html)。原 `domino proxy status/on/off` 保留为隐藏的兼容入口，用于单独检查或修改系统代理，以及 `--service 'Wi-Fi'` 等高级操作。
+普通安装不自动接通系统代理；配置好订阅后可运行 `domino start`。`catch` 成功后自动执行开启流程，已有安装保留当前配置和节点选择。Ubuntu GNOME 桌面通过当前用户的 GSettings 与会话 D-Bus 管理代理；SSH 调用可使用同一用户已有的 GNOME 会话。Ubuntu Server / 无 GNOME 会话时沿用 systemd 服务管理，明确提示代理入口已就绪，终端应用使用 `domino shell on`；不修改 `/etc/environment`、APT 配置或其他用户的代理。该桌面代理机制参见 [GNOME 官方文档](https://help.gnome.org/gnome-help/net-proxy.html)。原 `domino proxy status/on/off` 保留为隐藏的兼容入口，用于单独检查或修改系统代理，以及 `--service 'Wi-Fi'` 等高级操作。
 
 **终端代理仍独立管理。** `domino shell on/off/status` 管理当前用户的终端代理策略，服务启停不会改写 `http_proxy`、`https_proxy` 等 shell 变量或终端策略。系统代理与终端代理都不是全流量接管；应用是否读取这些设置取决于程序本身。
 
@@ -422,7 +422,7 @@ domino scan --source '/path/to/current-config.yaml'
 domino user@192.168.1.10 deploy --source '/path/to/current-config.yaml'
 ```
 
-`domino scan` 汇总 Domino、旧版 robot-clash、Clash Verge 和标准 Clash/Mihomo 配置路径，同一文件只列一次，显示兼容性、默认来源、代理入口及实际 HTTPS 出网结果。终端使用统一的 Domino 标题、摘要和键值行，先展示外部客户端配置，再用一个“Domino 管理”区块集中展示配置库；两个区块均使用独立加粗标题和分隔线，顶部按展示分组分别统计外部配置数与 Domino 管理配置数；配置路径用 `~` 缩写用户目录，长内容按终端宽度缩进换行，JSON 保留完整路径。不可读或不兼容的文件单独标记，不影响其他项。入口最多四个并发检查，每个入口超时 5 秒，相同入口只检查一次；失败显示“检查未通过”，未配置入口显示“未检查”。检测明确使用各配置自己的代理端口，不沿用系统代理；出网可用不代表系统代理已指向该入口。扫描不读取专用客户端的内存或加密订阅，不修改外部客户端。默认导入来源仍优先 Domino，展示顺序不改变部署时的默认选择。用 `domino scan --source '/path/to/config.yaml'` 检查某份配置及对应代理入口，用 `domino USER@IP deploy --source '/path/to/config.yaml'` 明确选择部署来源。扫描支持 `--json`；Agent 操作沿用 `source.list`（列表）和 `source.inspect`（指定来源检查）。
+`domino scan` 汇总 Domino、旧版 robot-clash、Clash Verge 和标准 Clash/Mihomo 配置路径，同一文件只列一次，显示兼容性、默认来源、代理入口及实际 HTTPS 出网结果。终端使用统一的 Domino 标题、摘要和键值行，先展示外部客户端配置，再用一个“Domino 管理”区块集中展示配置库；两个区块均使用独立加粗标题和分隔线，顶部按展示分组分别统计外部配置数与 Domino 管理配置数；配置路径用 `~` 缩写用户目录，长内容按终端宽度缩进换行，JSON 保留完整路径。不可读或不兼容的文件单独标记，不影响其他项。入口最多四个并发检查，每个入口超时 5 秒，相同入口只检查一次；失败显示“检查未通过”，未配置入口显示“未检查”。检测明确使用各配置自己的代理端口，不沿用系统代理；出网可用不代表系统代理已指向该入口。扫描不读取专用客户端的内存或加密订阅，不修改外部客户端。非交互自动发现仍优先 Domino；交互部署通过独立菜单选择来源。用 `domino scan --source '/path/to/config.yaml'` 检查某份配置及对应代理入口，用 `domino USER@IP deploy --source '/path/to/config.yaml'` 明确选择部署来源。扫描支持 `--json`；Agent 操作沿用 `source.list`（列表）和 `source.inspect`（指定来源检查）。
 
 Domino 管理区块列出全部已登记配置（包括非当前项），显示名称、当前项标记 `●`、类型、节点数、缓存状态和更新时间。该区块仅保留配置表，不显示 Domino 运行入口、导入来源、源快照和部署提示；不将隐藏运行入口计入顶部数量或混合统计出网可用数。检测全部配置节点可用情况使用 `domino test`。配置库不可读时单独提示，外部来源照常展示。JSON / Agent `source.list` 在配置库存在时增加 `managed_configs`（`active`、`current_source`、`configs`，失败时带安全 `error`），不改变原 `sources` 记录或将保存项伪装成运行入口。
 
@@ -434,7 +434,7 @@ macOS / Ubuntu 的 Clash Verge 扫描还会读取本地 `profiles.yaml` 索引�
 
 ClashX / Clash 目录中的其他 YAML 保存配置也加入扫描和捕获。v2rayN 支持只读发现节点数据库或旧版 JSON 节点列表，转换为一个 Mihomo 节点快照；不迁移其分流、DNS 和客户端设置，不探测保存端口。不支持的协议、传输或自定义配置会明确标记为不可导入，不静默跳过节点。标准目录、支持范围和便携目录示例见 [客户端适配](PLATFORMS.md#clashx-与-v2rayn)。CLI、SSH 和 UI 捕获菜单共享这些来源。
 
-可复制扫描结果中的配置路径，通过 `domino USER@IP deploy --source '配置路径'` 导入任意一份保存配置。导入使用原始文件与文件内默认节点，不连接它声明的控制接口来借用另一份配置的运行选择，也不执行 Clash Verge 的合并或脚本；结果可能与客户端生成的运行配置不同。辅助 merge/script 项不作为独立配置列出。保存配置加入 `catch` 选择菜单和 `catch all`；自动部署仍保持原默认来源范围，部署未启用配置需显式 `--source`。
+可复制扫描结果中的配置路径，通过 `domino USER@IP deploy --source '配置路径'` 导入任意一份保存配置。导入使用原始文件与文件内默认节点，不连接它声明的控制接口来借用另一份配置的运行选择，也不执行 Clash Verge 的合并或脚本；结果可能与客户端生成的运行配置不同。辅助 merge/script 项不作为独立配置列出。保存配置加入 `catch` 选择菜单、`catch all` 和交互部署菜单，部署未启用配置时可直接选取，也可显式指定 `--source`。
 
 UI 输入 `/scan` 执行相同扫描，并在操作记录中按相同样式显示结果；`/scan --source "配置路径"` 检查指定配置。命令结果保留 CLI 的标题、标签和状态配色：标题青色、成功绿色、失败红色、提示黄色，标签和路径使用弱化样式；命令结果遵循 `NO_COLOR`，JSON 保持纯文本。扫描在 UI 当前目标上执行，远端工作台不会改为扫描本机。`/scan` 可通过 `/` 命令面板或 Tab 补全选择，运行期间可用 Ctrl+C 中断。
 
@@ -533,13 +533,21 @@ python3 ./domino-bootstrap/domino_install.py --bundle ./device-proxy.tar.gz
 
 ## 常用命令
 
-直接指定目标即可部署，自动完成检查、配置交付和出网验证：
+直接指定目标即可部署。未指定 `--source` 或 `--subscription` 时，交互终端先列出本机可用配置，选择后再连接 SSH、下载内核和上传。菜单包含 Domino 当前配置、外部客户端运行配置及保存配置；只有一份配置时也需输入编号，回车取消。非交互调用保留原有默认来源发现行为，脚本建议显式指定来源。
 
 ```bash
 ./domino user@192.168.1.10 deploy
 ./domino user@dev-server deploy
 ./domino 'user@[2001:db8::10]' --ssh-port 2222 --identity ~/.ssh/id_ed25519
 ```
+
+远程部署在安装、出网检查和 CLI 同步后，自动接通目标用户的 GNOME 系统代理，并读回确认已指向 Domino；不再需要另行运行 `domino start`。接通失败会明确报告未完成，无 GNOME 桌面时显示不支持。终端代理策略保持原值。
+
+默认部署菜单只显示配置名称和状态，安装过程显示简短进度，结束后集中展示出网、CLI 版本、终端代理状态和查询命令。使用 `domino USER@IP --verbose` 显示完整配置路径、安装与 CLI 同步细节；默认输出仍保留密码提示、错误和失败诊断。
+
+远程部署同时协商 Domino CLI 版本（与 Mihomo 内核版本独立）：目标 CLI 较旧时自动更新，版本相同时不重装包，目标较新时保留新版并使用其管理代码兼容本次部署。目标运行目录与命令入口分别检查，完成后实际运行 `~/.local/bin/domino --version` 核验；不会只更新运行目录就宣称命令已更新。
+
+pipx / 用户 venv 的 CLI 在原环境中通过随包上传的 wheel 离线升级，保留入口链接，不从 PyPI 下载包或在线解析依赖。系统包管理器拥有的入口、未知 Python 环境或 CLI 更新失败会明确报告未完成；需要通过原包管理器处理，不覆盖无关文件。普通 `status` 等管理命令不自动升级。
 
 固定内核版本、指定源配置或端口：
 

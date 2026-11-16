@@ -52,13 +52,12 @@ venv 安装后再运行 `domino-install`，由它下载 Mihomo 并配置本机�
 已有 Clash Verge 或其他兼容配置时：
 
 ```bash
-domino catch                 # 选择外部配置，捕获到配置库
+domino catch                 # 捕获外部配置，完成后自动开启 Domino
 domino list                  # 查看配置名称
-domino switch '配置名'       # 启用其中一份
-domino start                 # 开启 Domino，并接通系统代理
+domino status                # 查看服务与系统代理状态
 ```
 
-也可以用 `domino catch all` 一次捕获全部配置，重复内容自动跳过。已有 Domino 时，捕获只保存到配置库，保留当前配置、节点和代理状态。
+也可以用 `domino catch all` 一次捕获全部配置，重复内容自动跳过。捕获成功后自动启动服务并接通系统代理；已有 Domino 时保留当前配置和节点选择，需要切换时使用 `domino switch '配置名'`。
 
 没有外部配置时，用完整的 Clash/Mihomo HTTPS 订阅添加：
 
@@ -79,6 +78,10 @@ domino user@192.168.1.10 ui         # 交互管理这台电脑
 ```
 
 SSH 别名同样可用：`domino my-server deploy`。仅部署远端时，安装 PyPI 管理命令即可，无需先安装本机代理服务；更多选项见 [安装与部署](docs/USAGE.md#开始使用)。
+
+部署以较新 CLI 兼容旧版本：目标旧版自动升级，目标新版保留、不降级，完成后核验目标命令的实际版本。pipx / 用户 venv 通过随包 wheel 离线同步。
+
+远程部署完成后自动接通目标机的 GNOME 系统代理，无需另跑 `domino start`；终端代理策略保持独立。
 
 ## 在一个界面里管理配置
 

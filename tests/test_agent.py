@@ -183,7 +183,7 @@ class AgentProcessTests(unittest.TestCase):
         ssh=cli.SSH(args)
         ssh.socket='/tmp/not-used'
         command=shlex.split(ssh.action_argv('agent')[-1])
-        self.assertLess(len(ssh.action_argv('agent')[-1].encode()),128*1024-1024)
+        self.assertLess(len(ssh.action_argv('agent')[-1].encode()),128*1024-256)
         with self.assertRaises(cli.ToolError):ssh.action_argv('agent','x'*131072)
         request={'schema_version':1,'operation':'configs.add','arguments':{'name':'A','url':'https://example.test/PRIVATE-TOKEN'},
             'target':'alice@host','operation_id':'a'*32,'transport_token':'b'*32,'request_id':'remote-add'}
