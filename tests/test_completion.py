@@ -26,7 +26,7 @@ class CompletionTests(unittest.TestCase):
         self.config.write_text(json.dumps({'items': [{'name': 'xlink'}, {'name': '机场 配置'}]}))
         data = self.home / '.local/share/domino/data'
         data.mkdir(parents=True)
-        self.node = '[HY2]美国 BGP002 $(touch SHOULD_NOT_EXIST)'
+        self.node = "[HY2]美国 BGP002 O'Reilly $(touch SHOULD_NOT_EXIST)"
         (data / 'config.json').write_text(json.dumps({'proxies': [{'name': self.node}],
             'proxy-groups': [{'name': '节点选择'}]}))
         self.bin = self.home / 'bin'
@@ -128,7 +128,8 @@ value = """data, not a docstring"""
             code += f'COMP_CWORD={len(words)}\n_domino_complete\nprintf "%s\\n" "${{COMPREPLY[@]}}"\n'
             result = subprocess.run(['bash', '--noprofile', '--norc', '-c', code], env=self.env,
                                     capture_output=True, text=True, check=True, timeout=10)
-            self.assertEqual(result.stdout.splitlines(), expected or [''])
+            replies = [shlex.split(value)[0] for value in result.stdout.splitlines() if value]
+            self.assertEqual(replies, expected)
 
     def test_real_tab_quotes_node_names_in_bash_and_zsh(self):
         data = self.home / '.local/share/domino/data/config.json'
