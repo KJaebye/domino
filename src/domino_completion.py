@@ -9,7 +9,7 @@ import sys
 SCRIPTS = {
     'bash': r'''# Domino Bash completion (Bash 3.2+)
 _domino_complete() {
-    local line mode reply
+    local line mode reply quoted
     COMPREPLY=()
     reply=$(command "${COMP_WORDS[0]}" completion --query -- "${COMP_WORDS[@]:1:COMP_CWORD}" 2>/dev/null) || return 0
     mode=${reply%%$'\n'*}
@@ -20,10 +20,16 @@ _domino_complete() {
         reply=${reply#*$'\n'}
     fi
     while IFS= read -r line; do
-        [ -z "$line" ] || COMPREPLY[${#COMPREPLY[@]}]=$line
+        if [ -n "$line" ]; then
+            case "$line" in
+                *[!a-zA-Z0-9_./:@%+=,-]*) quoted=${line//\'/\'\\\'\'}; quoted="'$quoted'";;
+                *) quoted=$line;;
+            esac
+            COMPREPLY[${#COMPREPLY[@]}]=$quoted
+        fi
     done <<< "$reply"
 }
-complete -o filenames -F _domino_complete domino
+complete -F _domino_complete domino
 ''',
     'zsh': r'''#compdef domino
 _domino() {
