@@ -24,23 +24,14 @@ domino user@192.168.1.10
 
 ### 1. 安装
 
-从 [PyPI](https://pypi.org/project/domino-proxy/) 安装，包名是 **`domino-proxy`**，安装后的命令是 **`domino`**。macOS / Ubuntu 均可使用独立虚拟环境：
+从 [PyPI](https://pypi.org/project/domino-proxy/) 安装，包名是 **`domino-proxy`**，安装后的命令是 **`domino`**：
 
 ```bash
-python3 -m venv ~/.venvs/domino
-source ~/.venvs/domino/bin/activate
-python -m pip install --upgrade domino-proxy
+pip install domino-proxy
 domino --version
 ```
 
-新开终端后，先运行 `source ~/.venvs/domino/bin/activate`，即可直接使用 `domino`。Ubuntu 若缺少 venv，可先运行 `sudo apt update && sudo apt install python3-venv python3-pip curl`。也可以使用 [pipx](https://packaging.python.org/en/latest/guides/installing-stand-alone-command-line-tools/) 安装到独立环境，并将命令加入用户 PATH：
-
-```bash
-pipx install domino-proxy
-pipx ensurepath
-```
-
-pipx 安装后重新打开终端。安装包只提供管理命令；**需要本机代理服务时**，以普通用户运行：
+安装包只提供管理命令；**需要本机代理服务时**，以普通用户运行：
 
 ```bash
 domino-install
@@ -48,9 +39,7 @@ domino-install
 
 它安装 Mihomo 内核和后台服务。仅部署到其他电脑时，可以跳过本机初始化，直接进入第 3 步。
 
-可选 Tab 补全：zsh 执行 `eval "$(domino completion zsh)"`，bash 执行 `eval "$(domino completion bash)"`；永久启用见 [补全设置](docs/USAGE.md#tab-补全)。升级时，在已激活的虚拟环境中执行 `python -m pip install --upgrade domino-proxy`；pipx 用户执行 `pipx upgrade domino-proxy`。
-
-Homebrew / apt 仍在准备中，详见 [分发指南](docs/DISTRIBUTION.md)。需要从源码安装或直接运行 `./domino`，见 [源码安装与部署](docs/USAGE.md#开始使用)。
+虚拟环境、pipx、升级及 Homebrew / apt 进展见 [分发指南](docs/DISTRIBUTION.md)；Tab 补全见 [补全设置](docs/USAGE.md#tab-补全)；源码安装见 [安装与部署](docs/USAGE.md#开始使用)。
 
 ### 2. 准备配置
 
