@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# Copyright (C) 2026 KJaebye
 """Application services: structured domain data, without terminal rendering."""
 from __future__ import annotations
 

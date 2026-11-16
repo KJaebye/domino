@@ -62,3 +62,7 @@ DOMINO_TEST_CORE="$PWD/.test-resources/mihomo" .venv/bin/python scripts/verify.p
 - PR 说明实际变化、验证结果和未验证的平台。构建不会自动安装或发布。
 
 完整流程见 [开发与交付](docs/DELIVERY.md)，平台差异见 [平台支持](docs/PLATFORMS.md)。
+
+## 许可证与贡献
+
+项目采用 GNU GPLv3（仅第 3 版，`GPL-3.0-only`），完整条款见 [LICENSE](LICENSE)。提交用于本项目的贡献应可按该许可证分发；引入第三方代码或资源时保留原声明，并说明来源与许可证。

@@ -43,3 +43,7 @@ python3 -m venv ~/.venvs/domino
 [项目首页](https://github.com/KJaebye/domino) · [完整使用指南](https://github.com/KJaebye/domino/blob/main/docs/USAGE.md) · [macOS / Ubuntu 支持](https://github.com/KJaebye/domino/blob/main/docs/PLATFORMS.md) · [分发与迁移](https://github.com/KJaebye/domino/blob/main/docs/DISTRIBUTION.md) · [问题反馈](https://github.com/KJaebye/domino/issues)
 
 Domino 使用独立的 Mihomo 可执行文件；公共 Python 包不包含 Mihomo 内核或用户代理配置。安装核心服务时会按架构获取内核。第三方许可与声明见仓库 NOTICE 和随包文档。
+
+## 许可证
+
+Domino 的原创代码与文档采用 [GNU GPLv3，仅第 3 版](https://github.com/KJaebye/domino/blob/main/LICENSE)（`GPL-3.0-only`）。第三方组件保留各自许可证，详见 [NOTICE](https://github.com/KJaebye/domino/blob/main/NOTICE)。

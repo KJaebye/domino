@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# Copyright (C) 2026 KJaebye
 """Installation entry point used by the source installer and offline bootstrap."""
 import domino_cli
 from domino_cli import main as cli_main

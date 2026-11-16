@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# Copyright (C) 2026 KJaebye
 """Shared results and errors for application services and process adapters."""
 from __future__ import annotations
 

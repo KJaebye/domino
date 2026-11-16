@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# Copyright (C) 2026 KJaebye
 """Private operation journal and request deduplication; no raw inputs are retained."""
 from datetime import datetime, timezone
 import hashlib

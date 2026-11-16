@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# Copyright (C) 2026 KJaebye
 """Persistent slash-command terminal workspace over the regular CLI commands."""
 from __future__ import annotations
 

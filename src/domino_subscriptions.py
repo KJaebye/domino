@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# Copyright (C) 2026 KJaebye
 """Private named subscriptions; cache updates and transactional runtime switching."""
 from __future__ import annotations
 

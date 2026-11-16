@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# Copyright (C) 2026 KJaebye
 """GNOME desktop proxy integration for the current Linux user; no sudo or shell exports."""
 from __future__ import annotations
 

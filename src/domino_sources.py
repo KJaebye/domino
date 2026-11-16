@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# Copyright (C) 2026 KJaebye
 """Private, portable parsed import snapshots (not verbatim source documents)."""
 from __future__ import annotations
 

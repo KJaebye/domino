@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# Copyright (C) 2026 KJaebye
 """Private process transport; protocol data never shares stdout with diagnostics."""
 from contextlib import redirect_stdout
 import json

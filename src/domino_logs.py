@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# Copyright (C) 2026 KJaebye
 """Bounded owned-service logs with URL and known credential redaction."""
 import json
 import platform

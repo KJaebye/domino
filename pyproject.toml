@@ -1,12 +1,14 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "domino-proxy"
-version = "0.17.4"
+version = "0.17.5"
 description = "Deploy independent proxy access over SSH and manage local or remote Domino services"
 readme = "README.pypi.md"
+license = "GPL-3.0-only"
+license-files = ["LICENSE", "NOTICE", "licenses/*.txt"]
 requires-python = ">=3.9"
 dependencies = ["prompt-toolkit>=3.0.48,<4", "PyYAML>=6"]
 authors = [{name = "KJaebye"}]
@@ -34,7 +36,7 @@ Changelog = "https://github.com/KJaebye/domino/blob/main/CHANGELOG.md"
 [project.optional-dependencies]
 yaml = ["PyYAML>=6"]
 # 3.0.53 drops Python 3.9; runtime archives must keep the declared minimum.
-dev = ["setuptools>=68", "build>=1", "twine>=5", "packaging>=23", "prompt-toolkit<3.0.53", "tomli>=2; python_version<'3.11'", "Pillow>=9"]
+dev = ["setuptools>=77", "build>=1", "twine>=5", "packaging>=23", "prompt-toolkit<3.0.53", "tomli>=2; python_version<'3.11'", "Pillow>=9"]
 
 [project.scripts]
 domino = "domino_install:package_cli"

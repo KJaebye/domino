@@ -61,6 +61,7 @@ def formula_text(archive, version, digest, base):
     return '''class Domino < Formula
   desc "Command-line proxy management and independent deployment"
   homepage "https://github.com/KJaebye/domino"
+  license "GPL-3.0-only"
   url "BASE/ARCHIVE"
   version "VERSION"
   sha256 "DIGEST"

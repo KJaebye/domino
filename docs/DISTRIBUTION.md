@@ -69,7 +69,7 @@ pipx uninstall domino-proxy
 
 `.github/workflows/publish-pypi.yml` 仅手动触发，只接受与源码版本精确匹配的 `v0.x.y` 标签，并要求仓库有非空 LICENSE。真正上传还需要：
 
-1. 确定项目许可证及 pyproject 对应许可证元数据。
+1. 核对已选定的 `GPL-3.0-only`、LICENSE 与第三方声明已随发行包交付。
 2. 在 PyPI 账号创建 `domino-proxy` 的待发布项目 / Trusted Publisher：owner `KJaebye`、repository `domino`、workflow `publish-pypi.yml`、environment `pypi`。
 3. 在 GitHub 设置 `pypi` environment 的发布审批与标签限制；Trusted Publisher 的配置必须一致。
 4. 完成平台验收后，在对应版本标签上手动运行 `Publish to PyPI`。
@@ -87,7 +87,7 @@ pipx uninstall domino-proxy
   --base-url https://YOUR-ARTIFACT-HOST/releases/v0.17.0
 ```
 
-配置公共地址不会自动上传。不要重新打包 runtime 后仍使用原配方的摘要。tap 仓库建议命名 `KJaebye/homebrew-tap`；创建、推送和许可证元数据仍须正式发布时落实。
+配置公共地址不会自动上传。不要重新打包 runtime 后仍使用原配方的摘要。tap 仓库建议命名 `KJaebye/homebrew-tap`；配方已声明 `GPL-3.0-only`，仓库创建、推送与公共下载地址仍须正式发布时落实。
 
 公共 tap 发布后，计划的用户命令为：
 

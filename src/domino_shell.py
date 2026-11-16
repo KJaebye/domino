@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# Copyright (C) 2026 KJaebye
 """Private, standard-library-only terminal proxy policy and shell integration.
 
 The helper only prints assignments for a fixed allowlist of variables. Parent

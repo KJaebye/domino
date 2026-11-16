@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# Copyright (C) 2026 KJaebye
 """Configurable HTTPS resource origin with required content hashes."""
 import hashlib
 import json

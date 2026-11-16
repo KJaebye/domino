@@ -1,4 +1,10 @@
-Domino third-party notices
+Domino copyright and licensing notices
+
+Copyright (C) 2026 KJaebye
+Domino's original code and documentation are licensed under the GNU General
+Public License, version 3 only (SPDX-License-Identifier: GPL-3.0-only).
+See LICENSE for the full terms. The software is provided without warranty.
+Third-party components retain their own copyright and license notices below.
 
 Domino manages Mihomo as a separate executable. Public CLI wheels and runtime
 archives do not contain a Mihomo binary or user proxy configurations. Installation
