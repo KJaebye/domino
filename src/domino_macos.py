@@ -162,7 +162,8 @@ def install(ctx, bundle):
         raise ctx.InstallError('安装包的监听或 TUN 设置不符合预期。')
     import domino_subscriptions
     domino_subscriptions.validate_install_registration(ctx, bundle)
-    if not manifest.get('package_managed_cli') and not ctx.owned_cli(ctx.HOME / '.local/bin/domino'):
+    preserve_cli = bool(manifest.get('package_managed_cli')) or ctx.is_package_cli(ctx.HOME / '.local/bin/domino')
+    if not preserve_cli and not ctx.owned_cli(ctx.HOME / '.local/bin/domino'):
         raise ctx.InstallError('~/.local/bin/domino 已被其他程序使用。')
     for name in ['.zshrc', '.bashrc', '.config/domino/proxy.env']:
         path = ctx.HOME / name
@@ -184,7 +185,7 @@ def install(ctx, bundle):
             capture_output=True, text=True, timeout=60)
     pending = manifest.get('awaiting_subscription') and not (config.get('proxies') or config.get('proxy-providers'))
     shell_state = ctx.prepare_shell_policy(ctx.APP, ctx.HOME, system='darwin', shell_env=manifest['shell_env'], pending=pending)
-    backup = snapshot(ctx, preserve_cli=True) if manifest.get('package_managed_cli') else snapshot(ctx)
+    backup = snapshot(ctx, preserve_cli=True) if preserve_cli else snapshot(ctx)
     try:
         stop(ctx.HOME)
         if ctx.APP.exists():
@@ -195,7 +196,7 @@ def install(ctx, bundle):
         shutil.copytree(bundle / 'data', ctx.APP / 'data')
         (ctx.APP / 'data/config.json').chmod(0o600)
         ctx.write_private(ctx.APP / 'manifest.json', json.dumps(manifest))
-        ctx.install_cli(bundle)
+        ctx.install_cli(bundle, preserve_cli=preserve_cli)
         legacy_port = ctx.install_shell_policy(ctx.APP, shell_state)
         plist, logs = paths(ctx.HOME)
         logs.mkdir(mode=0o700, parents=True, exist_ok=True)

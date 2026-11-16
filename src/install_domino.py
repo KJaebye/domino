@@ -460,11 +460,11 @@ def configure_environment(proxy_port, *, legacy_port=None):
     configure_shell_environment(APP, HOME, linux=True, legacy_port=legacy_port)
 
 
-def install_cli(bundle):
+def install_cli(bundle, *, preserve_cli=False):
     if not (bundle / 'cli').is_dir():
         return
     shutil.copytree(bundle / 'cli', APP / 'cli')
-    if json.loads((bundle / 'manifest.json').read_text()).get('package_managed_cli'):
+    if preserve_cli or json.loads((bundle / 'manifest.json').read_text()).get('package_managed_cli'):
         return
     launcher = f'''#!/usr/bin/env python3
 {CLI_MARKER}
@@ -477,14 +477,34 @@ runpy.run_module('domino_cli', run_name='__main__')
     write_private(HOME / '.local/bin/domino', launcher, 0o700)
 
 
+def is_package_cli(path):
+    """Recognize console scripts without executing them or replacing their links."""
+    try:
+        if not path.is_file() or path.stat().st_size > 64 * 1024:
+            return False
+        text = path.read_text()
+    except (OSError, UnicodeError, RuntimeError):
+        return False
+    if CLI_MARKER in text:
+        return False
+    for module, entry in [('domino_install', 'package_cli'), ('domino_cli', 'main')]:
+        if ('from ' + module + ' import ' + entry in text
+                and any(call + '(' + entry + '())' in text for call in ('sys.exit', 'SystemExit'))):
+            return True
+    return False
+
+
 def owned_cli(path):
+    if is_package_cli(path):
+        return True
     if path.is_symlink():
         return False
     if not path.exists():
         return True
-    text = path.read_text()
-    # Accept our own launcher and the console entry point installed from our wheel.
-    return CLI_MARKER in text or ('from domino_cli import main' in text and 'sys.exit(main())' in text)
+    try:
+        return path.is_file() and path.stat().st_size <= 64 * 1024 and CLI_MARKER in path.read_text()
+    except (OSError, UnicodeError):
+        return False
 
 
 def install(bundle):
@@ -510,7 +530,8 @@ def install(bundle):
             raise InstallError('目标缺少依赖：' + command)
     owned_installations()
     cli = HOME / '.local/bin/domino'
-    if not manifest.get('package_managed_cli') and not owned_cli(cli):
+    preserve_cli = bool(manifest.get('package_managed_cli')) or is_package_cli(cli)
+    if not preserve_cli and not owned_cli(cli):
         raise InstallError('~/.local/bin/domino 已被其他程序使用，未覆盖。')
     body = '[ ! -r "$HOME/.config/domino/proxy.env" ] || . "$HOME/.config/domino/proxy.env"'
     for name in dict.fromkeys(ENV_FILES + LEGACY_ENV_FILES):
@@ -539,7 +560,7 @@ def install(bundle):
     unit = unit_text(user, group)
     pending = manifest.get('awaiting_subscription') and not (config.get('proxies') or config.get('proxy-providers'))
     shell_state = prepare_shell_policy(APP, HOME, system='linux', shell_env=manifest['shell_env'], pending=pending)
-    backup = snapshot(preserve_cli=True) if manifest.get('package_managed_cli') else snapshot()
+    backup = snapshot(preserve_cli=True) if preserve_cli else snapshot()
     try:
         if LEGACY_SERVICE.exists():
             sudo('systemctl', 'stop', LEGACY_SERVICE.name)
@@ -555,7 +576,7 @@ def install(bundle):
         shutil.copytree(bundle / 'data', APP / 'data')
         (APP / 'data/config.json').chmod(0o600)
         write_private(APP / 'manifest.json', json.dumps(manifest))
-        install_cli(bundle)
+        install_cli(bundle, preserve_cli=preserve_cli)
         legacy_port = install_shell_policy(APP, shell_state)
         unit_path = bundle / 'domino.service'
         write_private(unit_path, unit, 0o644)

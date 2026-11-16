@@ -73,6 +73,7 @@ class MacTests(unittest.TestCase):
                                    InstallError=common.InstallError, write_private=common.write_private,
                                    current_installation=lambda: (self.app, None),
                                    managed_block=common.managed_block, owned_cli=lambda _: True,
+                                   is_package_cli=common.is_package_cli,
                                    install_cli=Mock(), prepare_custom_rules=Mock(), run=Mock(), controller=Mock(return_value=b'{"version":"test"}'),
                                    configure_cli_path=common.configure_cli_path,
                                    configure_shell_environment=common.configure_shell_environment,
@@ -106,6 +107,25 @@ class MacTests(unittest.TestCase):
                 patch.object(mac.socket, 'socket') as socket, redirect_stdout(io.StringIO()):
             socket.return_value.__enter__.return_value.connect_ex.return_value = 1
             mac.install(self.ctx, self.bundle)
+
+    def test_standalone_install_preserves_detected_package_cli(self):
+        launcher = self.home / '.local/bin/domino'
+        launcher.parent.mkdir(parents=True)
+        target = self.root / 'venv/bin/domino'
+        target.parent.mkdir(parents=True)
+        content = '#!/usr/bin/python3\nfrom domino_install import package_cli\nraise SystemExit(package_cli())\n'
+        target.write_text(content)
+        launcher.symlink_to(target)
+        (self.bundle / 'cli').mkdir()
+        (self.bundle / 'cli/domino_cli.py').write_text('# fixture CLI')
+        self.ctx.install_cli = common.install_cli
+        with patch.multiple(common, HOME=self.home, APP=self.app):
+            self.perform_install()
+            with patch.object(self.ctx, 'probe', side_effect=common.InstallError('fixture health failure')):
+                with self.assertRaises(common.InstallError):
+                    self.perform_install()
+        self.assertTrue(launcher.is_symlink())
+        self.assertEqual(target.read_text(), content)
 
     def test_package_initializer_preserves_pipx_symlink_during_failed_upgrade(self):
         launcher = self.home / '.local/bin/domino'
