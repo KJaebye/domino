@@ -28,7 +28,6 @@ domino user@192.168.1.10
 
 ```bash
 pip install domino-proxy
-domino --version
 ```
 
 安装包只提供管理命令；**需要本机代理服务时**，以普通用户运行：
