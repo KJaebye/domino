@@ -60,6 +60,14 @@ apt/
 
 推荐使用 venv 安装，包名为 `domino-proxy`，避免依赖全局 `pip` 命令或向系统 Python 写入：
 
+Ubuntu 先安装环境依赖（macOS 跳过）：
+
+```bash
+sudo apt update && sudo apt install -y python3-venv python3-pip curl
+```
+
+再创建并激活 venv：
+
 ```bash
 python3 -m venv ~/.venvs/domino
 source ~/.venvs/domino/bin/activate
@@ -75,7 +83,9 @@ domino-install
 
 安装器会联网下载对应系统和架构的 Mihomo 并配置后台服务，可复用符合条件且校验通过的缓存。仅管理远端时不必运行此命令；已有本机服务时，日常升级 CLI 也不必再次初始化。重复初始化会保留已有配置并重启服务。
 
-`python -m pip install` 会下载包及 UI/YAML 依赖，除已准备离线 wheelhouse 外需要网络。Ubuntu 缺少 venv 时，先运行 `sudo apt-get update && sudo apt-get install -y python3-venv python3-pip curl`；不使用 `sudo pip`、`--break-system-packages`。
+`python -m pip install` 会下载包及 UI/YAML 依赖，除已准备离线 wheelhouse 外需要网络。不使用 `sudo pip`、`--break-system-packages`。
+
+若激活时提示 `activate: No such file or directory`，说明 venv 尚未成功创建，需先完成 `python3 -m venv ~/.venvs/domino`。激活成功后再执行 `python -m pip`；仅改为系统的 `python3 -m pip` 仍可能触发 Ubuntu 的 `externally-managed-environment` 保护。
 
 每次新开终端，先运行 `source ~/.venvs/domino/bin/activate`；也可以直接使用 `~/.venvs/domino/bin/domino`。若希望无需激活环境即可使用命令，可在安装好 pipx 后运行：
 

@@ -16,6 +16,14 @@ pip install domino-proxy && domino-install
 
 如果不能直接使用 pip 安装，改用 venv：
 
+Ubuntu 先安装环境依赖（macOS 跳过）：
+
+```bash
+sudo apt update && sudo apt install -y python3-venv python3-pip curl
+```
+
+然后创建并激活 venv，再安装：
+
 ```bash
 python3 -m venv ~/.venvs/domino
 source ~/.venvs/domino/bin/activate
