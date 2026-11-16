@@ -25,21 +25,19 @@ domino user@192.168.1.10
 ### 1. 安装
 
 ```bash
+pip install domino-proxy && domino-install
+```
+
+如果不能直接使用 pip 安装，改用 venv：
+
+```bash
 python3 -m venv ~/.venvs/domino
 source ~/.venvs/domino/bin/activate
 python -m pip install --upgrade domino-proxy
 domino --version
 ```
 
-pip 安装 CLI 和 Python 依赖，**不包含 Mihomo 内核**。首次在本机使用代理时，再运行：
-
-```bash
-domino-install
-```
-
-安装器会联网下载对应系统和架构的 Mihomo，并配置后台服务。仅管理远端时可跳过这一步。
-
-新开终端后先执行 `source ~/.venvs/domino/bin/activate`，再使用 `domino`。[详细安装说明](docs/DISTRIBUTION.md)
+venv 安装后再运行 `domino-install`，由它下载 Mihomo 并配置本机服务。新开终端需先激活 venv。[详细说明](docs/DISTRIBUTION.md)
 
 ### 2. 准备配置
 
