@@ -36,7 +36,7 @@ Changelog = "https://github.com/KJaebye/domino/blob/main/CHANGELOG.md"
 [project.optional-dependencies]
 yaml = ["PyYAML>=6"]
 # 3.0.53 drops Python 3.9; runtime archives must keep the declared minimum.
-dev = ["setuptools>=77", "build>=1", "twine>=5", "packaging>=23", "prompt-toolkit<3.0.53", "tomli>=2; python_version<'3.11'", "Pillow>=9"]
+dev = ["setuptools>=77", "build>=1", "twine>=5", "packaging>=23", "prompt-toolkit<3.0.54", "tomli>=2; python_version<'3.11'", "Pillow>=9"]
 
 [project.scripts]
 domino = "domino_install:package_cli"
