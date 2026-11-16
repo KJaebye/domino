@@ -30,9 +30,17 @@ def digest(data):
 
 def tar_bytes(files, epoch):
     stream = io.BytesIO()
+    # dpkg requires parent directories to be present in data.tar, and tracks
+    # these entries so package-owned directories can be removed on uninstall.
+    directories = {parent.as_posix() for name in files for parent in Path(name).parents
+                   if parent != Path('.')}
     with tarfile.open(fileobj=stream, mode='w', format=tarfile.USTAR_FORMAT) as archive:
-        for name, (content, mode) in sorted(files.items()):
+        for name in sorted(directories | files.keys()):
+            directory = name in directories
+            content, mode = (b'', 0o755) if directory else files[name]
             info = tarfile.TarInfo(name)
+            if directory:
+                info.type = tarfile.DIRTYPE
             info.size, info.mode, info.mtime = len(content), mode, epoch
             info.uid = info.gid = 0
             info.uname = info.gname = 'root'
@@ -103,6 +111,7 @@ def load_runtime(release):
 
 def wrapper(entry):
     return ('#!/usr/bin/python3\nimport sys\n'
+            'sys.dont_write_bytecode = True\n'
             'sys.path[:0] = ["/usr/lib/domino/cli", "/usr/lib/domino/cli/_vendor"]\n'
             f'from domino_install import {entry}\nraise SystemExit({entry}())\n').encode()
 

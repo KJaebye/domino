@@ -18,9 +18,19 @@ jobs:
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
         with:
           python-version: '3.9'
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: eccb8b0935e55c448af1e5e518bec37a479ef93c # Real 0.17.5 upgrade baseline
+          path: .baseline
+          persist-credentials: false
       - run: python -m pip install '.[dev]'
       - run: python -m unittest tests.test_distribution tests.test_release -q
       - run: python scripts/build_release.py && python scripts/verify_artifacts.py
+      - name: Build the previous release and test pip upgrade and removal
+        run: |
+          python .baseline/scripts/build_release.py
+          python scripts/verify_pip.py --previous-release .baseline/dist/release
+          python scripts/build_distribution.py --release .baseline/dist/release --output /tmp/domino-previous-distribution
       - name: Build a signed apt repository with a disposable CI key
         shell: bash
         run: |
@@ -31,20 +41,32 @@ jobs:
           python scripts/build_distribution.py --output /tmp/domino-distribution --sign-key "$fingerprint"
           gpg --verify /tmp/domino-distribution/apt/dists/stable/InRelease
           rm -rf "$GNUPGHOME"
-      - name: Install and remove through apt without service or HOME changes
+      - name: Install, upgrade and remove through apt while preserving user files
         shell: bash
         run: |
           echo 'deb [signed-by=/tmp/domino-distribution/apt/domino-archive-keyring.gpg] file:/tmp/domino-distribution/apt stable main' > /tmp/domino-ci.list
           sudo apt-get update -o Dir::Etc::sourcelist=/tmp/domino-ci.list -o Dir::Etc::sourceparts=- -o APT::Get::List-Cleanup=0
-          sudo apt-get install -y --no-install-recommends -o Dir::Etc::sourcelist=/tmp/domino-ci.list -o Dir::Etc::sourceparts=- domino-proxy
-          dpkg-deb --info /tmp/domino-distribution/*.deb
-          test -z "$(dpkg-query -L domino-proxy | grep -E '/(systemd|LaunchAgents)/' || true)"
+          sudo apt-get install -y --no-install-recommends /tmp/domino-previous-distribution/*.deb
+          test "$(/usr/bin/domino --version)" = 0.17.5
           temporary_home="$(mktemp -d)"
-          HOME="$temporary_home" /usr/bin/domino --version
           HOME="$temporary_home" /usr/bin/domino --help
           test -z "$(ls -A "$temporary_home")"
-          sudo apt-get remove -y domino-proxy
-          test -z "$(ls -A "$temporary_home")"
+          python scripts/package_home.py seed "$temporary_home" /tmp/domino-home.json
+          sudo env HOME="$temporary_home" apt-get install -y --only-upgrade --no-install-recommends -o Dir::Etc::sourcelist=/tmp/domino-ci.list -o Dir::Etc::sourceparts=- domino-proxy
+          test "$(dpkg-query -W -f='${Version}' domino-proxy)" = "$(python -c 'import domino_cli; print(domino_cli.VERSION)')-1"
+          dpkg-deb --info /tmp/domino-distribution/*.deb
+          test -z "$(dpkg-query -L domino-proxy | grep -E '/(systemd|LaunchAgents)/' || true)"
+          HOME="$temporary_home" /usr/bin/domino --version
+          HOME="$temporary_home" /usr/bin/domino --help
+          sudo env HOME="$temporary_home" /usr/bin/domino --version
+          test -z "$(find /usr/lib/domino -name __pycache__ -print -quit)"
+          python scripts/package_home.py check "$temporary_home" /tmp/domino-home.json
+          sudo env HOME="$temporary_home" apt-get remove -y domino-proxy
+          test ! -e /usr/bin/domino
+          test ! -e /usr/bin/domino-install
+          test ! -e /usr/lib/domino
+          test ! -e /usr/share/doc/domino-proxy
+          python scripts/package_home.py check "$temporary_home" /tmp/domino-home.json
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: deb-${{ matrix.os }}
@@ -59,25 +81,40 @@ jobs:
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
         with:
           python-version: '3.13'
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: eccb8b0935e55c448af1e5e518bec37a479ef93c # Real 0.17.5 upgrade baseline
+          path: .baseline
+          persist-credentials: false
       - run: python -m pip install '.[dev]' && python scripts/build_release.py
-      - name: Install the runtime from a local, unpublished tap
+      - run: python .baseline/scripts/build_release.py
+      - name: Install, upgrade and remove from a local, unpublished tap
         shell: bash
         run: |
           brew tap-new domino-ci/local
           python - <<'PY'
           from pathlib import Path
           import re, subprocess
-          release = Path('dist/release').resolve()
-          formula = (release / 'domino.rb.in').read_text()
-          runtime = next(release.glob('domino-runtime-*.tar.gz'))
-          formula = re.sub(r'^  url .*$', '  url "' + runtime.as_uri() + '"', formula, flags=re.M)
           tap = Path(subprocess.check_output(['brew', '--repository', 'domino-ci/local'], text=True).strip())
-          (tap / 'Formula/domino.rb').write_text(formula)
+          for source, destination in [('.baseline/dist/release', tap / 'Formula/domino.rb'),
+                                      ('dist/release', Path('/tmp/domino-upgrade.rb'))]:
+              release = Path(source).resolve()
+              formula = (release / 'domino.rb.in').read_text()
+              runtime = next(release.glob('domino-runtime-*.tar.gz'))
+              formula = re.sub(r'^  url .*$', '  url "' + runtime.as_uri() + '"', formula, flags=re.M)
+              destination.write_text(formula)
           PY
           brew install domino-ci/local/domino
-          brew test domino-ci/local/domino
           temporary_home="$(mktemp -d)"
-          HOME="$temporary_home" "$(brew --prefix domino-ci/local/domino)/bin/domino" --version
+          test "$(HOME="$temporary_home" "$(brew --prefix domino-ci/local/domino)/bin/domino" --version)" = 0.17.5
           test -z "$(ls -A "$temporary_home")"
-          brew uninstall domino-ci/local/domino
-          test -z "$(ls -A "$temporary_home")"
+          python scripts/package_home.py seed "$temporary_home" /tmp/domino-home.json
+          cp /tmp/domino-upgrade.rb "$(brew --repository domino-ci/local)/Formula/domino.rb"
+          HOME="$temporary_home" HOMEBREW_CACHE=/tmp/domino-brew-cache HOMEBREW_LOGS=/tmp/domino-brew-logs HOMEBREW_NO_AUTO_UPDATE=1 brew upgrade domino-ci/local/domino
+          brew test domino-ci/local/domino
+          test "$(HOME="$temporary_home" "$(brew --prefix domino-ci/local/domino)/bin/domino" --version)" = "$(python -c 'import domino_cli; print(domino_cli.VERSION)')"
+          python scripts/package_home.py check "$temporary_home" /tmp/domino-home.json
+          prefix="$(brew --prefix domino-ci/local/domino)"
+          HOME="$temporary_home" HOMEBREW_CACHE=/tmp/domino-brew-cache HOMEBREW_LOGS=/tmp/domino-brew-logs brew uninstall --force domino-ci/local/domino
+          test ! -e "$prefix"
+          python scripts/package_home.py check "$temporary_home" /tmp/domino-home.json

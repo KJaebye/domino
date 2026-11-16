@@ -10,6 +10,17 @@
 | Homebrew 自建 tap | `domino` | 同上 | 首先验收 macOS；配方使用 Python 3.13 |
 | apt / 本地 deb | `domino-proxy` | 同上 | Ubuntu 22.04 / 24.04，amd64 / arm64 |
 
+每台机器选择一个安装渠道，并由同一包管理器负责后续升级和卸载。macOS 可选 Homebrew，Ubuntu 可选 apt；跨平台 Python 用户可选 pipx（为 CLI 单独隔离依赖，[PyPA 说明](https://packaging.python.org/en/latest/guides/installing-stand-alone-command-line-tools/)）。开发环境继续使用 `.venv`，不与系统安装混用。
+
+| 渠道 | 安装位置 / 入口 | 升级 | 卸载 |
+| --- | --- | --- | --- |
+| pipx | 独立 venv，用户 PATH 中的 `domino` 链接 | `pipx upgrade domino-proxy` | `pipx uninstall domino-proxy` |
+| pip（venv） | 选定 venv 的 `bin/domino` | `venv/bin/python -m pip install --upgrade domino-proxy` | `venv/bin/python -m pip uninstall domino-proxy` |
+| Homebrew | Cellar 中的 CLI，通过 brew prefix 链接 | `brew upgrade KJaebye/tap/domino` | `brew uninstall KJaebye/tap/domino` |
+| apt | `/usr/bin/domino`，代码在 `/usr/lib/domino/cli` | `sudo apt install --only-upgrade domino-proxy` | `sudo apt remove domino-proxy` |
+
+上表中的公开包名仍为计划入口，正式发布前使用本地 wheel、tap 或 deb 验收。`domino update` 更新代理配置，不升级 CLI；内核、配置库与 CLI 包的版本分别管理。
+
 ## 构建与本地验收
 
 ```bash
@@ -41,7 +52,7 @@ apt/
 
 `distribution.json` 记录每个文件的 SHA-256、来源 release.json 摘要、是否签名。默认 apt 材料是**未签名预览**，不能直接作为可信软件源。`.deb` 包含 CLI、纯 Python 依赖与第三方声明，不包含内核、订阅或用户配置；`Architecture: all` 的包同时进入 amd64 / arm64 索引，内核在显式初始化时按本机架构另行获取。
 
-`Distribution smoke tests` 是手动 CI：Ubuntu 使用临时 GPG 密钥构建并验证签名 apt 源，实际安装/卸载；macOS 使用本地 runtime 和临时 tap 安装/卸载。均检查查询命令不改临时 HOME。CI 密钥仅用于该次测试，不作为生产签名密钥。工作流已准备不代表远端验收已执行。
+`Distribution smoke tests` 是手动 CI：从固定提交构建真实 0.17.5 基线和当前版本，实际执行 pip、apt 与 Homebrew 的安装 → 升级 → 查询 → 卸载。Ubuntu 使用临时 GPG 密钥验证签名 apt 源；macOS 使用本地 runtime 和临时 tap。合成 HOME 中放置配置、运行文件、服务文件、shell 文件和旧 launcher，检查内容、权限及符号链接未被查询或包卸载改动；apt 另检查以 root 查询不会产生未受包管理的 `__pycache__`，卸载后包目录和命令入口清理干净。基线 deb 使用当前打包器重新封装，避免旧打包器漏目录导致无法安装；旧版 CLI 源码与版本不改。CI 密钥仅用于该次测试，不作为生产签名密钥。以具体 Actions 运行结果为准，工作流文件本身不表示验收通过。
 
 ## pip / pipx
 
@@ -136,7 +147,7 @@ sudo apt update
 sudo apt install domino-proxy
 ```
 
-后续 `sudo apt upgrade domino-proxy`，移除用 `sudo apt remove domino-proxy`。不用 `apt-key`、`trusted=yes` 或允许未认证软件包。参考 [Debian 维护脚本与包管理规则](https://www.debian.org/doc/debian-policy/ch-maintainerscripts.html)。
+后续先 `sudo apt update`，再 `sudo apt install --only-upgrade domino-proxy`；移除用 `sudo apt remove domino-proxy`。不用 `apt-key`、`trusted=yes` 或允许未认证软件包。参考 [Debian 维护脚本与包管理规则](https://www.debian.org/doc/debian-policy/ch-maintainerscripts.html)。
 
 ## 服务、升级与卸载边界
 
@@ -145,5 +156,7 @@ sudo apt install domino-proxy
 从旧源安装切换渠道前，先用 `type -a domino` 找到当前入口。旧 `~/.local/bin/domino` 可能优先于 brew / apt：先停止服务、备份配置，并显式处理旧入口或调整 PATH，再验证 `command -v domino` 与 `domino --version`。初始化不自动清理旧入口。
 
 CLI 包升级不等于内核升级，不重启服务、不改节点与系统代理。卸载 CLI 前如需结束本机代理，先 `domino stop`；卸载包保留配置库、运行内核与服务文件，不作为运行环境卸载器。跨渠道迁移和完整运行环境清理由用户显式处理。
+
+仓库目前是私有仓库；仅给配方填入 GitHub Release 地址不能保证用户可下载。正式发布还需要可匿名下载、版本固定的 runtime 地址，以及公开 tap / PyPI Trusted Publisher / 签名 apt HTTPS 托管。三个渠道应交付同一源码版本，先构建并校验，再分别上传 wheel、runtime 与 deb / apt 索引；不要在发布步骤改包内容或把生产私钥交给构建脚本。
 
 源安装的 shell 加载器使用 `/usr/bin/env python3`，避免引用随后被删除的安装临时 venv。移除 pip 环境或升级 brew Python 后，运行文件中的纯 Python shell helper 仍可由系统可用的 Python 3.9+ 执行。

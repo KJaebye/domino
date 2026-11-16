@@ -35,7 +35,8 @@ def ar_members(data):
 
 def tar_members(data):
     with tarfile.open(fileobj=io.BytesIO(data)) as archive:
-        return {member.name: (archive.extractfile(member).read(), member.mode) for member in archive}
+        return {member.name: (archive.extractfile(member).read(), member.mode)
+                for member in archive if member.isfile()}
 
 
 class DistributionTests(unittest.TestCase):
@@ -104,6 +105,33 @@ class DistributionTests(unittest.TestCase):
         if shutil.which('dpkg-deb'):
             self.assertEqual(subprocess.check_output(['dpkg-deb', '--field', str(deb), 'Package'], text=True).strip(), distro.PACKAGE)
             subprocess.run(['dpkg-deb', '--extract', str(deb), str(self.root / 'extracted')], check=True)
+
+    def test_deb_records_directories_before_children_for_dpkg_install_and_removal(self):
+        report = distro.build(self.release, self.output)
+        data = ar_members((self.output / report['deb']).read_bytes())['data.tar.gz']
+        with tarfile.open(fileobj=io.BytesIO(data)) as archive:
+            seen = set()
+            for member in archive:
+                for parent in Path(member.name).parents:
+                    if parent != Path('.'):
+                        self.assertIn(parent.as_posix(), seen, member.name)
+                if member.isdir():
+                    self.assertEqual(member.mode, 0o755)
+                    seen.add(member.name)
+            self.assertIn('usr/lib/domino/cli/_vendor/yaml', seen)
+
+    def test_root_queries_do_not_leave_untracked_python_bytecode(self):
+        # Execute the real generated launcher against a writable synthetic module,
+        # equivalent to root reading the installed /usr/lib/domino/cli tree.
+        module = self.root / 'modules'
+        module.mkdir()
+        (module / 'domino_install.py').write_text('def package_cli(): return 0\n')
+        launcher = self.root / 'domino'
+        launcher.write_bytes(distro.wrapper('package_cli').replace(
+            b'"/usr/lib/domino/cli", "/usr/lib/domino/cli/_vendor"', repr(str(module)).encode()))
+        import sys
+        subprocess.run([sys.executable, str(launcher)], check=True)
+        self.assertFalse((module / '__pycache__').exists())
 
     def test_deb_rebuild_is_deterministic_and_outputs_are_immutable(self):
         first = distro.build(self.release, self.output)
