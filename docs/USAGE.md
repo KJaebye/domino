@@ -12,7 +12,7 @@ domino catch    # 选择外部配置，保存到 Domino 配置库
 domino user@192.168.1.10 deploy    # 将翻墙能力复制到指定电脑
 ```
 
-首次安装推荐使用已发布的 PyPI 包 `domino-proxy`，见 [安装步骤](../README.md#1-安装)。pip 只安装管理命令；需要本机代理时，再以普通用户运行 `domino-install`。下文的 `./install.sh` 用于源码安装。
+首次在本机使用代理，可运行 `pip install domino-proxy && domino-install`，见 [安装步骤](../README.md#1-安装)。仅向远端部署时，运行 `pip install domino-proxy` 安装管理命令即可。下文的 `./install.sh` 用于源码安装。
 
 ## Tab 补全
 

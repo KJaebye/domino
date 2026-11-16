@@ -58,6 +58,14 @@ apt/
 
 ## pip / pipx
 
+已准备好 pip 环境时，可用一条命令安装管理工具并初始化本机代理服务：
+
+```bash
+pip install domino-proxy && domino-install
+```
+
+`&&` 表示 pip 安装成功后才运行初始化；前面不加 `sudo`。仅向远端部署时，使用 `pip install domino-proxy` 即可，无需初始化本机服务。已有本机服务时，再次初始化会保留已有配置并重启服务；日常只升级 CLI 时，不必再次运行 `domino-install`。
+
 从 PyPI 安装，包名为 `domino-proxy`：
 
 ```bash
