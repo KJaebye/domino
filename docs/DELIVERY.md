@@ -3,7 +3,7 @@
 ## 版本规则
 
 - 统一采用三段版本号 `0.x.y`；功能版本使用 `0.13.0`、`0.14.0`，小更新/debug 修复使用 `0.13.1`、`0.13.2`，保留末尾 `.0`。
-- 每批可交付代码变更更新 `domino_cli.py` / `pyproject.toml` 的版本与 `CHANGELOG.md`。中间调试不反复编号；完成后验证并构建，不把不同代码长期放在同一已交付版本下。
+- 每批可交付代码变更更新 `src/domino_cli.py` / `pyproject.toml` 的版本与 `CHANGELOG.md`。中间调试不反复编号；完成后验证并构建，不把不同代码长期放在同一已交付版本下。
 - 本次将此前未逐次编号的功能与修复归档为 `0.13.0`；旧 `0.12.0` 产物保留，不编造中间发布记录。软件版本不等于 Mihomo 内核版本。
 - 源码、构建、安装版同步、服务重启和公共发布是独立动作；构建不会修改用户安装。真实安装同步仍需明确授权。
 
@@ -40,13 +40,13 @@
 
 ```text
 dist/
-  domino_proxy-0.16.1-py3-none-any.whl      # 各版本 wheel，旧包保留
+  domino_proxy-0.17.0-py3-none-any.whl      # 各版本 wheel，旧包保留
   verification.json                  # 最近一次源码回归，不是安装同步证明
   installed-verification.json        # 实际安装验证记录，不因构建而改写
   ssh-verification.json              # SSH 验证记录，未重跑不能冒充当前通过
   release/
-    domino_proxy-0.16.1-py3-none-any.whl
-    domino-runtime-0.16.1.tar.gz
+    domino_proxy-0.17.0-py3-none-any.whl
+    domino-runtime-0.17.0.tar.gz
     domino.rb.in                     # 有 --base-url 时为 domino.rb
     release.json                     # 当前发行清单，published: false
     SHA256SUMS                       # 当前发行产物及清单的摘要
@@ -58,7 +58,7 @@ dist/
 
 runtime 含纯 Python UI/YAML 依赖及其许可证，不包含 Mihomo 内核或用户配置。同源码特殊复建可用 `--output` 指定全新目录，此时只生成该目录的独立产物，不更新默认 `dist/` 和 `dist/release/`；指定目录已存在（包括空目录或符号链接）则拒绝。后续代码变更应升版本，不以新目录代替版本管理。
 
-如已有公共地址，应在首次构建时指定 `--base-url https://你的发布域名/releases/0.16.1`，而不是向同一目录连续构建两次。也可为另一种分发形式显式选择新目录。模板地址必须替换为真实地址；生成带地址 Formula 也不会上传或发布。
+如已有公共地址，应在首次构建时指定 `--base-url https://你的发布域名/releases/0.17.0`，而不是向同一目录连续构建两次。也可为另一种分发形式显式选择新目录。模板地址必须替换为真实地址；生成带地址 Formula 也不会上传或发布。
 
 构建暂存显式源码列表，wheel/runtime 使用同一份项目模块快照。`release.json` 记录 UTC 时间、Python 版本、逐文件源码摘要、构建脚本摘要、产物大小和 SHA-256；SHA256SUMS 同时覆盖产物和清单。构建中源码变化会失败；暂存完成后交付，版本化包使用排他创建，固定名称元数据最后更新，release.json 最后落地。只有当前 release.json 与 SHA256SUMS 及所有列出的产物相符才视为完成。源码摘要不是 Git commit，也不意味着构建字节级可复现。
 

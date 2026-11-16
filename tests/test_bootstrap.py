@@ -66,8 +66,11 @@ class BootstrapTests(unittest.TestCase):
             args=tool.build_parser().parse_args(['init','--batch'])
             args.installing=True
             args.port_overrides=set()
+            def prepared_bundle(args, arch, work):
+                (work / 'bundle').mkdir()
+                (work / 'bundle/manifest.json').write_text('{"schema":1}')
             with patch.object(Path,'home',return_value=root), patch.object(tool,'local_target',return_value='arm64'), \
-                    patch.object(tool,'cache_dir',return_value=root), patch.object(tool,'prepare') as prepare, \
+                    patch.object(tool,'cache_dir',return_value=root), patch.object(tool,'prepare',side_effect=prepared_bundle) as prepare, \
                     patch.object(tool,'run'), redirect_stdout(io.StringIO()):
                 tool.initialize(args)
             prepared=prepare.call_args.args[0]

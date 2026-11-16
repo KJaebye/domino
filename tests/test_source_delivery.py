@@ -303,7 +303,7 @@ class SourceDeliveryTests(unittest.TestCase):
         except ModuleNotFoundError: import tomli as tomllib
         project = Path(tool.__file__).resolve().parent
         self.assertIn('domino_sources.py', tool.CLI_MODULES)
-        packaging = tomllib.loads((project / 'pyproject.toml').read_text())
+        packaging = tomllib.loads((project.parent / 'pyproject.toml').read_text())
         self.assertIn('domino_sources', packaging['tool']['setuptools']['py-modules'])
         args = tool.build_parser().parse_args(['scan'])
         args.target, args.user, args.ssh_port, args.identity, args.batch = 'fixture.example.test', None, None, None, True

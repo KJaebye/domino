@@ -69,11 +69,11 @@ def inspect(root):
                 elif url.fragment and location.suffix=='.md' and unquote(url.fragment) not in headings(location.read_text()):
                     errors.append({'path':name,'rule':'broken-local-anchor','target':value})
                 links+=1
-    tree=ast.parse((root/'domino_cli.py').read_text())
+    tree=ast.parse((root/'src/domino_cli.py').read_text())
     declarations={node.targets[0].id:ast.literal_eval(node.value) for node in tree.body if isinstance(node,ast.Assign)
                   and isinstance(node.targets[0],ast.Name) and node.targets[0].id in ['VERSION','CLI_MODULES']}
     for name in declarations['CLI_MODULES']:
-        if Path(name) not in files:errors.append({'path':name,'rule':'module-not-in-public-candidates'})
+        if Path('src') / name not in files:errors.append({'path':'src/' + name,'rule':'module-not-in-public-candidates'})
     match=re.search(r'(?m)^version\s*=\s*"([^"]+)"',(root/'pyproject.toml').read_text())
     if not match or match[1]!=declarations['VERSION']:errors.append({'rule':'version-mismatch'})
     for workflow in (root/'.github/workflows').glob('*.yml'):

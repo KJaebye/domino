@@ -28,7 +28,7 @@ BOUNDS = ((0, 3), (4, 7), (8, 13), (14, 15), (16, 20), (21, 24))
 
 def glyphs():
     # Parse the literal rather than importing application code or probing runtime.
-    tree = ast.parse((ROOT / 'domino_tui.py').read_text())
+    tree = ast.parse((ROOT / 'src/domino_tui.py').read_text())
     lines = next(ast.literal_eval(node.value) for node in tree.body
                  if isinstance(node, ast.Assign) and any(
                      isinstance(target, ast.Name) and target.id == 'LOGO_LINES' for target in node.targets))

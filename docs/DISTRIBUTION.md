@@ -26,14 +26,14 @@ python3 -m venv .venv
 
 同版本不重复构建。已有发行产物时，构建下一版或用同一源码的全新 `--output` 路径进行独立验收，不能覆盖既有包。源码包通过 `MANIFEST.in` 纳入构建脚本与工作流。
 
-主发行仍平铺在 `dist/release/`；补充分发材料在 `dist/distribution-0.16.1/`：
+主发行仍平铺在 `dist/release/`；补充分发材料在 `dist/distribution-0.17.0/`：
 
 ```text
-domino-proxy_0.16.1-1_all.deb
+domino-proxy_0.17.0-1_all.deb
 domino.rb.in
 distribution.json
 apt/
-  pool/main/d/domino-proxy/domino-proxy_0.16.1-1_all.deb
+  pool/main/d/domino-proxy/domino-proxy_0.17.0-1_all.deb
   dists/stable/Release
   dists/stable/main/binary-amd64/Packages[.gz]
   dists/stable/main/binary-arm64/Packages[.gz]
@@ -49,7 +49,7 @@ apt/
 
 ```bash
 python3 -m venv ~/.venvs/domino
-~/.venvs/domino/bin/python -m pip install ./dist/release/domino_proxy-0.16.1-py3-none-any.whl
+~/.venvs/domino/bin/python -m pip install ./dist/release/domino_proxy-0.17.0-py3-none-any.whl
 ~/.venvs/domino/bin/domino --version
 # 仅需要本机服务时运行：
 ~/.venvs/domino/bin/domino-install
@@ -84,7 +84,7 @@ pipx uninstall domino-proxy
 
 ```bash
 .venv/bin/python scripts/build_release.py \
-  --base-url https://YOUR-ARTIFACT-HOST/releases/v0.16.1
+  --base-url https://YOUR-ARTIFACT-HOST/releases/v0.17.0
 ```
 
 配置公共地址不会自动上传。不要重新打包 runtime 后仍使用原配方的摘要。tap 仓库建议命名 `KJaebye/homebrew-tap`；创建、推送和许可证元数据仍须正式发布时落实。
@@ -104,7 +104,7 @@ brew uninstall KJaebye/tap/domino
 本地安装已生成的 deb：
 
 ```bash
-sudo apt install ./dist/distribution-0.16.1/domino-proxy_0.16.1-1_all.deb
+sudo apt install ./dist/distribution-0.17.0/domino-proxy_0.17.0-1_all.deb
 domino --version
 # 如需本机服务，以当前普通用户运行，不加 sudo：
 domino-install

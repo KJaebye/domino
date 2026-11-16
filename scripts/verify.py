@@ -9,7 +9,7 @@ import sys
 import unittest
 
 root=Path(__file__).resolve().parents[1]
-sys.path.insert(0,str(root))
+sys.path[:0]=[str(root / "src"),str(root)]
 parser=argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--require-core',action='store_true',help='Fail if the disposable Mihomo integration test cannot run')
 args=parser.parse_args()

@@ -21,7 +21,7 @@ class ReleaseTests(unittest.TestCase):
             (self.root / name).parent.mkdir(parents=True,exist_ok=True)
             (self.root / name).write_text('current ' + name)
         (self.root / 'pyproject.toml').write_text('[project]\nname = "domino-proxy"\nversion = "' + build_release.cli.VERSION + '"\n')
-        (self.root / 'domino_cli.py').write_text('VERSION = ' + repr(build_release.cli.VERSION) + '\n')
+        (self.root / 'src/domino_cli.py').write_text('VERSION = ' + repr(build_release.cli.VERSION) + '\n')
         self.output = Path(self.temp.name) / 'release'
         self.root_patch = patch.object(build_release, 'ROOT', self.root)
         self.root_patch.start()
@@ -76,7 +76,7 @@ class ReleaseTests(unittest.TestCase):
             self.assertFalse(any('domino_clients' in name for name in names))
             for name in build_release.cli.CLI_MODULES:
                 member = f'domino-{build_release.cli.VERSION}/cli/{name}'
-                self.assertEqual(bundle.extractfile(member).read(), (self.root / name).read_bytes())
+                self.assertEqual(bundle.extractfile(member).read(), (self.root / 'src' / name).read_bytes())
             self.assertTrue(any(name.endswith('/CHANGELOG.md') for name in names))
             for name in build_release.DOCUMENT_FILES:
                 self.assertEqual(bundle.extractfile(f'domino-{build_release.cli.VERSION}/{name}').read(),(self.root/name).read_bytes())
@@ -155,7 +155,7 @@ class ReleaseTests(unittest.TestCase):
         old = {path.name: path.read_bytes() for path in output.iterdir()}
         major, minor, patch_version = build_release.cli.VERSION.split('.')
         version = f'{major}.{minor}.{int(patch_version) + 1}'
-        (self.root / 'domino_cli.py').write_text('VERSION = ' + repr(version) + '\n')
+        (self.root / 'src/domino_cli.py').write_text('VERSION = ' + repr(version) + '\n')
         (self.root / 'pyproject.toml').write_text('[project]\nversion="' + version + '"\n')
         with patch.object(build_release.cli, 'VERSION', version):
             self.run_build()
@@ -234,13 +234,13 @@ class ReleaseTests(unittest.TestCase):
     def test_big_and_small_update_versions_are_supported(self):
         for version in ['0.13.0', '0.13.1', '0.14.0', '0.14.2']:
             with self.subTest(version=version), patch.object(build_release.cli, 'VERSION', version):
-                inputs = {'domino_cli.py': ('VERSION = ' + repr(version)).encode(),
+                inputs = {'src/domino_cli.py': ('VERSION = ' + repr(version)).encode(),
                           'pyproject.toml': ('[project]\nversion="' + version + '"\n').encode()}
                 self.assertEqual(build_release.source_version(inputs), version)
 
     def test_checked_in_versions_match(self):
         root = Path(build_release.__file__).resolve().parents[1]
-        inputs = {name: (root / name).read_bytes() for name in ('domino_cli.py', 'pyproject.toml')}
+        inputs = {name: (root / name).read_bytes() for name in ('src/domino_cli.py', 'pyproject.toml')}
         self.assertEqual(build_release.source_version(inputs), build_release.cli.VERSION)
 
     def test_existing_outputs_including_dangling_links_are_never_overwritten(self):

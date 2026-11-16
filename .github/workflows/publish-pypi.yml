@@ -21,7 +21,8 @@ jobs:
         run: |
           test -s LICENSE
           python - <<'PY'
-          import os
+          import os, sys
+          sys.path.insert(0, "src")
           import domino_cli
           assert os.environ['EXPECTED_TAG'] == 'v' + domino_cli.VERSION, 'Tag and source version differ'
           PY

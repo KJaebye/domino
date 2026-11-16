@@ -18,7 +18,7 @@ import tempfile
 from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "src"))
 import domino_cli as cli
 
 DISTRIBUTION = 'domino-proxy'
@@ -31,12 +31,12 @@ def wheel_name(version, distribution=DISTRIBUTION):
 DOCUMENT_FILES = ('README.md','README.pypi.md','CHANGELOG.md','NOTICE','SECURITY.md','CONTRIBUTING.md') + tuple(
     sorted(path.relative_to(ROOT).as_posix() for pattern in ['LICENSE','docs/*.md','assets/*','licenses/*']
            for path in ROOT.glob(pattern) if path.is_file()))
-SOURCE_FILES = ('pyproject.toml',) + cli.CLI_MODULES + DOCUMENT_FILES
+SOURCE_FILES = ('pyproject.toml',) + tuple('src/' + name for name in cli.CLI_MODULES) + DOCUMENT_FILES
 
 
 def source_version(inputs):
     """Check both literal declarations without importing the staged CLI (Python 3.9+)."""
-    tree = ast.parse(inputs['domino_cli.py'].decode('utf-8'))
+    tree = ast.parse(inputs['src/domino_cli.py'].decode('utf-8'))
     versions = [ast.literal_eval(node.value) for node in tree.body
                 if isinstance(node, ast.Assign)
                 and any(isinstance(target, ast.Name) and target.id == 'VERSION'
@@ -116,7 +116,7 @@ def build(source, artifacts, inputs, version, base_url):
     cli.copy_cli(package)
     # copy_cli supplies dependencies/licenses. Both artifacts use the frozen project inputs.
     for name in cli.CLI_MODULES:
-        (package / 'cli' / name).write_bytes(inputs[name])
+        (package / 'cli' / name).write_bytes(inputs['src/' + name])
     if not all((package / 'cli/_vendor' / name).is_dir() for name in ['yaml', 'prompt_toolkit', 'wcwidth']):
         raise RuntimeError('Install project dependencies before building the runtime archive')
     for name in DOCUMENT_FILES:

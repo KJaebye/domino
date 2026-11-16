@@ -18,7 +18,7 @@ class LinuxDesktopIntegrationTests(unittest.TestCase):
             home=Path(directory);runtime=home/'run';runtime.mkdir(mode=0o700)
             env={**os.environ,'HOME':str(home),'XDG_CONFIG_HOME':str(home/'config'),
                  'XDG_RUNTIME_DIR':str(runtime),'XDG_CURRENT_DESKTOP':'GNOME','GSETTINGS_BACKEND':'dconf',
-                 'PYTHONPATH':str(project)}
+                 'PYTHONPATH':str(project / 'src')}
             for name in ['DBUS_SESSION_BUS_ADDRESS','DISPLAY','WAYLAND_DISPLAY']:env.pop(name,None)
             code='''
 import json

@@ -14,6 +14,25 @@ Ubuntu 可先安装 `python3-venv`、`python3-pip`、`curl`、`openssh-client` �
 
 `dev` 依赖保留支持 Python 3.9 的终端组件版本，用于构建兼容最低版本的公共 runtime；普通 wheel 安装仍由 pip 为当前 Python 选择合适的依赖。构建器会拒绝不兼容最低 Python 版本的依赖环境。
 
+## 目录结构
+
+```text
+src/          Python 实现：CLI、UI、平台适配、配置与资源管理
+scripts/      构建、发布准备、验证和文档资产生成工具
+tests/        单元测试与隔离集成测试
+docs/         使用、架构、平台和分发说明
+assets/       README 动图与静态 Logo
+licenses/     第三方许可证文本
+.github/      CI、分发工作流与协作模板
+domino        源码运行入口
+install.sh    安装入口
+pyproject.toml  包元数据、依赖和命令入口
+```
+
+根目录不再放实现模块。修改源码后，可直接 `.venv/bin/python ./domino COMMAND`，或在完成 editable 安装后使用 `.venv/bin/domino COMMAND`。原来的 `python domino_cli.py` 改为 `python ./domino`；需要直接运行模块文件时，路径是 `src/domino_cli.py`。
+
+`src/` 保留现有模块名；wheel、独立 runtime 和远端部署包仍沿用稳定的模块与入口布局。新增实现文件放进 `src/`，并同步 `CLI_MODULES` 和 `pyproject.toml` 的模块声明；不要把构建脚本放回根目录。
+
 ## 验证改动
 
 小功能运行受影响的测试，例如：

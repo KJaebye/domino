@@ -16,7 +16,7 @@ import hashlib
 import platform
 
 ROOT=Path(__file__).resolve().parents[1]
-sys.path.insert(0,str(ROOT))
+sys.path.insert(0,str(ROOT / "src"))
 import domino_cli as cli
 from domino_agent import decode_response,uploaded_bundle
 
