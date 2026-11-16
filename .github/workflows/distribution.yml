@@ -90,6 +90,12 @@ jobs:
       - run: python .baseline/scripts/build_release.py
       - name: Install, upgrade and remove from a local, unpublished tap
         shell: bash
+        env:
+          # Brew adds and removes its own tap trust records during this lifecycle.
+          # Keep those records separate without changing Domino's XDG_CONFIG_HOME.
+          HOMEBREW_XDG_CONFIG_HOME: /tmp/domino-brew-config
+          HOMEBREW_CACHE: /tmp/domino-brew-cache
+          HOMEBREW_LOGS: /tmp/domino-brew-logs
         run: |
           brew tap-new domino-ci/local
           python - <<'PY'
@@ -108,15 +114,13 @@ jobs:
           temporary_home="$(mktemp -d)"
           test "$(HOME="$temporary_home" "$(brew --prefix domino-ci/local/domino)/bin/domino" --version)" = 0.17.5
           test -z "$(ls -A "$temporary_home")"
-          # Establish Homebrew's own trust store before taking the HOME baseline.
-          HOME="$temporary_home" HOMEBREW_CACHE=/tmp/domino-brew-cache HOMEBREW_LOGS=/tmp/domino-brew-logs brew trust --formula domino-ci/local/domino
           python scripts/package_home.py seed "$temporary_home" /tmp/domino-home.json
           cp /tmp/domino-upgrade.rb "$(brew --repository domino-ci/local)/Formula/domino.rb"
-          HOME="$temporary_home" HOMEBREW_CACHE=/tmp/domino-brew-cache HOMEBREW_LOGS=/tmp/domino-brew-logs HOMEBREW_NO_AUTO_UPDATE=1 brew upgrade domino-ci/local/domino
+          HOME="$temporary_home" HOMEBREW_NO_AUTO_UPDATE=1 brew upgrade domino-ci/local/domino
           brew test domino-ci/local/domino
           test "$(HOME="$temporary_home" "$(brew --prefix domino-ci/local/domino)/bin/domino" --version)" = "$(python -c 'import domino_cli; print(domino_cli.VERSION)')"
           python scripts/package_home.py check "$temporary_home" /tmp/domino-home.json
           prefix="$(brew --prefix domino-ci/local/domino)"
-          HOME="$temporary_home" HOMEBREW_CACHE=/tmp/domino-brew-cache HOMEBREW_LOGS=/tmp/domino-brew-logs brew uninstall --force domino-ci/local/domino
+          HOME="$temporary_home" brew uninstall --force domino-ci/local/domino
           test ! -e "$prefix"
           python scripts/package_home.py check "$temporary_home" /tmp/domino-home.json
