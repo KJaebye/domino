@@ -111,7 +111,9 @@ class TransactionTests(unittest.TestCase):
             action = args[1]
             if action == 'stop': state['active'] = False
             if action == 'start': state['active'] = True
-            if action == 'disable': state['enabled'] = False
+            if action == 'disable':
+                state['enabled'] = False
+                if '--now' in args: state['active'] = False
             if action == 'enable':
                 state['enabled'] = True
                 if '--now' in args: state['active'] = True
@@ -166,6 +168,64 @@ class TransactionTests(unittest.TestCase):
                 remote.install(self.bundle)
         self.assertTrue(launcher.is_symlink())
         self.assertEqual(target.read_text(), 'package managed executable')
+
+    def assert_package_redeploy(self, *, symlink=False, legacy=False):
+        import domino_uninstall
+        self.stack.__enter__()
+        launcher = self.home / '.local/bin/domino'
+        launcher.parent.mkdir(parents=True)
+        entry = 'from domino_cli import main\nsys.exit(main())\n' if legacy else 'from domino_install import package_cli\nsys.exit(package_cli())\n'
+        content = '#!/usr/bin/python3\nimport sys\n' + entry
+        target = self.root / 'venv/bin/domino' if symlink else launcher
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content)
+        target.chmod(0o755)
+        if symlink:
+            launcher.symlink_to(target)
+        (self.bundle / 'cli').mkdir()
+        (self.bundle / 'cli/domino_cli.py').write_text('# fixture CLI')
+        remote.install(self.bundle)
+        with patch.object(domino_uninstall.sys, 'platform', 'linux'), \
+                patch.object(remote, 'system_proxy'), \
+                patch('pwd.getpwuid', return_value=SimpleNamespace(pw_shell='/bin/bash', pw_name='nvidia')):
+            domino_uninstall.uninstall(remote, yes=True)
+        self.assertFalse(self.app.exists())
+        self.assertEqual(target.read_text(), content)
+        remote.install(self.bundle)
+        self.assertTrue(self.app.is_dir())
+        self.assertEqual(launcher.is_symlink(), symlink)
+        self.assertEqual(target.read_text(), content)
+        self.assertEqual(target.stat().st_mode & 0o777, 0o755)
+        with patch.object(remote, 'probe', side_effect=remote.InstallError('fixture health failure')):
+            with self.assertRaises(remote.InstallError):
+                remote.install(self.bundle)
+        self.assertEqual(target.read_text(), content)
+        self.assertEqual(launcher.is_symlink(), symlink)
+
+    def test_deploy_uninstall_redeploy_preserves_current_pip_console_script(self):
+        self.assert_package_redeploy()
+
+    def test_deploy_uninstall_redeploy_preserves_pipx_console_symlink(self):
+        self.assert_package_redeploy(symlink=True)
+
+    def test_deploy_uninstall_redeploy_preserves_legacy_pip_console_script(self):
+        self.assert_package_redeploy(legacy=True)
+
+    def test_unknown_launchers_are_rejected_before_installation(self):
+        self.stack.__enter__()
+        launcher = self.home / '.local/bin/domino'
+        launcher.parent.mkdir(parents=True)
+        target = self.root / 'unrelated'
+        target.write_text('#!/bin/sh\necho unrelated\n')
+        for kind in ('file', 'symlink', 'broken-link'):
+            if launcher.exists() or launcher.is_symlink(): launcher.unlink()
+            if kind == 'file': launcher.write_text(target.read_text())
+            else: launcher.symlink_to(target if kind == 'symlink' else self.root / 'missing')
+            with self.subTest(kind=kind), self.assertRaisesRegex(remote.InstallError, '其他程序'):
+                remote.install(self.bundle)
+            self.assertFalse(self.app.exists())
+            self.assertFalse(self.service.exists())
+            self.assertEqual(target.read_text(), '#!/bin/sh\necho unrelated\n')
 
     def seed_registry(self):
         root = self.home / '.config/domino/subscriptions'
@@ -877,14 +937,14 @@ export NO_PROXY="$no_proxy"
         sudo.assert_not_called()
         self.assertEqual(launcher.read_text(), '# unrelated program\n')
 
-    def test_wheel_installed_cli_can_be_replaced_and_is_restored_on_rollback(self):
+    def test_wheel_installed_cli_is_preserved_during_deployment_and_rollback(self):
         self.add_cli()
         launcher = self.home / '.local/bin/domino'
         launcher.parent.mkdir(parents=True)
         original = '#!/usr/bin/python3\nimport sys\nfrom domino_cli import main\nsys.exit(main())\n'
         launcher.write_text(original)
         remote.install(self.bundle)
-        self.assertIn(remote.CLI_MARKER, launcher.read_text())
+        self.assertEqual(launcher.read_text(), original)
         remote.rollback()
         self.assertEqual(launcher.read_text(), original)
 
