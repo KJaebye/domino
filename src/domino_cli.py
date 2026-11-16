@@ -31,7 +31,7 @@ from urllib.parse import urlsplit
 from urllib.request import getproxies
 from domino_model import DomainError
 
-VERSION = '0.17.6'
+VERSION = '0.17.7'
 PACKAGE_MANAGED = False
 DESCRIPTION = '捕获本机代理，并一键部署到指定 IP 的设备上，让翻墙像 domino 一样简单。'
 SUBSCRIPTION_USER_AGENT = 'clash.meta'
@@ -41,7 +41,7 @@ RELEASE_API = 'https://api.github.com/repos/MetaCubeX/mihomo/releases/latest'
 REMOTE_SCRIPT = Path(__file__).with_name('install_domino.py')
 CLI_MODULES = ('domino_cli.py','install_domino.py','domino_macos.py','domino_linux.py','domino_tui.py',
                'domino_subscriptions.py','domino_install.py','domino_model.py',
-               'domino_store.py','domino_service.py','domino_resources.py','domino_logs.py','domino_agent.py','domino_agent_backend.py','domino_shell.py','domino_sources.py')
+               'domino_store.py','domino_service.py','domino_resources.py','domino_logs.py','domino_agent.py','domino_agent_backend.py','domino_shell.py','domino_sources.py','domino_completion.py')
 DEFAULT_CLASH = Path.home() / 'Library/Application Support/io.github.clash-verge-rev.clash-verge-rev'
 DEFAULT_SOCKET = Path('/tmp/verge/verge-mihomo.sock')
 
@@ -936,6 +936,9 @@ def copy_cli(bundle):
         for name in CLI_MODULES:
             if name in globals().get('SOURCE_MODULES',{}): private_write(cli/name,SOURCE_MODULES[name])
             else: shutil.copy2(Path(__file__).with_name(name), cli / name)
+        from domino_completion import SCRIPTS
+        for shell, text in SCRIPTS.items():
+            private_write(cli / ("completion." + shell), text)
         for name in ['prompt_toolkit', 'wcwidth', 'yaml']:
             spec = importlib.util.find_spec(name)
             source = Path(spec.origin).parent if spec and spec.origin else None
@@ -1076,6 +1079,36 @@ def prepare_source(args, arch, work):
     return package, manifest
 
 
+def remote_source(source):
+    # Strip only documentation strings from the in-memory SSH program. Keep
+    # executable tokens, source line numbers and all copyright/license headers.
+    import ast
+    data = source.encode('utf-8')
+    offsets = [0]
+    for line in data.splitlines(keepends=True):
+        offsets.append(offsets[-1] + len(line))
+    spans = []
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)) and node.body:
+            first = node.body[0]
+            if isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant) and isinstance(first.value.value, str):
+                spans.append((offsets[first.lineno-1]+first.col_offset,
+                              offsets[first.end_lineno-1]+first.end_col_offset,
+                              first.end_lineno-first.lineno, isinstance(node, ast.Module)))
+    for start, end, lines, module in sorted(spans, reverse=True):
+        data = data[:start] + (b'' if module else b'pass') + b'\n' * lines + data[end:]
+    import io
+    import tokenize
+    source = data.decode('utf-8')
+    lines = source.splitlines(keepends=True)
+    for token in tokenize.generate_tokens(io.StringIO(source).readline):
+        if token.type == tokenize.COMMENT and not any(word in token.string.lower() for word in ['spdx', 'copyright']):
+            row, column = token.start
+            lines[row-1] = lines[row-1][:column] + '\n'
+    return ''.join(lines)
+
+
+
 class SSH:
     def __init__(self, args):
         self.args=args
@@ -1119,17 +1152,18 @@ class SSH:
             names += ['domino_macos', 'domino_linux']
         if action == 'proxy': names += ['domino_macos', 'domino_linux']
         if action == 'traffic': names += ['domino_tui']
-        if action in ['agent','scan','configs','rollback','delay','cli','catch-options']: names += ['domino_subscriptions','domino_macos','domino_linux','domino_cli','domino_store','domino_service','domino_resources','domino_logs','domino_tui','domino_install','domino_agent','domino_agent_backend','domino_sources']
-        modules={name:Path(__file__).with_name(name+'.py').read_text() for name in names}
+        if action in ['agent','scan','configs','rollback','delay','cli','catch-options']: names += ['domino_subscriptions','domino_macos','domino_linux','domino_cli','domino_store','domino_service','domino_resources','domino_logs','domino_tui','domino_install','domino_agent','domino_agent_backend','domino_sources','domino_completion']
+        modules={name:remote_source(Path(__file__).with_name(name+'.py').read_text()) for name in names}
+        backend = remote_source(REMOTE_SCRIPT.read_text())
         code = ('import sys,types;from pathlib import Path\n'
-                '__domino_sources='+repr(modules)+'\n__domino_backend='+repr(REMOTE_SCRIPT.read_text())+'\n'
+                '__domino_sources='+repr(modules)+'\n__domino_backend='+repr(backend)+'\n'
                 'for name,source in __domino_sources.items():\n'
                 ' m=types.ModuleType(name);m.__file__=str(Path.home()/".local/share/domino/cli"/(name+".py"));sys.modules[name]=m;exec(compile(source,m.__file__,"exec"),m.__dict__)\n'
                 'if "domino_cli" in sys.modules: sys.modules["domino_cli"].SOURCE_MODULES={**{name+".py":source for name,source in __domino_sources.items()},"install_domino.py":__domino_backend}\n'
                 'exec(compile(__domino_backend,"<domino-backend>","exec"))')
         if action == 'cli':
             code = ('import sys,tempfile;from pathlib import Path\n'
-                    '__sources='+repr({**{name+'.py':text for name,text in modules.items()}, 'install_domino.py':REMOTE_SCRIPT.read_text()})+'\n'
+                    '__sources='+repr({**{name+'.py':text for name,text in modules.items()}, 'install_domino.py':backend})+'\n'
                     'with tempfile.TemporaryDirectory(prefix="domino-command-") as directory:\n'
                     ' root=Path(directory)\n'
                     ' for name,source in __sources.items(): (root/name).write_text(source)\n'
@@ -1552,6 +1586,8 @@ def build_parser(*, advanced_delay_help=False, installing=False, machine_mode=Fa
     sub.add_parser('ui', parents=[manage_parent], help='打开纯终端交互控制台')
     p = sub.add_parser('env', parents=[manage_parent], help='输出当前 shell 的代理设置，使用 eval "$(domino env)" 生效')
     p.add_argument('--unset', action='store_true')
+    p = sub.add_parser('completion', help='输出 zsh / bash 的 Tab 补全脚本')
+    p.add_argument('shell', choices=['zsh', 'bash'])
     p = sub.add_parser('rollback', parents=[manage_parent], help='恢复本机或指定电脑上一次部署前的服务和环境文件')
     p.add_argument('--backup', help='指定本工具生成的备份 ID，默认最近一次')
     p = sub.add_parser('export', parents=[source_parent], help='导出内核和配置，供目标电脑离线安装',
@@ -2381,6 +2417,9 @@ def terminal_ui(args, ssh=None):
 
 def main(argv=None, *, installing=False):
     arguments = list(sys.argv[1:] if argv is None else argv)
+    if not installing and arguments[:1] == ['completion']:
+        from domino_completion import main as complete
+        return complete(arguments[1:])
     machine_flags = ['--protocol-version','--non-interactive','--input','--if-revision','--request-id','--dry-run']
     json_mode = '--output=json' in arguments or any(arguments[i:i+2] == ['--output','json'] for i in range(len(arguments)-1))
     if not installing and arguments and (arguments[0].split('=',1)[0] == '--output' or
