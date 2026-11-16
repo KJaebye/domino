@@ -27,6 +27,7 @@ COMMANDS = [
     ('/logs', '最近的内核日志'), ('/log', '查看或设置日志级别'),
     ('/shell', '终端代理：开启 / 关闭 / 状态'), ('/start', '开启 Domino，接通系统代理'),
     ('/stop', '关闭 Domino，恢复系统代理'), ('/restart', '重启并重新接通系统代理'),
+    ('/uninstall', '预览或卸载运行环境，清理配置与终端接入'),
     ('/help', '命令与快捷键'), ('/clear', '清空本次操作记录'), ('/exit', '退出界面，也可输入 exit 或按 Ctrl+D'),
 ]
 
@@ -638,7 +639,7 @@ class Workspace:
             return
         self.state.busy = title
         self.state.progress = ''
-        self.job_mutates = (action in ['catch','select','start','stop','restart','add','switch','update','rename','remove','set-url'] or '--set' in options or
+        self.job_mutates = (action in ['catch','select','start','stop','restart','uninstall','add','switch','update','rename','remove','set-url'] or '--set' in options or
             (action=='connections' and any(v=='--all' or v.startswith('--close') for v in options)) or
             (action=='providers' and any(v.startswith('--update') for v in options)) or
             (action=='rules' and bool(options) and options[0] in ['add','remove']) or
@@ -659,7 +660,7 @@ class Workspace:
                         await self.call(action, *arguments, capture=False)
                     self.state.append('muted' if action=='catch' else 'success',
                                       '捕获流程已结束，使用 /list 查看配置。' if action=='catch' else title+'完成。')
-                    if action in ['start','stop','restart']:
+                    if action in ['start','stop','restart','uninstall']:
                         try:
                             self.state.update(json.loads(await self.call('overview',timeout=8)))
                             self.runtime_result()
@@ -1023,6 +1024,13 @@ class Workspace:
                 elif args==['status']: self.queue('系统代理状态','proxy','status',foreground=True)
                 else: raise ValueError('用法：/proxy，/proxy on，/proxy off，/proxy status。')
             elif name == '/logs': self.queue('查看内核日志','logs','--lines','30',foreground=True)
+            elif name == '/uninstall':
+                if not args:
+                    self.menu('卸载 Domino',[('预览清理范围（不修改）','/uninstall --dry-run'),
+                        ('卸载运行环境并删除配置、备份（需确认）','/uninstall --confirm')])
+                elif args == ['--dry-run']: self.queue('卸载预览','uninstall','--dry-run')
+                elif args == ['--confirm']: self.queue('卸载 Domino','uninstall',foreground=True)
+                else: raise ValueError('使用 /uninstall 选择预览或卸载。')
             elif name in ['/start','/stop','/restart']: self.queue('执行 '+name[1:],name[1:],foreground=True)
         except ValueError as error: self.state.append('error',str(error))
 

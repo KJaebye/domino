@@ -2284,6 +2284,10 @@ def main(argv=None):
     p = sub.add_parser('rollback')
     p.add_argument('--backup')
     p.add_argument('--non-interactive', action='store_true')
+    p = sub.add_parser('uninstall')
+    p.add_argument('--yes', action='store_true')
+    p.add_argument('--dry-run', action='store_true')
+    p.add_argument('--non-interactive', action='store_true')
     p = sub.add_parser('env')
     p.add_argument('--unset', action='store_true')
     sub.add_parser('overview')
@@ -2356,7 +2360,7 @@ def main(argv=None):
         child.add_argument('--color',action='store_true',help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     formatted = args.action in ['status','nodes','select','rollback','mode','log-level','delay','connections',
-                               'traffic','rules','providers','proxy','shell','configs','start','stop','restart','scan']
+                               'traffic','rules','providers','proxy','shell','configs','start','stop','restart','scan','uninstall']
     live_traffic = getattr(args,'dashboard',False) or getattr(args,'compact',False)
     with human_output(formatted and not getattr(args,'json',False) and not live_traffic,color=True if args.color else None):
         return _run_command(args)
@@ -2375,7 +2379,7 @@ def _run_command(args):
         if args.action=='scan':
             import domino_cli
             return domino_cli.inspect_source(args) if args.source else domino_cli.list_sources(args)
-        if args.action in ['install', 'rollback', 'configs', 'rules','agent','delay','traffic']:
+        if args.action in ['install', 'rollback', 'configs', 'rules','agent','delay','traffic','uninstall']:
             def cancelled(*_):
                 raise KeyboardInterrupt
             signal.signal(signal.SIGHUP, cancelled)
@@ -2390,6 +2394,10 @@ def _run_command(args):
                     domino_macos.install(sys.modules[__name__], Path(args.bundle).resolve())
                 else:
                     install(Path(args.bundle).resolve())
+        elif args.action == 'uninstall':
+            import domino_uninstall
+            return domino_uninstall.uninstall(sys.modules[__name__], yes=args.yes,
+                non_interactive=args.non_interactive, dry_run=args.dry_run)
         elif args.action == 'status':
             return status(args.json)
         elif args.action == 'nodes':

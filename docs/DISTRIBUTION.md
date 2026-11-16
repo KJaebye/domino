@@ -163,7 +163,7 @@ sudo apt install domino-proxy
 
 从旧源安装切换渠道前，先用 `type -a domino` 找到当前入口。旧 `~/.local/bin/domino` 可能优先于 brew / apt：先停止服务、备份配置，并显式处理旧入口或调整 PATH，再验证 `command -v domino` 与 `domino --version`。初始化不自动清理旧入口。
 
-CLI 包升级不等于内核升级，不重启服务、不改节点与系统代理。卸载 CLI 前如需结束本机代理，先 `domino stop`；卸载包保留配置库、运行内核与服务文件，不作为运行环境卸载器。跨渠道迁移和完整运行环境清理由用户显式处理。
+CLI 包升级不等于内核升级，不重启服务、不改节点与系统代理。仅卸载 CLI 包会保留运行内核、配置库和服务文件；pip 不提供运行时清理钩子。要完整清理，先运行 `domino uninstall`，再使用原包管理器卸载 CLI，例如 `domino uninstall && pip uninstall domino-proxy`。前一步会确认删除配置和备份，并清理终端接入记录；详见 [卸载指南](USAGE.md#卸载与清理)。
 
 仓库目前是私有仓库；仅给配方填入 GitHub Release 地址不能保证用户可下载。正式发布还需要可匿名下载、版本固定的 runtime 地址，以及公开 tap / PyPI Trusted Publisher / 签名 apt HTTPS 托管。三个渠道应交付同一源码版本，先构建并校验，再分别上传 wheel、runtime 与 deb / apt 索引；不要在发布步骤改包内容或把生产私钥交给构建脚本。
 
