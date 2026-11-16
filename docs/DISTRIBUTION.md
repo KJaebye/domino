@@ -2,7 +2,7 @@
 
 三个渠道只安装管理命令。包安装、升级、卸载不会初始化本机服务、捕获配置、调整系统代理或改 shell 文件。需要本机代理时，以普通用户显式运行 `domino-install`；已有离线部署包时也可使用 `domino init --bundle /path/to/bundle.tar.gz`。仅管理远端设备则无需初始化本机服务。
 
-**当前为发布准备阶段。** PyPI、Homebrew tap 和 apt 公共地址尚未发布；下文标有占位符的命令不能直接作为公开安装入口。不要安装 PyPI 上的 `domino`：该名字属于另一个项目。本项目准备使用发行包名 `domino-proxy`，可执行命令保持 `domino`。名字尚未预留，实际发布前需再次检查。
+**PyPI 已发布，Homebrew / apt 仍在准备中。** 可从 [PyPI 安装 domino-proxy](https://pypi.org/project/domino-proxy/)，可执行命令保持 `domino`。不要安装 PyPI 上的 `domino`：该名字属于另一个项目。Homebrew tap 和 apt 公共地址尚未发布，下文标有占位符的命令不能直接作为公开安装入口。
 
 | 渠道 | 发行名称 | 管理命令 | 平台 |
 | --- | --- | --- | --- |
@@ -10,7 +10,7 @@
 | Homebrew 自建 tap | `domino` | 同上 | 首先验收 macOS；配方使用 Python 3.13 |
 | apt / 本地 deb | `domino-proxy` | 同上 | Ubuntu 22.04 / 24.04，amd64 / arm64 |
 
-每台机器选择一个安装渠道，并由同一包管理器负责后续升级和卸载。macOS 可选 Homebrew，Ubuntu 可选 apt；跨平台 Python 用户可选 pipx（为 CLI 单独隔离依赖，[PyPA 说明](https://packaging.python.org/en/latest/guides/installing-stand-alone-command-line-tools/)）。开发环境继续使用 `.venv`，不与系统安装混用。
+每台机器选择一个安装渠道，并由同一包管理器负责后续升级和卸载。目前 macOS / Ubuntu 均可使用 pip（venv）或 pipx；pipx 为 CLI 单独隔离依赖（[PyPA 说明](https://packaging.python.org/en/latest/guides/installing-stand-alone-command-line-tools/)）。Homebrew / apt 目前供本地验收。开发环境继续使用 `.venv`，不与系统安装混用。
 
 | 渠道 | 安装位置 / 入口 | 升级 | 卸载 |
 | --- | --- | --- | --- |
@@ -19,7 +19,7 @@
 | Homebrew | Cellar 中的 CLI，通过 brew prefix 链接 | `brew upgrade KJaebye/tap/domino` | `brew uninstall KJaebye/tap/domino` |
 | apt | `/usr/bin/domino`，代码在 `/usr/lib/domino/cli` | `sudo apt install --only-upgrade domino-proxy` | `sudo apt remove domino-proxy` |
 
-上表中的公开包名仍为计划入口，正式发布前使用本地 wheel、tap 或 deb 验收。`domino update` 更新代理配置，不升级 CLI；内核、配置库与 CLI 包的版本分别管理。
+上表中的 pip / pipx 命令可直接使用；Homebrew / apt 需等待公开渠道上线，目前使用本地 tap 或 deb 验收。`domino update` 更新代理配置，不升级 CLI；内核、配置库与 CLI 包的版本分别管理。
 
 Tab 补全：Homebrew 配方使用 `zsh_completion` / `bash_completion` 安装标准文件，deb 分别安装到 `/usr/share/zsh/vendor-completions/_domino` 和 `/usr/share/bash-completion/completions/domino`，不写用户 rc。pip / 独立 CLI 可运行 `eval "$(domino completion zsh)"` 或 bash 对应命令；永久接入由用户将该行加入 rc。详见[使用指南](USAGE.md#tab-补全)。
 
@@ -58,33 +58,37 @@ apt/
 
 ## pip / pipx
 
-可先安装本地 wheel，包名已从旧开发版 `domino` 改为 `domino-proxy`：
+从 PyPI 安装，包名为 `domino-proxy`：
 
 ```bash
 python3 -m venv ~/.venvs/domino
-~/.venvs/domino/bin/python -m pip install ./dist/release/domino_proxy-0.17.0-py3-none-any.whl
-~/.venvs/domino/bin/domino --version
+source ~/.venvs/domino/bin/activate
+python -m pip install --upgrade domino-proxy
+domino --version
 # 仅需要本机服务时运行：
-~/.venvs/domino/bin/domino-install
+domino-install
 ```
 
 `pip install` 会解析 UI/YAML 依赖，因此除已准备离线 wheelhouse 外需要网络。Ubuntu 系统 Python 可能限制全局 pip 写入，优先 venv 或 pipx，不使用 `sudo pip`、`--break-system-packages`。
 
-公开发布后计划使用：
+每次新开终端，先运行 `source ~/.venvs/domino/bin/activate`；也可以直接使用 `~/.venvs/domino/bin/domino`。若希望无需激活环境即可使用命令，可在安装好 pipx 后运行：
 
 ```bash
 pipx install domino-proxy
-pipx upgrade domino-proxy
-pipx uninstall domino-proxy
+pipx ensurepath
 ```
+
+`pipx ensurepath` 后重新打开终端。离线或验收本地包时，可将 pip 安装命令中的包名替换为实际 wheel 文件路径。首次使用可继续按 [快速开始](../README.md#快速开始) 准备配置或部署远端。
 
 不要把旧 `domino` 发行包与新包装在同一个环境，两个发行包提供同名命令。旧开发环境先确认 `python -m pip show domino` 指向本项目，再卸载旧包、安装新包；不能误删同名的其他项目。也可以新建独立环境。
 
-`.github/workflows/publish-pypi.yml` 仅手动触发，只接受与源码版本精确匹配的 `v0.x.y` 标签，并要求仓库有非空 LICENSE。真正上传还需要：
+### 维护者发布流程
+
+0.17.8 已通过 Trusted Publisher 发布。后续版本继续使用 `.github/workflows/publish-pypi.yml` 手动发布；工作流只接受与源码版本精确匹配的 `v0.x.y` 标签，并要求仓库有非空 LICENSE。发布前核对：
 
 1. 核对已选定的 `GPL-3.0-only`、LICENSE 与第三方声明已随发行包交付。
-2. 在 PyPI 账号创建 `domino-proxy` 的待发布项目 / Trusted Publisher：owner `KJaebye`、repository `domino`、workflow `publish-pypi.yml`、environment `pypi`。
-3. 在 GitHub 设置 `pypi` environment 的发布审批与标签限制；Trusted Publisher 的配置必须一致。
+2. PyPI 项目 `domino-proxy` 的 Trusted Publisher 为 owner `KJaebye`、repository `domino`、workflow `publish-pypi.yml`、environment `pypi`。
+3. 核对 GitHub `pypi` environment 与 Trusted Publisher 的配置一致；发布审批与标签限制由维护者另行配置。
 4. 完成平台验收后，在对应版本标签上手动运行 `Publish to PyPI`。
 
 工作流使用短期 OIDC 凭据，不在仓库保存 PyPI token。参考 [PyPA 官方发布指南](https://packaging.python.org/en/latest/guides/publishing-package-distribution-releases-using-github-actions-ci-cd-workflows/)。工作流文件的存在不会自动发布；普通 push 不触发上传。

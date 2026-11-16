@@ -8,7 +8,7 @@
 
 **捕获本机代理，一键部署到另一台电脑，让翻墙像 domino 一样简单。**
 
-[快速开始](#快速开始) · [交互管理](#在一个界面里管理配置) · [常用命令](#常用命令) · [完整指南](docs/USAGE.md)
+[安装](#1-安装) · [快速开始](#快速开始) · [交互管理](#在一个界面里管理配置) · [常用命令](#常用命令) · [完整指南](docs/USAGE.md)
 
 你已经在一台电脑上配好了代理，新服务器却还要重新找订阅、装内核、搬规则、选节点。Domino 把这些步骤收进一条命令：
 
@@ -20,19 +20,25 @@ domino user@192.168.1.10
 
 ## 快速开始
 
-需要 **Python 3.9+、pip / venv 和 curl**（[macOS / Ubuntu 依赖与差异](docs/PLATFORMS.md)）。本机安装支持 macOS 与使用 systemd 的 Linux；Linux 安装需要普通用户的 sudo 权限。
+需要 **Python 3.9+**。本机代理服务支持 macOS 与使用 systemd 的 Ubuntu，还需要 curl；Ubuntu 初始化服务时需要普通用户的 sudo 权限（[平台依赖与差异](docs/PLATFORMS.md)）。
 
 ### 1. 安装
 
+从 [PyPI](https://pypi.org/project/domino-proxy/) 安装，包名是 **`domino-proxy`**，安装后的命令是 **`domino`**：
+
 ```bash
-git clone https://github.com/KJaebye/domino.git
-cd domino
-./install.sh
+pip install domino-proxy
 ```
 
-脚本安装管理命令、Mihomo 内核和后台服务。若 `domino` 尚未进入 PATH，可先使用 `~/.local/bin/domino`。
+安装包只提供管理命令；**需要本机代理服务时**，以普通用户运行：
 
-pip / Homebrew / apt 分发正在准备中：包管理器只安装 CLI，需要本机服务时显式初始化。当前产物、本地安装方法与发布步骤见 [分发指南](docs/DISTRIBUTION.md)。公开渠道尚未上线，请勿使用同名的其他 PyPI 项目。
+```bash
+domino-install
+```
+
+它安装 Mihomo 内核和后台服务。仅部署到其他电脑时，可以跳过本机初始化，直接进入第 3 步。
+
+虚拟环境、pipx、升级及 Homebrew / apt 进展见 [分发指南](docs/DISTRIBUTION.md)；Tab 补全见 [补全设置](docs/USAGE.md#tab-补全)；源码安装见 [安装与部署](docs/USAGE.md#开始使用)。
 
 ### 2. 准备配置
 
@@ -65,7 +71,7 @@ domino user@192.168.1.10 status     # 查看服务与实际代理出网
 domino user@192.168.1.10 ui         # 交互管理这台电脑
 ```
 
-SSH 别名同样可用：`domino my-server deploy`。仅部署远端时，可从源码安装 CLI，无需先安装本机代理服务，见 [安装与部署](docs/USAGE.md#开始使用)。
+SSH 别名同样可用：`domino my-server deploy`。仅部署远端时，安装 PyPI 管理命令即可，无需先安装本机代理服务；更多选项见 [安装与部署](docs/USAGE.md#开始使用)。
 
 ## 在一个界面里管理配置
 

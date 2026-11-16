@@ -12,6 +12,8 @@ domino catch    # 选择外部配置，保存到 Domino 配置库
 domino user@192.168.1.10 deploy    # 将翻墙能力复制到指定电脑
 ```
 
+首次安装推荐使用已发布的 PyPI 包 `domino-proxy`，见 [安装步骤](../README.md#1-安装)。pip 只安装管理命令；需要本机代理时，再以普通用户运行 `domino-install`。下文的 `./install.sh` 用于源码安装。
+
 ## Tab 补全
 
 支持 zsh（macOS 常用）和 bash（Ubuntu 常用）。例如输入 `domino sh` 后按 Tab 补成 `shell`，`domino shell ` 后按 Tab 查看 `on/off/status`；`domino test `、`domino switch ` 可补本机配置名，`domino select ` 可补节点和策略组。补全会处理名称中的空格和方括号。
@@ -370,11 +372,11 @@ python3 -m venv .venv
 
 ## 分发与可配置资源源
 
-`./install.sh` 一次完成管理程序、内核、基础配置和后台服务安装。终端策略与加载器所需的 `domino_shell` 模块随部署包和 wheel 一并分发。wheel 另提供 `domino-install` 安装入口；pip/pipx 本身只安装 Python 包，完整安装可使用 `pipx run --spec ./dist/domino-0.15.5-py3-none-any.whl domino-install --batch`。Linux 需预先授权 sudo。只读扫描、导出和部署已有兼容配置无需先安装本机 Domino 服务。
+`./install.sh` 一次完成管理程序、内核、基础配置和后台服务安装。终端策略与加载器所需的 `domino_shell` 模块随部署包和 wheel 一并分发。PyPI 包 `domino-proxy` 另提供 `domino-install` 安装入口；pip/pipx 本身只安装管理命令，需要本机服务时再显式运行 `domino-install`。Linux 初始化需要普通用户的 sudo 权限。只读扫描、导出和部署已有兼容配置无需先安装本机 Domino 服务。
 
 通过环境变量 `DOMINO_RESOURCE_BASE=https://你的公共资源域名/domino/`，或 `~/.config/domino/downloads.json` 的 `resource_base` 字段指定直连资源源。指定后，内核元数据、二进制与所需 Geo 数据从该源读取并校验 SHA-256，不自动回退 GitHub。未指定时继续使用官方 GitHub 内核源。用户订阅及其 provider 的下载位置由用户配置决定。
 
-本地发布工具、资源布局、Homebrew 模板与验收状态见 [交付说明](DELIVERY.md)，每次交付变更见 [变更记录](../CHANGELOG.md)。统一使用三段版本号 `0.x.y`；功能版本使用 `0.13.0`、`0.14.0`，小更新和 debug 修复使用 `0.13.1`。完成一批代码改动后同步 CLI / wheel 版本、记录变更、测试并构建；沿用旧目录规则：版本化 wheel 存于 `dist/`，完整发行产物平铺于 `dist/release/`；更新固定名称清单/Formula 前，将上一份发行产物归档到 `dist/release/history/<旧版本>/`，不覆盖旧版 wheel/runtime。构建清单记录源码摘要、构建时间和产物校验值，不代表字节级可复现构建。公共云端地址、PyPI/pipx 分发和 Homebrew tap 尚未上线；本地产物不等于已经发布，也不会自动同步安装版或重启服务。
+本地发布工具、资源布局、Homebrew 模板与验收状态见 [交付说明](DELIVERY.md)，每次交付变更见 [变更记录](../CHANGELOG.md)。统一使用三段版本号 `0.x.y`；功能版本使用 `0.13.0`、`0.14.0`，小更新和 debug 修复使用 `0.13.1`。完成一批代码改动后同步 CLI / wheel 版本、记录变更、测试并构建；沿用旧目录规则：版本化 wheel 存于 `dist/`，完整发行产物平铺于 `dist/release/`；更新固定名称清单/Formula 前，将上一份发行产物归档到 `dist/release/history/<旧版本>/`，不覆盖旧版 wheel/runtime。构建清单记录源码摘要、构建时间和产物校验值，不代表字节级可复现构建。PyPI 已发布 `domino-proxy`，可通过 pip / pipx 安装；公共 runtime 下载地址、Homebrew tap 和 apt 源仍待上线，渠道状态见 [分发指南](DISTRIBUTION.md)。本地构建不会自动发布、同步安装版或重启服务。
 
 ## Agent 与来源扫描
 
