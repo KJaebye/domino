@@ -38,7 +38,15 @@ domino ui
 
 ## 升级
 
-使用安装时的 Python 环境执行 `python -m pip install --upgrade domino-proxy`。包升级更新 CLI，运行内核与服务由用户单独管理。卸载 CLI 前如需结束本机代理，先运行 `domino stop`；包卸载保留用户配置与服务文件。
+在同一 Python 环境中执行 `python -m pip install --upgrade domino-proxy`。包升级更新 CLI，运行内核与服务由用户单独管理。
+
+## 卸载
+
+```bash
+domino uninstall && pip uninstall domino-proxy
+```
+
+前一步会确认清理本机服务、内核、配置库、部署备份及终端接入记录，后一步删除 Python 包。远端使用 `domino USER@IP uninstall`；加 `--dry-run` 可先预览。pip 自身没有卸载钩子，单独 `pip uninstall` 不会清理运行环境。完成后重新打开终端或重新 SSH 登录。
 
 [项目首页](https://github.com/KJaebye/domino) · [完整使用指南](https://github.com/KJaebye/domino/blob/main/docs/USAGE.md) · [macOS / Ubuntu 支持](https://github.com/KJaebye/domino/blob/main/docs/PLATFORMS.md) · [分发与迁移](https://github.com/KJaebye/domino/blob/main/docs/DISTRIBUTION.md) · [问题反馈](https://github.com/KJaebye/domino/issues)
 

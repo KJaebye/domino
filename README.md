@@ -117,6 +117,16 @@ domino [USER@IP] COMMAND [ARGS] [options]
 
 完整参数用 `domino -h` 或 `domino COMMAND -h` 查看。节点名含空格或方括号时加引号；在 UI 中可直接筛选选择。
 
+## 卸载
+
+卸载本机运行环境，并移除 pip 安装的管理命令：
+
+```bash
+domino uninstall && pip uninstall domino-proxy
+```
+
+卸载远端使用 `domino USER@IP uninstall`；可先加 `--dry-run` 预览。卸载会确认删除内核、配置库和部署备份，并清理 `.bashrc` / `.zshrc` 中 Domino 的接入记录。完成后重新打开终端或重新 SSH 登录。更多说明见 [卸载指南](docs/USAGE.md#卸载与清理)。
+
 ## 它如何工作
 
 **发现配置 → 打包配置与依赖 → SSH 交付 → 启动独立服务 → 验证出网。**

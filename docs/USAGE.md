@@ -378,6 +378,28 @@ python3 -m venv .venv
 
 本地发布工具、资源布局、Homebrew 模板与验收状态见 [交付说明](DELIVERY.md)，每次交付变更见 [变更记录](../CHANGELOG.md)。统一使用三段版本号 `0.x.y`；功能版本使用 `0.13.0`、`0.14.0`，小更新和 debug 修复使用 `0.13.1`。完成一批代码改动后同步 CLI / wheel 版本、记录变更、测试并构建；沿用旧目录规则：版本化 wheel 存于 `dist/`，完整发行产物平铺于 `dist/release/`；更新固定名称清单/Formula 前，将上一份发行产物归档到 `dist/release/history/<旧版本>/`，不覆盖旧版 wheel/runtime。构建清单记录源码摘要、构建时间和产物校验值，不代表字节级可复现构建。PyPI 已发布 `domino-proxy`，可通过 pip / pipx 安装；公共 runtime 下载地址、Homebrew tap 和 apt 源仍待上线，渠道状态见 [分发指南](DISTRIBUTION.md)。本地构建不会自动发布、同步安装版或重启服务。
 
+## 卸载与清理
+
+```bash
+domino uninstall --dry-run           # 预览本机清理范围，不修改
+domino uninstall                     # 确认并卸载本机运行环境
+domino USER@IP uninstall              # 卸载指定电脑，使用当初部署时的用户
+```
+
+卸载先恢复仍由 Domino 接管的系统代理，再停止并移除 macOS LaunchAgent / Ubuntu systemd 服务，删除 Mihomo、运行配置、配置库、部署备份、默认下载缓存及独立日志目录；系统 journal 历史由系统保留。**确认后这些配置和备份会被删除**；系统代理恢复或停服失败时停止清理并保留运行文件。命令可以重复运行；不会联网下载资源。
+
+仅移除 shell 启动文件中的 `# BEGIN domino proxy` / `# END domino proxy` 区块，以及 Domino 补全标记区块，保留其他内容和文件权限；包括 `.bashrc`、`.zshrc`、登录启动文件与 VS Code 终端接入。符号链接路径、不完整标记及其他用户或程序的同名服务会使卸载停止。自定义缓存位置和旧 robot-clash 安装不在清理范围；保留不含配置的协调锁文件，以免并发操作绕过互斥。
+
+包管理器拥有的 CLI 入口不会删除。完整卸载 pip 安装的本机 Domino，使用安装时的同一 Python 环境：
+
+```bash
+domino uninstall && pip uninstall domino-proxy
+```
+
+pip / pipx / brew / apt 的包卸载流程本身不会执行 Domino 运行时清理。若来自其他渠道，在 `domino uninstall` 后使用对应的包管理器卸载；通过部署或源码安装生成的独立命令入口由 `domino uninstall` 一并移除。CLI 不修改正在运行的父 shell，卸载完成后请重新打开终端或重新 SSH 登录；不自动重启 VS Code 或关闭其他终端。
+
+脚本使用 `domino USER@IP uninstall --yes --batch`：`--yes` 明确接受删除，`--batch` 禁止 SSH / sudo 密码询问，目标需要已有认证授权。UI 使用 `/uninstall`，在页内选择预览或进入卸载确认流程。
+
 ## Agent 与来源扫描
 
 ### 外部 Agent 调用接口（协议 1）
