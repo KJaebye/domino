@@ -31,7 +31,7 @@ from urllib.parse import urlsplit
 from urllib.request import getproxies
 from domino_model import DomainError
 
-VERSION = '0.17.10'
+VERSION = '0.17.11'
 PACKAGE_MANAGED = False
 DESCRIPTION = '捕获本机代理，并一键部署到指定 IP 的设备上，让翻墙像 domino 一样简单。'
 SUBSCRIPTION_USER_AGENT = 'clash.meta'
@@ -1161,6 +1161,7 @@ class SSH:
                 'for name,source in __domino_sources.items():\n'
                 ' m=types.ModuleType(name);m.__file__=str(Path.home()/".local/share/domino/cli"/(name+".py"));sys.modules[name]=m;exec(compile(source,m.__file__,"exec"),m.__dict__)\n'
                 'if "domino_cli" in sys.modules: sys.modules["domino_cli"].SOURCE_MODULES={**{name+".py":source for name,source in __domino_sources.items()},"install_domino.py":__domino_backend}\n'
+                'sys.modules["install_domino"]=sys.modules["__main__"]\n'
                 'exec(compile(__domino_backend,"<domino-backend>","exec"))')
         if action == 'cli':
             code = ('import sys,tempfile;from pathlib import Path\n'

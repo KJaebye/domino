@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "domino-proxy"
-version = "0.17.10"
+version = "0.17.11"
 description = "Deploy independent proxy access over SSH and manage local or remote Domino services"
 readme = "README.pypi.md"
 license = "GPL-3.0-only"
