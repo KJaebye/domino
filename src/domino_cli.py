@@ -29,7 +29,7 @@ from urllib.parse import urlsplit
 from urllib.request import getproxies
 from domino_model import DomainError
 
-VERSION = '0.17.2'
+VERSION = '0.17.3'
 PACKAGE_MANAGED = False
 DESCRIPTION = '捕获本机代理，并一键部署到指定 IP 的设备上，让翻墙像 domino 一样简单。'
 SUBSCRIPTION_USER_AGENT = 'clash.meta'

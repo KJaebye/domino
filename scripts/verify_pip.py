@@ -25,7 +25,9 @@ def verify(release):
         home.mkdir()
         environment = {key: value for key, value in os.environ.items()
                        if not key.startswith(('DOMINO_', '_DOMINO', 'PYTHONPATH'))}
-        environment.update(HOME=str(home), PIP_CACHE_DIR=str(root / 'cache'), NO_COLOR='1', TERM='dumb')
+        environment.update(HOME=str(home), PIP_CACHE_DIR=str(root / 'cache'),
+                           CARGO_HOME=str(root / 'cargo'), RUSTUP_HOME=str(root / 'rustup'),
+                           NO_COLOR='1', TERM='dumb')
         venv.EnvBuilder(with_pip=True).create(root / 'venv')
         binary = root / 'venv/bin'
         def run(command):
