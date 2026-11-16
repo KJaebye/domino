@@ -26,7 +26,7 @@ class UiParityTests(unittest.TestCase):
             output=io.StringIO()
             with patch.object(cli,'capture_candidates',return_value=[path]),patch.object(cli,'source_identity',return_value={'profile_name':'机场一'}),redirect_stdout(output):
                 control._run_command(SimpleNamespace(action='catch-options'))
-            self.assertEqual(json.loads(output.getvalue()),[{'name':'机场一','path':str(path)}])
+            self.assertEqual(json.loads(output.getvalue()),[{'name':'Clash Verge · 机场一','path':str(path)}])
             self.assertNotIn('PRIVATE',output.getvalue());self.assertEqual(path.read_text(),content)
 
     def test_capture_option_transport_uses_the_current_host_without_color_or_writes(self):
@@ -52,7 +52,7 @@ class UiParityTests(unittest.TestCase):
             source.write_text(content)
             p=subprocess.run([cli.sys.executable,*command[1:]],env={**os.environ,'HOME':str(home)},cwd=home,capture_output=True,text=True,timeout=15)
             self.assertEqual(p.returncode,0,p.stderr)
-            self.assertEqual(json.loads(p.stdout),[{'name':'config.yaml','path':str(source)}])
+            self.assertEqual(json.loads(p.stdout),[{'name':'ClashX / Clash','path':str(source)}])
             self.assertNotIn('PRIVATE',p.stdout+p.stderr);self.assertEqual(source.read_text(),content)
             self.assertFalse((home/'.local/share/domino').exists())
 

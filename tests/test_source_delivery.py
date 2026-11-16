@@ -304,8 +304,10 @@ class SourceDeliveryTests(unittest.TestCase):
         except ModuleNotFoundError: import tomli as tomllib
         project = Path(tool.__file__).resolve().parent
         self.assertIn('domino_sources.py', tool.CLI_MODULES)
+        self.assertIn('domino_client_sources.py', tool.CLI_MODULES)
         packaging = tomllib.loads((project.parent / 'pyproject.toml').read_text())
         self.assertIn('domino_sources', packaging['tool']['setuptools']['py-modules'])
+        self.assertIn('domino_client_sources', packaging['tool']['setuptools']['py-modules'])
         args = tool.build_parser().parse_args(['scan'])
         args.target, args.user, args.ssh_port, args.identity, args.batch = 'fixture.example.test', None, None, None, True
         ssh = tool.SSH(args)
@@ -328,6 +330,8 @@ class SourceDeliveryTests(unittest.TestCase):
                 self.assertEqual(executable_tree(modules['domino_sources']),
                                  executable_tree((project / 'domino_sources.py').read_text()))
                 compile(modules['domino_sources'], '<embedded-domino-sources>', 'exec')
+                self.assertEqual(executable_tree(modules['domino_client_sources']),
+                                 executable_tree((project / 'domino_client_sources.py').read_text()))
         self.run.assert_not_called()
         self.download.assert_not_called()
 

@@ -56,7 +56,7 @@ class RemoteScanTests(unittest.TestCase):
             return [sys.executable, '-I', '-c', prefix + tokens[2], *tokens[3:]]
         ssh.command_argv = command_argv
         argv = ssh.action_argv('scan', *options)
-        env = {k:v for k,v in os.environ.items() if k not in ('PYTHONPATH', 'PYTHONHOME')
+        env = {k:v for k,v in os.environ.items() if k not in ('PYTHONPATH', 'PYTHONHOME', 'XDG_DATA_HOME', 'XDG_CONFIG_HOME')
                and not k.startswith(('DOMINO_', '_DOMINO'))}
         env['HOME'] = str(self.home)
         before = self.snapshot()
@@ -91,3 +91,30 @@ class RemoteScanTests(unittest.TestCase):
         result = json.loads(self.run_scan('--json', poison=True))
         self.assertEqual(result['sources'][0]['current_config'], 'Fixture config')
 
+    def test_remote_scan_discovers_linux_verge_without_domino_runtime(self):
+        root = self.home / '.local/share/io.github.clash-verge-rev.clash-verge-rev'
+        profiles = root / 'profiles'
+        profiles.mkdir(parents=True)
+        (profiles / 'saved.yaml').write_text(json.dumps({'proxies': [
+            {'name': 'Fixture node', 'type': 'socks5', 'server': 'fixture.example.test', 'port': 1080}]}))
+        (root / 'profiles.yaml').write_text(json.dumps({'current': 'saved', 'items': [
+            {'uid': 'saved', 'type': 'remote', 'name': 'Linux subscription', 'file': 'saved.yaml'}]}))
+        result = json.loads(self.run_scan('--json'))
+        self.assertEqual(len(result['sources']), 1)
+        self.assertEqual(result['sources'][0]['profile_name'], 'Linux subscription')
+        self.assertTrue(result['sources'][0]['client_current'])
+        self.assertIn('外部配置 1 个 · Domino 管理 0 个', self.run_scan())
+
+    def test_remote_scan_transmits_v2rayn_database_adapter(self):
+        import sqlite3
+        root = self.home / '.local/share/v2rayN/guiConfigs'
+        root.mkdir(parents=True)
+        with sqlite3.connect(root / 'guiNDB.db') as database:
+            database.execute('CREATE TABLE ProfileItem (IndexId TEXT, ConfigType INTEGER, Remarks TEXT, Address TEXT, Port INTEGER, Password TEXT)')
+            database.execute('INSERT INTO ProfileItem VALUES (?,?,?,?,?,?)',
+                ('a', 6, 'Fixture node', 'fixture.example.test', 443, 'TEST-NODE-CREDENTIAL'))
+        result = json.loads(self.run_scan('--json'))
+        self.assertEqual(len(result['sources']), 1)
+        self.assertEqual(result['sources'][0]['name'], 'v2rayN · 节点快照')
+        self.assertTrue(result['sources'][0]['compatible_config_found'])
+        self.assertIsNone(result['sources'][0]['proxy'])

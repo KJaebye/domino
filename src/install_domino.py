@@ -2373,7 +2373,7 @@ def _run_command(args):
             items=[]
             for path in domino_cli.capture_candidates(include_saved=True):
                 identity=domino_cli.source_identity(path)
-                items.append({'path':str(path),'name':identity['profile_name'] if identity else path.name})
+                items.append({'path':str(path),'name':domino_cli.source_name(path,identity) or path.name})
             show(items,True)
             return
         if args.action=='scan':
