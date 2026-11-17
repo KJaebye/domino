@@ -39,7 +39,7 @@ def tar_members(data):
                 for member in archive if member.isfile()}
 
 
-class DistributionTests(unittest.TestCase):
+class DistributionFixture(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
@@ -70,6 +70,33 @@ class DistributionTests(unittest.TestCase):
         sums = {item['name']: item['sha256'] for item in self.manifest['files']}
         sums['release.json'] = distro.digest(path.read_bytes())
         (self.release / 'SHA256SUMS').write_text(''.join(checksum + '  ' + name + '\n' for name, checksum in sums.items()))
+
+
+class DistributionTests(DistributionFixture):
+    def test_previous_pool_survives_updates_without_replacing_published_packages(self):
+        first = distro.build(self.release, self.output)
+        previous = self.output / 'apt'
+        pool = previous / 'pool/main/d/domino-proxy'
+        old = pool / 'domino-proxy_0.15.0-1_all.deb'
+        old.write_bytes((self.output / first['deb']).read_bytes())
+        second = self.root / 'second'
+        distro.build(self.release, second, previous_repo=previous)
+        self.assertEqual((second / 'apt/pool/main/d/domino-proxy' / old.name).read_bytes(), old.read_bytes())
+        self.assertNotIn('0.15.0', (second / 'apt/dists/stable/main/binary-amd64/Packages').read_text())
+        (pool / first['deb']).write_bytes(b'!<arch>\nchanged')
+        with self.assertRaisesRegex(ValueError, 'cannot be replaced'):
+            distro.build(self.release, self.root / 'third', previous_repo=previous)
+        self.assertFalse((self.root / 'third').exists())
+
+    def test_previous_pool_rejects_missing_paths_and_symlink_members(self):
+        with self.assertRaisesRegex(ValueError, 'lacks a pool'):
+            distro.build(self.release, self.output, previous_repo=self.root / 'missing')
+        previous = self.root / 'previous'
+        (previous / 'pool').mkdir(parents=True)
+        (previous / 'pool/linked').symlink_to(self.release, target_is_directory=True)
+        with self.assertRaisesRegex(ValueError, 'symlink'):
+            distro.build(self.release, self.output, previous_repo=previous)
+        self.assertFalse(self.output.exists())
 
     def test_stable_one_major_release_builds_versioned_debian_package(self):
         _, files = distro.load_runtime(self.release)

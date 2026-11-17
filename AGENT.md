@@ -4,6 +4,7 @@
 
 - 用户要求：每完成一批可交付的代码更新或 debug 修复，管理版本、记录变更、验证并构建，不让不同代码长期共用一个版本。
 - 不对每个中间编辑/失败重试反复升版本；未完成或测试失败不能声明交付成功。纯说明性文档改动通常不新增软件版本。
+- 用户明确：仅维护分发工具、渠道或发布流程时，不提升 Domino 软件版本；直接复用既有正式版本的原始产物，发布流程单独记录修订与状态。本轮软件版本保持 1.2.3，不重建或覆盖已发布的软件包。
 - 用户已指定正式发布 `1.0.0`，版本统一使用三段 `X.Y.Z`；后续兼容修复递增补丁号、兼容功能递增次版本号，破坏性变更递增主版本号并明确记录影响。保留末尾 `.0`；历史 `0.x.y` 产物和记录不改写。
 - 同时更新 src/domino_cli.py 的 VERSION、pyproject.toml 的 [project].version、CHANGELOG.md 的日期与实际变更；这是 Domino 版本，不是 Mihomo 内核版本。
 - 不倒推编造未记录的历史版本，也不删除旧 dist 产物。已构建同版本后若继续修改代码，下一次交付应升版本，不覆盖旧包。
@@ -31,6 +32,13 @@
 - 项目按用户授权纳入 Git 管理；commit/tag 必须对应真实操作，不得虚构。初始化、提交、推送、创建远端或对外发布均须用户明确授权，不因完成代码改动就自动执行。dist、虚拟环境、用户配置和凭据不入库；构建清单继续用源码摘要标识输入。
 
 详细流程见 docs/DELIVERY.md；版本记录见 CHANGELOG.md。
+
+## 统一分发
+
+- 三渠道发布只使用 `.github/workflows/publish-pypi.yml`，显示名为 `Publish · PyPI / Homebrew / APT`；保留原文件名及 `pypi` environment，以沿用现有 Trusted Publisher。`Verify` / `Distribution smoke tests` 是测试入口。
+- 从 `main` 调度，`version` 指定已存在的软件标签版本，`channels=all` 或 `pypi/brew/apt`，`dry_run=true` 只准备和校验。发布工具与目标软件的提交分别固定；不为工具更新移动软件标签。
+- 发布已有版本先复用 GitHub Release 原始文件，核对各渠道摘要。成功渠道不重复上传，只恢复失败渠道；内容冲突或降级直接失败。修复发布逻辑不能改写已发布的同版本软件包。
+- Agent 查看任务日志及 `release-status` artifact：`complete=true` 仅表示三个渠道全部核验成功；补发单渠道只记录该次请求的结果，不推断其他渠道状态。真实发布命令与必要配置见 docs/DISTRIBUTION.md。
 
 ## 源码布局
 

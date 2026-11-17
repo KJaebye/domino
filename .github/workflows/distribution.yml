@@ -24,7 +24,7 @@ jobs:
           path: .baseline
           persist-credentials: false
       - run: python -m pip install '.[dev]'
-      - run: python -m unittest tests.test_distribution tests.test_release -q
+      - run: python -m unittest tests.test_channels tests.test_distribution tests.test_release -q
       - run: python scripts/build_release.py && python scripts/verify_artifacts.py
       - name: Build the previous release and test pip upgrade and removal
         run: |
@@ -38,21 +38,27 @@ jobs:
           chmod 700 "$GNUPGHOME"
           gpg --batch --passphrase '' --quick-generate-key 'Domino CI <ci@example.invalid>' ed25519 sign 1d
           fingerprint="$(gpg --batch --with-colons --list-secret-keys | awk -F: '$1=="fpr" {print $10; exit}')"
-          python scripts/build_distribution.py --output /tmp/domino-distribution --sign-key "$fingerprint"
+          python scripts/prepare_channels.py --output /tmp/domino-channels --sign-key "$fingerprint" --previous-repo /tmp/domino-previous-distribution/apt
+          ln -s /tmp/domino-channels/distribution /tmp/domino-distribution
           gpg --verify /tmp/domino-distribution/apt/dists/stable/InRelease
+          python - <<'PY'
+          from pathlib import Path
+          source = Path('/tmp/domino-channels/apt-site/domino.sources').read_text()
+          source = source.replace('https://kjaebye.github.io/domino-apt/', 'file:/tmp/domino-distribution/apt/')
+          Path('/tmp/domino-ci.sources').write_text(source)
+          PY
           rm -rf "$GNUPGHOME"
       - name: Install, upgrade and remove through apt while preserving user files
         shell: bash
         run: |
-          echo 'deb [signed-by=/tmp/domino-distribution/apt/domino-archive-keyring.gpg] file:/tmp/domino-distribution/apt stable main' > /tmp/domino-ci.list
-          sudo apt-get update -o Dir::Etc::sourcelist=/tmp/domino-ci.list -o Dir::Etc::sourceparts=- -o APT::Get::List-Cleanup=0
+          sudo apt-get update -o Dir::Etc::sourcelist=/tmp/domino-ci.sources -o Dir::Etc::sourceparts=- -o APT::Get::List-Cleanup=0
           sudo apt-get install -y --no-install-recommends /tmp/domino-previous-distribution/*.deb
           test "$(/usr/bin/domino --version)" = 0.17.5
           temporary_home="$(mktemp -d)"
           HOME="$temporary_home" /usr/bin/domino --help
           test -z "$(ls -A "$temporary_home")"
           python scripts/package_home.py seed "$temporary_home" /tmp/domino-home.json
-          sudo env HOME="$temporary_home" apt-get install -y --only-upgrade --no-install-recommends -o Dir::Etc::sourcelist=/tmp/domino-ci.list -o Dir::Etc::sourceparts=- domino-proxy
+          sudo env HOME="$temporary_home" apt-get install -y --only-upgrade --no-install-recommends -o Dir::Etc::sourcelist=/tmp/domino-ci.sources -o Dir::Etc::sourceparts=- domino-proxy
           test "$(dpkg-query -W -f='${Version}' domino-proxy)" = "$(python -c 'import domino_cli; print(domino_cli.VERSION)')-1"
           dpkg-deb --info /tmp/domino-distribution/*.deb
           test -z "$(dpkg-query -L domino-proxy | grep -E '/(systemd|LaunchAgents)/' || true)"
