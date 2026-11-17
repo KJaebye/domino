@@ -338,10 +338,12 @@ def tap_credentials():
         if not keys or any(not re.fullmatch(r'(?:ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp256) [A-Za-z0-9+/=]+', item) for item in keys):
             raise ValueError('GitHub SSH host keys are invalid')
         known_hosts = root / 'known_hosts'
-        known_hosts.write_text(''.join('github.com ' + item + '\n' for item in keys))
+        known_hosts.write_text(''.join(host + ' ' + item + '\n'
+            for host in ['github.com', '[github.com]:443', 'ssh.github.com', '[ssh.github.com]:443'] for item in keys))
         env = {name: value for name, value in os.environ.items() if name not in ('RELEASE_TAP_SSH_KEY', 'GH_TOKEN', 'GH_API_TOKEN')}
         env['GIT_TERMINAL_PROMPT'] = '0'
-        env['GIT_SSH_COMMAND'] = ('ssh -F /dev/null -o ConnectTimeout=15 -o ServerAliveInterval=15 '
+        env['GIT_SSH_COMMAND'] = ('ssh -F /dev/null -o HostName=ssh.github.com -p 443 '
+                                '-o ConnectTimeout=15 -o ServerAliveInterval=15 '
                                 '-o ServerAliveCountMax=2 -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes '
                                 '-o UserKnownHostsFile=' + shlex.quote(str(known_hosts)) + ' -i ' + shlex.quote(str(key)))
         yield env, True
