@@ -14,7 +14,6 @@ import json
 import os
 from pathlib import Path
 import re
-import shlex
 import shutil
 import subprocess
 import sys
@@ -318,70 +317,25 @@ def check_cli(executable, requested):
             raise ValueError('Installed CLI version differs or query modified HOME')
 
 
-@contextmanager
-def tap_credentials():
-    private = os.environ.get('RELEASE_TAP_SSH_KEY')
-    if not private:
-        if not os.environ.get('GH_TOKEN'):
-            raise ValueError('Configure a tap-only RELEASE_TAP_SSH_KEY or RELEASE_TAP_TOKEN secret')
-        yield dict(os.environ), False
-        return
-    with tempfile.TemporaryDirectory(prefix='domino-tap-key-') as directory:
-        root = Path(directory)
-        key = root / 'key'
-        with key.open('x') as stream:
-            key.chmod(0o600)
-            # Secret input can omit the final LF or contain CRLF. OpenSSH
-            # rejects an otherwise valid private key without its final LF.
-            stream.write(private.replace('\r\n', '\n').strip() + '\n')
-        keys = api('meta')['ssh_keys']
-        if not keys or any(not re.fullmatch(r'(?:ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp256) [A-Za-z0-9+/=]+', item) for item in keys):
-            raise ValueError('GitHub SSH host keys are invalid')
-        known_hosts = root / 'known_hosts'
-        known_hosts.write_text(''.join(host + ' ' + item + '\n'
-            for host in ['github.com', '[github.com]:443', 'ssh.github.com', '[ssh.github.com]:443'] for item in keys))
-        env = {name: value for name, value in os.environ.items() if name not in ('RELEASE_TAP_SSH_KEY', 'GH_TOKEN', 'GH_API_TOKEN')}
-        env['GIT_TERMINAL_PROMPT'] = '0'
-        env['GIT_SSH_COMMAND'] = ('ssh -F /dev/null -o HostName=ssh.github.com -p 443 '
-                                '-o ConnectTimeout=15 -o ServerAliveInterval=15 '
-                                '-o ServerAliveCountMax=2 -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes '
-                                '-o UserKnownHostsFile=' + shlex.quote(str(known_hosts)) + ' -i ' + shlex.quote(str(key)))
-        yield env, True
-
-
 def publish_brew(work):
     plan = validate_inputs(work)
-    with tap_credentials() as (env, ssh), tempfile.TemporaryDirectory(prefix='domino-tap-') as directory:
-        tap = Path(directory) / 'tap'
-        url = (f'git@github.com:{plan["tap_repository"]}.git' if ssh else
-               f'https://github.com/{plan["tap_repository"]}.git')
-        subprocess.run(['git', 'clone', '--single-branch', '--branch', 'main',
-                        url, str(tap)], check=True, env=env)
-        formula = tap / 'Formula/domino.rb'
-        if formula.exists():
-            text = formula.read_text()
-            current = re.findall(r'^  version "(' + VERSION + r')"$', text, re.M)
-            if len(current) != 1:
-                raise ValueError('Existing Domino formula is not recognized')
-            if version_tuple(current[0]) > version_tuple(plan['version']):
-                raise ValueError('Refusing to downgrade the Homebrew channel')
-            if current[0] == plan['version']:
-                runtime = 'domino-runtime-' + plan['version'] + '.tar.gz'
-                url = f'https://github.com/{plan["repository"]}/releases/download/v{plan["version"]}/{runtime}'
-                if f'  sha256 "{plan["files"][runtime]}"\n' not in text or f'  url "{url}"\n' not in text:
-                    raise ValueError('Existing Homebrew version points to different content')
-                return
-        formula.parent.mkdir(exist_ok=True)
-        shutil.copyfile(work / 'channels/tap/Formula/domino.rb', formula)
-        if not (tap / 'README.md').exists():
-            shutil.copyfile(work / 'channels/tap/README.md', tap / 'README.md')
-        subprocess.run(['git', '-C', str(tap), 'add', '--', 'Formula/domino.rb', 'README.md'], check=True, env=env)
-        subprocess.run(['git', '-C', str(tap), '-c', 'user.name=github-actions[bot]',
-                        '-c', 'user.email=41898282+github-actions[bot]@users.noreply.github.com',
-                        'commit', '-m', 'domino ' + plan['version']], check=True, env=env)
-        # gh reads GH_TOKEN through the credential protocol; no credential is stored in the URL.
-        auth = [] if ssh else ['-c', 'credential.helper=', '-c', 'credential.helper=!gh auth git-credential']
-        subprocess.run(['git', '-C', str(tap), *auth, 'push', 'origin', 'HEAD:main'], check=True, env=env)
+    expected = (work / 'channels/tap/Formula/domino.rb').read_bytes()
+    url = f'https://raw.githubusercontent.com/{plan["tap_repository"]}/main/Formula/domino.rb'
+    current = fetch(url + '?release_check=' + str(time.time_ns()), missing=True)
+    if current is not None:
+        declared = re.findall(r'^  version "(' + VERSION + r')"$', current.decode(), re.M)
+        if len(declared) != 1:
+            raise ValueError('Existing Domino formula is not recognized')
+        if version_tuple(declared[0]) > version_tuple(plan['version']):
+            raise ValueError('Refusing to downgrade the Homebrew channel')
+        if declared[0] == plan['version']:
+            if current != expected:
+                raise ValueError('Existing Homebrew version points to different content')
+            return
+    files = {'Formula/domino.rb': expected}
+    if api(f'repos/{plan["tap_repository"]}/contents/README.md', missing=True) is None:
+        files['README.md'] = (work / 'channels/tap/README.md').read_bytes()
+    publish_git_files(plan['tap_repository'], files, 'domino ' + plan['version'])
 
 
 def verify_brew(work, install=False):
@@ -627,18 +581,14 @@ def publish_pypi_local(work):
 
 @contextmanager
 def local_credentials(directory, channel):
+    if channel != 'apt':
+        raise ValueError('Only APT signing uses separate local GPG credentials')
     directory = directory.expanduser().resolve()
     if directory.is_relative_to(prepare_channels.ROOT) or directory.stat().st_mode & 0o077:
         raise ValueError('Credentials must be outside the repository in a 0700 directory')
     saved = dict(os.environ)
     try:
-        if channel == 'brew':
-            state = json.loads((directory / 'state.json').read_text())
-            private = keychain_password(state['tap_keychain_service'], state['tap_keychain_username'])
-            if not private:
-                raise ValueError('Tap deploy private key is missing from macOS Keychain')
-            os.environ['RELEASE_TAP_SSH_KEY'] = private
-        elif channel == 'apt':
+        if channel == 'apt':
             state = json.loads((directory / 'state.json').read_text())
             password = keychain_password(state['keychain_service'], state['keychain_username'])
             if password is None:
@@ -697,8 +647,7 @@ def publish_local(work, repo, requested, selected, credentials, dry_run=False):
                 if channel == 'pypi':
                     publish_pypi_local(work)
                 elif channel == 'brew':
-                    with local_credentials(credentials, channel):
-                        publish_brew(work)
+                    publish_brew(work)
                     verify_brew(work)
                 else:
                     with local_credentials(credentials, 'apt'):
