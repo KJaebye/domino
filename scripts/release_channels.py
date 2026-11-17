@@ -311,7 +311,9 @@ def tap_credentials():
         key = root / 'key'
         with key.open('x') as stream:
             key.chmod(0o600)
-            stream.write(private)
+            # Secret input can omit the final LF or contain CRLF. OpenSSH
+            # rejects an otherwise valid private key without its final LF.
+            stream.write(private.replace('\r\n', '\n').strip() + '\n')
         keys = api('meta')['ssh_keys']
         if not keys or any(not re.fullmatch(r'(?:ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp256) [A-Za-z0-9+/=]+', item) for item in keys):
             raise ValueError('GitHub SSH host keys are invalid')
