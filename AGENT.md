@@ -33,6 +33,12 @@
 
 详细流程见 docs/DELIVERY.md；版本记录见 CHANGELOG.md。
 
+## PR 身份与审批
+
+- 主仓库分支推送与创建 PR 使用独立 GitHub App，通过 `.venv/bin/python scripts/github_agent.py push` 和 `pr --title ... --body-file ...` 操作；先用 `status` 核验身份。不得静默回退到用户个人 gh 登录。
+- main 必须经过 1 人审批，无绕过名单。用户 KJaebye 负责审批；Agent 不使用用户凭据代为审批，不在审批前合并，也不修改保护规则来规避审批。
+- GitHub App 私钥仅存本机钥匙串，认证元数据在仓库外；不将私钥或 token 写入代码、日志、Git remote 或 GitHub Secrets。详细配置见 docs/GITHUB_AGENT.md。
+
 ## 统一分发
 
 - 唯一发布入口是在本机运行 `.venv/bin/python scripts/release_channels.py publish --version X.Y.Z --channels all`；`--dry-run` 只演练，`--channels pypi/brew/apt` 只恢复一个渠道。发布不依赖 GitHub Actions 的额度。

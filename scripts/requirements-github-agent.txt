@@ -1,0 +1,3 @@
+# Local development tooling only; not a Domino runtime dependency.
+keyring>=25,<26
+PyJWT[crypto]>=2.10,<3
