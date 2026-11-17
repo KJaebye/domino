@@ -12,6 +12,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -59,13 +60,16 @@ def outputs(**values):
 
 def fetch(url, *, missing=False, authenticated=False, limit=32 * 1024 * 1024):
     headers = {'User-Agent': 'domino-release', 'Accept': 'application/vnd.github+json' if authenticated else '*/*'}
-    if authenticated and os.environ.get('GH_TOKEN'):
+    github_token = os.environ.get('GH_TOKEN') or os.environ.get('GH_API_TOKEN')
+    if authenticated and github_token:
         if not url.startswith('https://api.github.com/'):
             raise ValueError('Credentials are restricted to the GitHub API')
-        headers['Authorization'] = 'Bearer ' + os.environ['GH_TOKEN']
+        headers['Authorization'] = 'Bearer ' + github_token
     for attempt in range(4):
         try:
             with urlopen(Request(url, headers=headers), timeout=30) as response:
+                if prepare_channels.urlsplit(response.url).scheme != 'https':
+                    raise RuntimeError('Public endpoint redirected outside HTTPS')
                 data = response.read(limit + 1)
                 if len(data) > limit:
                     raise ValueError('Public release file exceeds size limit')
@@ -294,14 +298,40 @@ def check_cli(executable, requested):
             raise ValueError('Installed CLI version differs or query modified HOME')
 
 
+@contextmanager
+def tap_credentials():
+    private = os.environ.get('RELEASE_TAP_SSH_KEY')
+    if not private:
+        if not os.environ.get('GH_TOKEN'):
+            raise ValueError('Configure a tap-only RELEASE_TAP_SSH_KEY or RELEASE_TAP_TOKEN secret')
+        yield dict(os.environ), False
+        return
+    with tempfile.TemporaryDirectory(prefix='domino-tap-key-') as directory:
+        root = Path(directory)
+        key = root / 'key'
+        with key.open('x') as stream:
+            key.chmod(0o600)
+            stream.write(private)
+        keys = api('meta')['ssh_keys']
+        if not keys or any(not re.fullmatch(r'(?:ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp256) [A-Za-z0-9+/=]+', item) for item in keys):
+            raise ValueError('GitHub SSH host keys are invalid')
+        known_hosts = root / 'known_hosts'
+        known_hosts.write_text(''.join('github.com ' + item + '\n' for item in keys))
+        env = {name: value for name, value in os.environ.items() if name not in ('RELEASE_TAP_SSH_KEY', 'GH_TOKEN', 'GH_API_TOKEN')}
+        env['GIT_TERMINAL_PROMPT'] = '0'
+        env['GIT_SSH_COMMAND'] = ('ssh -F /dev/null -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes '
+                                '-o UserKnownHostsFile=' + shlex.quote(str(known_hosts)) + ' -i ' + shlex.quote(str(key)))
+        yield env, True
+
+
 def publish_brew(work):
     plan = validate_inputs(work)
-    if not os.environ.get('GH_TOKEN'):
-        raise ValueError('Homebrew publishing needs the tap-scoped RELEASE_TAP_TOKEN secret')
-    with tempfile.TemporaryDirectory(prefix='domino-tap-') as directory:
+    with tap_credentials() as (env, ssh), tempfile.TemporaryDirectory(prefix='domino-tap-') as directory:
         tap = Path(directory) / 'tap'
+        url = (f'git@github.com:{plan["tap_repository"]}.git' if ssh else
+               f'https://github.com/{plan["tap_repository"]}.git')
         subprocess.run(['git', 'clone', '--single-branch', '--branch', 'main',
-                        f'https://github.com/{plan["tap_repository"]}.git', str(tap)], check=True)
+                        url, str(tap)], check=True, env=env)
         formula = tap / 'Formula/domino.rb'
         if formula.exists():
             text = formula.read_text()
@@ -320,13 +350,13 @@ def publish_brew(work):
         shutil.copyfile(work / 'channels/tap/Formula/domino.rb', formula)
         if not (tap / 'README.md').exists():
             shutil.copyfile(work / 'channels/tap/README.md', tap / 'README.md')
-        subprocess.run(['git', '-C', str(tap), 'add', '--', 'Formula/domino.rb', 'README.md'], check=True)
+        subprocess.run(['git', '-C', str(tap), 'add', '--', 'Formula/domino.rb', 'README.md'], check=True, env=env)
         subprocess.run(['git', '-C', str(tap), '-c', 'user.name=github-actions[bot]',
                         '-c', 'user.email=41898282+github-actions[bot]@users.noreply.github.com',
-                        'commit', '-m', 'domino ' + plan['version']], check=True)
+                        'commit', '-m', 'domino ' + plan['version']], check=True, env=env)
         # gh reads GH_TOKEN through the credential protocol; no credential is stored in the URL.
-        subprocess.run(['git', '-C', str(tap), '-c', 'credential.helper=',
-                        '-c', 'credential.helper=!gh auth git-credential', 'push', 'origin', 'HEAD:main'], check=True)
+        auth = [] if ssh else ['-c', 'credential.helper=', '-c', 'credential.helper=!gh auth git-credential']
+        subprocess.run(['git', '-C', str(tap), *auth, 'push', 'origin', 'HEAD:main'], check=True, env=env)
 
 
 def apt_state(plan):
