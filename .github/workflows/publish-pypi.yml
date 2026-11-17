@@ -152,6 +152,8 @@ jobs:
       - name: Update the tap, preserving other formulas and rejecting downgrades
         env:
           GH_TOKEN: ${{ secrets.RELEASE_TAP_TOKEN }}
+          GH_API_TOKEN: ${{ github.token }}
+          RELEASE_TAP_SSH_KEY: ${{ secrets.RELEASE_TAP_SSH_KEY }}
         run: python scripts/release_channels.py publish-brew
       - name: Install and test from the public tap
         env:

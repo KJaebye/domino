@@ -140,12 +140,12 @@ gh workflow run publish-pypi.yml --repo KJaebye/domino --ref main \
 
 ### 首次上线所需配置
 
-以下配置尚需维护者在 GitHub 完成，源码不会创建仓库、签名密钥或设置凭据：
+首次上线使用以下配置；发布脚本本身不会创建仓库、签名密钥或设置凭据：
 
 | 配置 | 用途 |
 | --- | --- |
 | 公共 `KJaebye/homebrew-tap`，有初始 `main` 提交 | 保存 `Formula/domino.rb`；工作流只修改本项目配方和缺失的 README |
-| `release` environment 的 `RELEASE_TAP_TOKEN` secret | 只授予 tap 仓库所需的 Contents 写权限，不能使用本仓库的普通 GITHUB_TOKEN 跨仓库推送 |
+| `release` environment 的 `RELEASE_TAP_SSH_KEY` secret | 仅授予 tap 仓库写权限的专用 SSH deploy key；也支持仅限 tap 的 `RELEASE_TAP_TOKEN` 作为替代，不复用个人的全局凭据 |
 | 本仓库 Settings → Pages → GitHub Actions | 工作流托管 APT 到 `https://kjaebye.github.io/domino/apt/`，不再需要独立 APT 仓库 |
 | 仓库 variable `APT_GPG_FINGERPRINT` | 生产签名密钥的完整主公钥指纹 |
 | `github-pages` environment 的 `APT_GPG_PRIVATE_KEY` secret | ASCII armored 专用 APT 私钥；只在临时 GPG HOME 中导入，完成即销毁 |

@@ -38,7 +38,7 @@ class ReleaseWorkflowTests(DistributionFixture):
         self.environment.start()
         self.addCleanup(self.environment.stop)
         for name in ['GITHUB_OUTPUT', 'GITHUB_STEP_SUMMARY', 'APT_GPG_PRIVATE_KEY',
-                     'APT_GPG_PASSPHRASE', 'APT_GPG_FINGERPRINT']:
+                     'APT_GPG_PASSPHRASE', 'APT_GPG_FINGERPRINT', 'RELEASE_TAP_SSH_KEY']:
             os.environ.pop(name, None)
 
     def pypi_response(self, missing=(), conflict=None):
@@ -71,6 +71,14 @@ class ReleaseWorkflowTests(DistributionFixture):
         (self.work / 'channels/tap/Formula/domino.rb').write_text('tampered')
         with self.assertRaisesRegex(ValueError, 'channel materials changed'):
             release.validate_inputs(self.work)
+
+    def test_https_downgrade_is_rejected_before_reading_public_key_or_metadata(self):
+        with patch.object(release, 'urlopen') as request:
+            response = request.return_value.__enter__.return_value
+            response.url = 'http://example.invalid/apt/domino.sources'
+            with self.assertRaisesRegex(RuntimeError, 'outside HTTPS'):
+                release.fetch('https://example.invalid/apt/domino.sources')
+            response.read.assert_not_called()
 
     def test_github_resume_reuses_matching_draft_assets_without_clobbering(self):
         items = [{'name': name, 'digest': 'sha256:' + digest} for name, digest in self.plan['files'].items()]
@@ -147,6 +155,19 @@ class ReleaseWorkflowTests(DistributionFixture):
             with self.assertRaisesRegex(ValueError, 'downgrade'):
                 release.publish_brew(self.work)
         self.assertEqual(commands.call_count, 1)
+
+    def test_tap_deploy_key_is_scoped_to_temporary_files_and_pinned_host_keys(self):
+        os.environ['RELEASE_TAP_SSH_KEY'] = 'disposable synthetic key\n'
+        with patch.object(release, 'api', return_value={'ssh_keys': ['ssh-ed25519 QUJD']}):
+            with release.tap_credentials() as (env, ssh):
+                self.assertTrue(ssh)
+                self.assertNotIn('RELEASE_TAP_SSH_KEY', env)
+                self.assertNotIn('GH_TOKEN', env)
+                args = release.shlex.split(env['GIT_SSH_COMMAND'])
+                key = Path(args[args.index('-i') + 1])
+                self.assertEqual(key.stat().st_mode & 0o777, 0o600)
+                self.assertIn('StrictHostKeyChecking=yes', env['GIT_SSH_COMMAND'])
+        self.assertFalse(key.exists())
 
     def test_apt_downgrade_or_unrecognized_source_is_rejected(self):
         old = {'schema': 1, 'repository': 'KJaebye/domino', 'version': '1.0.0'}
