@@ -118,7 +118,7 @@ pipx ensurepath
 ```text
 固定标签提交 → 复用 / 构建并验证软件产物 → 核验 / 发布 GitHub Release
                                          ├─ PyPI：Twine → 校验文件并临时安装
-                                         ├─ Homebrew：本机部署密钥推送 tap → 校验配方及 runtime
+                                         ├─ Homebrew：本机 gh 提交 tap → 校验配方及 runtime
                                          └─ APT：本机 GPG 签名 → 推送公开软件源 → 校验签名、索引和包
                                                        ↓
                                          本机 release-status.json
@@ -133,7 +133,7 @@ pipx ensurepath
 | 内容 | 位置与使用方式 |
 | --- | --- |
 | 项目范围的 PyPI token | macOS 钥匙串：服务 `https://upload.pypi.org/legacy/`、账户 `__token__`；仅在确有缺失包时读取，临时交给 Twine 进程 |
-| Homebrew tap 专用 SSH 私钥 | macOS 钥匙串：服务 `domino-release/tap`、账户 `deploy-private-key`；执行时写临时 0600 文件，用完删除；不保留未加密私钥文件 |
+| Homebrew / APT 公开仓库写入凭据 | 沿用 `gh` 已有的 macOS 钥匙串登录；通过 GitHub Git API 提交公开文件，不额外生成部署私钥，也不导出个人 token |
 | APT GPG 私钥及撤销证书 | 仓库外 `~/.local/share/domino-release/gnupg/`，目录权限 0700；私钥本身有口令保护 |
 | APT 私钥解锁口令 | macOS 钥匙串：服务 `domino-release/apt`、账户 `signing-passphrase`；仅签名时通过 stdin 交给 GPG |
 | 指纹、目标仓库和钥匙串条目名称 | `~/.local/share/domino-release/state.json`，权限 0600，只含公开配置，不含私钥或 token |
@@ -147,7 +147,7 @@ pipx ensurepath
 .venv/bin/python -m keyring set https://upload.pypi.org/legacy/ __token__
 ```
 
-SSH 私钥需要保留多行格式，通过本机初始化写入钥匙串；不要把多行私钥直接粘到 shell 命令中。备份 GPG 目录与钥匙串时使用加密备份，撤销证书按私钥同等保护。
+前期 Actions 方案创建的独立 Homebrew 部署密钥已撤销，私钥条目和 GitHub Secret 副本均已移除。本机 gh 登录的凭据仍由系统钥匙串管理。备份 GPG 目录与钥匙串时使用加密备份，撤销证书按私钥同等保护。
 
 ### 发布目标与签名
 

@@ -110,7 +110,7 @@ class ReleaseWorkflowTests(DistributionFixture):
         directory.mkdir(mode=0o755)
         directory.chmod(0o755)
         with self.assertRaisesRegex(ValueError, '0700'):
-            with release.local_credentials(directory, 'brew'):
+            with release.local_credentials(directory, 'apt'):
                 self.fail('insecure directory accepted')
 
     def test_apt_publisher_refuses_private_paths_before_starting_git(self):
@@ -215,45 +215,29 @@ class ReleaseWorkflowTests(DistributionFixture):
         self.assertEqual(set(state['channels'].values()), {'blocked'})
         self.assertFalse(state['complete'])
 
-    def test_homebrew_downgrade_never_commits_or_pushes(self):
-        def git_clone(command, **kwargs):
-            self.assertEqual(command[:2], ['git', 'clone'])
-            destination = Path(command[-1])
-            (destination / 'Formula').mkdir(parents=True)
-            (destination / 'Formula/domino.rb').write_text('class Domino < Formula\n  version "1.0.0"\nend\n')
-        os.environ['GH_TOKEN'] = 'test-credential'
-        with patch.object(release.subprocess, 'run', side_effect=git_clone) as commands:
+    def test_homebrew_downgrade_never_writes_a_repository(self):
+        current = b'class Domino < Formula\n  version "1.0.0"\nend\n'
+        with patch.object(release, 'fetch', return_value=current), patch.object(release, 'publish_git_files') as publish:
             with self.assertRaisesRegex(ValueError, 'downgrade'):
                 release.publish_brew(self.work)
-        self.assertEqual(commands.call_count, 1)
+        publish.assert_not_called()
 
-    def test_tap_deploy_key_is_scoped_to_temporary_files_and_pinned_host_keys(self):
-        os.environ['RELEASE_TAP_SSH_KEY'] = 'disposable synthetic key\n'
-        with patch.object(release, 'api', return_value={'ssh_keys': ['ssh-ed25519 QUJD']}):
-            with release.tap_credentials() as (env, ssh):
-                self.assertTrue(ssh)
-                self.assertNotIn('RELEASE_TAP_SSH_KEY', env)
-                self.assertNotIn('GH_TOKEN', env)
-                args = release.shlex.split(env['GIT_SSH_COMMAND'])
-                key = Path(args[args.index('-i') + 1])
-                self.assertEqual(key.stat().st_mode & 0o777, 0o600)
-                self.assertIn('StrictHostKeyChecking=yes', env['GIT_SSH_COMMAND'])
-        self.assertFalse(key.exists())
+    def test_matching_homebrew_version_does_not_read_credentials_or_write(self):
+        current = (self.work / 'channels/tap/Formula/domino.rb').read_bytes()
+        with patch.object(release, 'fetch', return_value=current), \
+                patch.object(release, 'publish_git_files') as publish, patch.object(release, 'keychain_password') as keychain:
+            release.publish_brew(self.work)
+        publish.assert_not_called()
+        keychain.assert_not_called()
 
-    def test_tap_key_from_a_trimmed_secret_can_be_loaded_by_openssh(self):
-        if not shutil.which('ssh-keygen'):
-            self.skipTest('OpenSSH tooling unavailable')
-        original = self.root / 'disposable-ssh-key'
-        subprocess.run(['ssh-keygen', '-q', '-t', 'ed25519', '-N', '', '-f', str(original)],
-                       check=True, capture_output=True)
-        os.environ['RELEASE_TAP_SSH_KEY'] = original.read_text().strip().replace('\n', '\r\n')
-        with patch.object(release, 'api', return_value={'ssh_keys': ['ssh-ed25519 QUJD']}):
-            with release.tap_credentials() as (env, ssh):
-                args = release.shlex.split(env['GIT_SSH_COMMAND'])
-                private = Path(args[args.index('-i') + 1])
-                loaded = subprocess.run(['ssh-keygen', '-y', '-f', str(private)], check=True, capture_output=True)
-                self.assertTrue(loaded.stdout.startswith(b'ssh-ed25519 '))
-        self.assertFalse(private.exists())
+    def test_missing_homebrew_formula_is_published_through_the_existing_local_gh_login(self):
+        with patch.object(release, 'fetch', return_value=None), \
+                patch.object(release, 'api', return_value={}), patch.object(release, 'publish_git_files') as publish:
+            release.publish_brew(self.work)
+        args = publish.call_args.args
+        self.assertEqual(args[0], 'KJaebye/homebrew-tap')
+        self.assertEqual(set(args[1]), {'Formula/domino.rb'})
+        self.assertEqual(args[1]['Formula/domino.rb'], (self.work / 'channels/tap/Formula/domino.rb').read_bytes())
 
     def test_apt_downgrade_or_unrecognized_source_is_rejected(self):
         old = {'schema': 1, 'repository': 'KJaebye/domino', 'version': '1.0.0'}
