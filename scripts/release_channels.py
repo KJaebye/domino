@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
-"""Deterministic multi-channel release operations for the single release workflow.
+"""Local multi-channel publishing, with optional read-only installation checks.
 
-Secrets come from the execution environment only. Never reads local credential
-files, initializes Domino, creates repositories, or generates production keys.
+Credentials stay in macOS Keychain and a restricted directory outside the
+repository. Never reads repository token files, initializes Domino, creates
+repositories, uploads private keys, or generates production keys.
 """
 import argparse
 import ast
-from contextlib import contextmanager
+import base64
+from contextlib import contextmanager, nullcontext
 import hashlib
 import json
 import os
@@ -85,19 +87,37 @@ def fetch(url, *, missing=False, authenticated=False, limit=32 * 1024 * 1024):
         time.sleep(2 ** attempt)
 
 
-def api(path, *, missing=False):
+def api(path, *, missing=False, data=None, method=None):
+    if os.environ.get('RELEASE_LOCAL_API') == '1':
+        args = ['gh', 'api', path]
+        if data is not None:
+            args += ['--method', method or 'POST', '--input', '-']
+        result = subprocess.run(args, input=json.dumps(data).encode() if data is not None else None,
+                                capture_output=True, timeout=60)
+        if result.returncode:
+            try:
+                problem = json.loads(result.stdout)
+            except ValueError:
+                problem = {}
+            if missing and problem.get('status') == '404':
+                return None
+            raise RuntimeError('GitHub API request failed: ' + path)
+        return json.loads(result.stdout)
+    if data is not None:
+        raise ValueError('GitHub writes run locally through the existing gh login')
     data = fetch('https://api.github.com/' + path, authenticated=True, missing=missing)
     return json.loads(data) if data is not None else None
 
 
-def resolve(work, repo, requested, tap_repo=None, apt_url=None):
+def resolve(work, repo, requested, tap_repo=None, apt_url=None, apt_repo=None):
     requested = version(requested)
     repo = prepare_channels.repository_name(repo)
     tap_repo = prepare_channels.repository_name(tap_repo or repo.split('/')[0] + '/homebrew-tap')
     if not tap_repo.split('/')[1].startswith('homebrew-'):
         raise ValueError('Tap repository name must start with homebrew-')
     owner, name = repo.split('/')
-    apt_url = apt_url or f'https://{owner.lower()}.github.io/{name}/apt/'
+    apt_repo = prepare_channels.repository_name(apt_repo or owner + '/domino-apt')
+    apt_url = apt_url or f'https://raw.githubusercontent.com/{apt_repo}/main/'
     # Use the same validation as channel generation without touching an output.
     parsed = prepare_channels.urlsplit(apt_url)
     if (parsed.scheme != 'https' or not parsed.hostname or parsed.username or parsed.password
@@ -116,7 +136,7 @@ def resolve(work, repo, requested, tap_repo=None, apt_url=None):
     if existing and (existing['draft'] or existing['prerelease']):
         raise ValueError('Resume only published stable releases; inspect the draft first')
     plan = {'schema': 1, 'version': requested, 'repository': repo, 'source_sha': ref['sha'],
-            'tap_repository': tap_repo, 'apt_url': apt_url.rstrip('/') + '/',
+            'tap_repository': tap_repo, 'apt_repository': apt_repo, 'apt_url': apt_url.rstrip('/') + '/',
             'existing_release': existing is not None, 'assets': existing['assets'] if existing else []}
     work.mkdir(parents=True, exist_ok=False)
     write_json(work / 'plan.json', plan)
@@ -321,7 +341,8 @@ def tap_credentials():
         known_hosts.write_text(''.join('github.com ' + item + '\n' for item in keys))
         env = {name: value for name, value in os.environ.items() if name not in ('RELEASE_TAP_SSH_KEY', 'GH_TOKEN', 'GH_API_TOKEN')}
         env['GIT_TERMINAL_PROMPT'] = '0'
-        env['GIT_SSH_COMMAND'] = ('ssh -F /dev/null -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes '
+        env['GIT_SSH_COMMAND'] = ('ssh -F /dev/null -o ConnectTimeout=15 -o ServerAliveInterval=15 '
+                                '-o ServerAliveCountMax=2 -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes '
                                 '-o UserKnownHostsFile=' + shlex.quote(str(known_hosts)) + ' -i ' + shlex.quote(str(key)))
         yield env, True
 
@@ -361,10 +382,32 @@ def publish_brew(work):
         subprocess.run(['git', '-C', str(tap), *auth, 'push', 'origin', 'HEAD:main'], check=True, env=env)
 
 
+def verify_brew(work, install=False):
+    plan = validate_inputs(work)
+    raw = fetch(f'https://raw.githubusercontent.com/{plan["tap_repository"]}/main/Formula/domino.rb'
+                + '?release_check=' + str(time.time_ns()))
+    if raw != (work / 'channels/tap/Formula/domino.rb').read_bytes():
+        raise ValueError('Public Homebrew formula differs from the verified release')
+    subprocess.run(['ruby', '-c'], input=raw, check=True, capture_output=True)
+    if install:
+        formula = plan['tap_repository'].replace('/homebrew-', '/', 1) + '/domino'
+        subprocess.run(['brew', 'install', formula], check=True)
+        subprocess.run(['brew', 'test', formula], check=True)
+        prefix = subprocess.check_output(['brew', '--prefix', formula], text=True).strip()
+        check_cli(Path(prefix) / 'bin/domino', plan['version'])
+
+
+def apt_fetch(plan, name, missing=False):
+    url = plan['apt_url'] + name
+    if prepare_channels.urlsplit(url).hostname == 'raw.githubusercontent.com':
+        url += '?release_check=' + str(time.time_ns())
+    return fetch(url, missing=missing)
+
+
 def apt_state(plan):
-    raw = fetch(plan['apt_url'] + 'channel.json', missing=True)
+    raw = apt_fetch(plan, 'channel.json', missing=True)
     if raw is None:
-        if fetch(plan['apt_url'] + 'dists/stable/InRelease', missing=True) is not None:
+        if apt_fetch(plan, 'dists/stable/InRelease', missing=True) is not None:
             raise ValueError('Existing APT source has no channel state; refusing to replace it')
         return None
     state = json.loads(raw)
@@ -391,15 +434,16 @@ def prepare_apt(work):
     if old and old['version'] == plan['version']:
         verify_apt(work)
         outputs(deploy=False)
-        return
+        return False
     previous = work / 'previous-apt'
     if old:
         for name, digest in old['files'].items():
-            if not name.startswith('pool/'):
+            if not name.startswith('pool/') and '/by-hash/' not in name:
                 continue
-            if not re.fullmatch(r'pool/main/d/domino-proxy/domino-proxy_' + VERSION + r'-\d+_all\.deb', name):
+            if not re.fullmatch(r'pool/main/d/domino-proxy/domino-proxy_' + VERSION + r'-\d+_all\.deb'
+                               r'|dists/stable/main/binary-(?:amd64|arm64)/by-hash/(?:SHA256|SHA512)/[a-f0-9]+', name):
                 raise ValueError('Invalid previous APT pool member')
-            data = fetch(plan['apt_url'] + name)
+            data = apt_fetch(plan, name)
             if hashlib.sha256(data).hexdigest() != digest:
                 raise ValueError('Previous APT package checksum differs')
             path = previous / name
@@ -408,9 +452,10 @@ def prepare_apt(work):
         if not (previous / 'pool').is_dir():
             raise ValueError('Previous APT state has no package pool')
     private = os.environ.get('APT_GPG_PRIVATE_KEY')
-    if not private:
-        raise ValueError('Configure the APT_GPG_PRIVATE_KEY environment secret')
-    with signing_home(private):
+    local = os.environ.get('RELEASE_LOCAL_SIGNING') == '1'
+    if not local and not private:
+        raise ValueError('Configure the local GPG key and Keychain passphrase')
+    with nullcontext() if local else signing_home(private):
         report = prepare_channels.prepare(work / 'release', work / 'apt-signed', release_repo=plan['repository'],
             tap_repo=plan['tap_repository'], apt_repo=plan['repository'], apt_url=plan['apt_url'],
             sign_key=key, previous_repo=previous if old else None)
@@ -423,6 +468,7 @@ def prepare_apt(work):
                        if name.startswith('apt-site/')}}
     write_json(public / 'apt/channel.json', state)
     outputs(deploy=True)
+    return True
 
 
 @contextmanager
@@ -461,7 +507,7 @@ def verify_apt(work, install=False):
         gnupg.mkdir(mode=0o700)
         names = ['domino.sources', 'domino-archive-keyring.gpg', 'dists/stable/InRelease', package]
         for name in names:
-            data = fetch(plan['apt_url'] + name)
+            data = apt_fetch(plan, name)
             if hashlib.sha256(data).hexdigest() != state['files'].get(name):
                 raise ValueError('APT public file checksum differs: ' + name)
             (root / Path(name).name).write_bytes(data)
@@ -488,7 +534,7 @@ def verify_apt(work, install=False):
         signed = (root / 'InRelease').read_text()
         for arch in ['amd64', 'arm64']:
             name = f'dists/stable/main/binary-{arch}/Packages'
-            data = fetch(plan['apt_url'] + name)
+            data = apt_fetch(plan, name)
             digest = hashlib.sha256(data).hexdigest()
             if digest != state['files'].get(name) or not re.search(
                     r'^ ' + digest + r'\s+' + str(len(data)) + r' ' + re.escape(name.removeprefix('dists/stable/')) + r'$', signed, re.M):
@@ -504,6 +550,194 @@ def verify_apt(work, install=False):
             subprocess.run(['sudo', 'apt-get', *options, 'install', '-y', '--no-install-recommends',
                             PROJECT + '=' + plan['version'] + '-1'], check=True)
             check_cli('/usr/bin/domino', plan['version'])
+
+
+def publish_apt_git(work):
+    """Publish public signed files by git; does not need Pages or Actions."""
+    plan = validate_inputs(work)
+    repository = prepare_channels.repository_name(plan['apt_repository'])
+    source = work / 'pages/apt'
+    state = json.loads((source / 'channel.json').read_text())
+    for name, digest in state['files'].items():
+        relative = Path(name)
+        allowed = (name in ['domino.sources', 'domino-archive-keyring.gpg', 'README.md', '.nojekyll']
+                   or re.fullmatch(r'pool/main/d/domino-proxy/domino-proxy_' + VERSION + r'-\d+_all\.deb', name)
+                   or re.fullmatch(r'dists/stable/(?:Release|InRelease|Release\.gpg|main/binary-(?:amd64|arm64)/'
+                                   r'(?:Packages(?:\.gz)?|by-hash/(?:SHA256/[a-f0-9]{64}|SHA512/[a-f0-9]{128})))', name))
+        if not allowed or relative.is_absolute() or '..' in relative.parts or (source / relative).is_symlink():
+            raise ValueError('Only public APT repository files may be uploaded')
+        data = (source / relative).read_bytes()
+        if re.search(rb'-----BEGIN [A-Z ]*PRIVATE KEY(?: BLOCK)?-----', data):
+            raise ValueError('Private key material cannot be published')
+        if hashlib.sha256(data).hexdigest() != digest:
+            raise ValueError('Signed APT publication files changed')
+    files = {name: (source / name).read_bytes() for name in [*state['files'], 'channel.json']}
+    publish_git_files(repository, files, 'Publish signed Domino ' + plan['version'])
+
+
+def publish_git_files(repository, files, message):
+    """Commit public files atomically through the Git API, without git transport."""
+    repository = prepare_channels.repository_name(repository)
+    parent = api(f'repos/{repository}/git/ref/heads/main')['object']['sha']
+    commit = api(f'repos/{repository}/git/commits/{parent}')
+    tree = api(f'repos/{repository}/git/trees/{commit["tree"]["sha"]}?recursive=1')
+    if tree.get('truncated'):
+        raise ValueError('Repository tree is too large for a complete publication check')
+    old = {item['path']: item['sha'] for item in tree['tree'] if item['type'] == 'blob'}
+    changes, blobs = [], {}
+    for name, data in files.items():
+        relative = Path(name)
+        if relative.is_absolute() or '..' in relative.parts or '.git' in relative.parts:
+            raise ValueError('Invalid public repository path')
+        digest = hashlib.sha1(b'blob ' + str(len(data)).encode() + b'\0' + data).hexdigest()
+        if old.get(name) == digest:
+            continue
+        if digest not in blobs:
+            blob = api(f'repos/{repository}/git/blobs', data={'content': base64.b64encode(data).decode(), 'encoding': 'base64'})
+            if blob['sha'] != digest:
+                raise ValueError('Uploaded Git blob checksum differs')
+            blobs[digest] = digest
+        changes.append({'path': name, 'mode': '100644', 'type': 'blob', 'sha': digest})
+    if not changes:
+        return parent
+    new_tree = api(f'repos/{repository}/git/trees', data={'base_tree': commit['tree']['sha'], 'tree': changes})
+    new_commit = api(f'repos/{repository}/git/commits', data={'message': message, 'tree': new_tree['sha'], 'parents': [parent]})
+    api(f'repos/{repository}/git/refs/heads/main', method='PATCH', data={'sha': new_commit['sha'], 'force': False})
+    return new_commit['sha']
+
+
+def publish_pypi_local(work):
+    missing = stage_pypi(work)
+    if missing:
+        token = keychain_password('https://upload.pypi.org/legacy/', '__token__')
+        if not token:
+            raise ValueError('Configure the project PyPI token in macOS Keychain')
+        env = {name: value for name, value in os.environ.items() if not name.startswith('TWINE_')}
+        env.update(TWINE_USERNAME='__token__', TWINE_PASSWORD=token)
+        # Only the Twine subprocess receives the password; no .pypirc or
+        # repository token file is read, and no secret appears in argv/artifacts.
+        subprocess.run([sys.executable, '-m', 'twine', 'upload', '--non-interactive',
+                        '--disable-progress-bar', '--username', '__token__', '--config-file', os.devnull,
+                        '--repository-url', 'https://upload.pypi.org/legacy/',
+                        *[str(work / 'pypi-upload' / name) for name in missing]], check=True, env=env)
+    verify_pypi(work, install=True)
+
+
+@contextmanager
+def local_credentials(directory, channel):
+    directory = directory.expanduser().resolve()
+    if directory.is_relative_to(prepare_channels.ROOT) or directory.stat().st_mode & 0o077:
+        raise ValueError('Credentials must be outside the repository in a 0700 directory')
+    saved = dict(os.environ)
+    try:
+        if channel == 'brew':
+            state = json.loads((directory / 'state.json').read_text())
+            private = keychain_password(state['tap_keychain_service'], state['tap_keychain_username'])
+            if not private:
+                raise ValueError('Tap deploy private key is missing from macOS Keychain')
+            os.environ['RELEASE_TAP_SSH_KEY'] = private
+        elif channel == 'apt':
+            state = json.loads((directory / 'state.json').read_text())
+            password = keychain_password(state['keychain_service'], state['keychain_username'])
+            if password is None:
+                raise ValueError('APT signing passphrase is missing from macOS Keychain')
+            home = directory / 'gnupg'
+            if home.is_symlink() or home.stat().st_mode & 0o077:
+                raise ValueError('GPG HOME must be a regular 0700 directory')
+            os.environ.update(GNUPGHOME=str(home), APT_GPG_FINGERPRINT=state['apt_fingerprint'],
+                              APT_GPG_PASSPHRASE=password, RELEASE_LOCAL_SIGNING='1')
+            os.environ.pop('APT_GPG_PRIVATE_KEY', None)
+        yield
+    finally:
+        if channel == 'apt':
+            subprocess.run(['gpgconf', '--homedir', str(directory / 'gnupg'), '--kill', 'gpg-agent'],
+                           capture_output=True)
+        os.environ.clear()
+        os.environ.update(saved)
+
+
+def keychain_password(service, username):
+    # Select the native backend explicitly; never fall back to a plaintext file.
+    from keyring.backends.macOS import Keyring
+    return Keyring().get_password(service, username)
+
+
+def publish_local(work, repo, requested, selected, credentials, dry_run=False):
+    """One local workflow. Each channel has its own recoverable result."""
+    selected_channels = ['pypi', 'brew', 'apt'] if selected == 'all' else [selected]
+    previous_api = os.environ.get('RELEASE_LOCAL_API')
+    os.environ['RELEASE_LOCAL_API'] = '1'
+    results = {}
+    try:
+        resolve(work, repo, requested, os.environ.get('RELEASE_TAP_REPOSITORY') or None,
+                os.environ.get('RELEASE_APT_URL') or None, os.environ.get('RELEASE_APT_REPOSITORY') or None)
+        with tempfile.TemporaryDirectory(prefix='domino-tag-source-') as directory:
+            source = Path(directory) / 'source'
+            target = plan_at(work)['source_sha']
+            available = subprocess.run(['git', '-C', str(prepare_channels.ROOT), 'cat-file', '-e', target],
+                                       capture_output=True).returncode == 0
+            if available:
+                subprocess.run(['git', 'clone', '--quiet', '--shared', '--no-checkout',
+                                str(prepare_channels.ROOT), str(source)], check=True)
+                subprocess.run(['git', '-C', str(source), 'checkout', '--quiet', '--detach', target], check=True)
+            else:
+                subprocess.run(['git', '-c', 'http.version=HTTP/1.1', 'clone', '--quiet', '--depth', '1',
+                                '--single-branch', '--branch', 'v' + requested,
+                                f'https://github.com/{repo}.git', str(source)], check=True, timeout=180)
+            prepare(work, source)
+        results['prepare'] = 'success'
+        if dry_run:
+            return summary(work, results, selected, True)
+        publish_github(work)
+        results['github'] = 'success'
+        for channel in selected_channels:
+            try:
+                if channel == 'pypi':
+                    publish_pypi_local(work)
+                elif channel == 'brew':
+                    with local_credentials(credentials, channel):
+                        publish_brew(work)
+                    verify_brew(work)
+                else:
+                    with local_credentials(credentials, 'apt'):
+                        deploy = prepare_apt(work)
+                    if deploy:
+                        publish_apt_git(work)
+                    state = json.loads((credentials.expanduser() / 'state.json').read_text())
+                    previous_key = os.environ.get('APT_GPG_FINGERPRINT')
+                    try:
+                        os.environ['APT_GPG_FINGERPRINT'] = state['apt_fingerprint']
+                        verify_apt(work)
+                    finally:
+                        if previous_key is None:
+                            os.environ.pop('APT_GPG_FINGERPRINT', None)
+                        else:
+                            os.environ['APT_GPG_FINGERPRINT'] = previous_key
+                results[channel] = 'success'
+                print(channel + ': verified')
+            except Exception as error:
+                results[channel] = 'failure'
+                # Exception text may contain secret-bearing commands from external
+                # libraries. Per-command stderr and the exception type identify failure.
+                detail = str(error) if isinstance(error, (ValueError, RuntimeError)) else type(error).__name__
+                print(channel + ': failed (' + detail + ')', file=sys.stderr)
+        return summary(work, results, selected, False)
+    except Exception:
+        if 'prepare' not in results:
+            results['prepare'] = 'failure'
+        elif 'github' not in results:
+            results['github'] = 'failure'
+        if not (work / 'release-status.json').exists():
+            try:
+                summary(work, results, selected, dry_run)
+            except ValueError:
+                pass
+        raise
+    finally:
+        if previous_api is None:
+            os.environ.pop('RELEASE_LOCAL_API', None)
+        else:
+            os.environ['RELEASE_LOCAL_API'] = previous_api
 
 
 def summary(work, results, selected, dry_run):
@@ -531,18 +765,29 @@ def summary(work, results, selected, dry_run):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('operation', choices=['resolve', 'prepare', 'publish-github', 'stage-pypi',
-                                            'verify-pypi', 'publish-brew', 'prepare-apt', 'verify-apt', 'summary'])
-    parser.add_argument('--work', type=Path, default=Path('release-work'))
+    parser.add_argument('operation', choices=['publish', 'resolve', 'prepare', 'publish-github', 'stage-pypi',
+                                            'verify-pypi', 'verify-brew', 'publish-brew', 'prepare-apt', 'verify-apt', 'summary'])
+    parser.add_argument('--work', type=Path)
     parser.add_argument('--source', type=Path, default=Path('.release-source'))
     parser.add_argument('--version', default=os.environ.get('RELEASE_VERSION'))
     parser.add_argument('--repo', default=os.environ.get('GITHUB_REPOSITORY', 'KJaebye/domino'))
     parser.add_argument('--install', action='store_true')
+    parser.add_argument('--channels', choices=['all', 'pypi', 'brew', 'apt'], default='all')
+    parser.add_argument('--dry-run', action='store_true')
+    parser.add_argument('--credentials-dir', type=Path, default=Path.home() / '.local/share/domino-release')
     args = parser.parse_args()
     operation = args.operation
+    if operation == 'publish':
+        requested = version(args.version or '')
+        work = args.work or prepare_channels.ROOT / 'dist' / f'local-release-{requested}-{time.time_ns()}'
+        work.parent.mkdir(parents=True, exist_ok=True)
+        result = publish_local(work, args.repo, requested, args.channels, args.credentials_dir, args.dry_run)
+        print(json.dumps({'work': str(work), **result}))
+        return
+    args.work = args.work or Path('release-work')
     if operation == 'resolve':
         resolve(args.work, args.repo, args.version or '', os.environ.get('RELEASE_TAP_REPOSITORY') or None,
-                os.environ.get('RELEASE_APT_URL') or None)
+                os.environ.get('RELEASE_APT_URL') or None, os.environ.get('RELEASE_APT_REPOSITORY') or None)
     elif operation == 'prepare':
         prepare(args.work, args.source.resolve())
     elif operation == 'summary':
@@ -551,7 +796,7 @@ def main():
         summary(args.work, results, os.environ.get('RELEASE_CHANNELS', 'all'), os.environ.get('RELEASE_DRY_RUN') == 'true')
     else:
         function = {'publish-github': publish_github, 'stage-pypi': stage_pypi, 'verify-pypi': verify_pypi,
-                    'publish-brew': publish_brew, 'prepare-apt': prepare_apt, 'verify-apt': verify_apt}[operation]
+                    'verify-brew': verify_brew, 'publish-brew': publish_brew, 'prepare-apt': prepare_apt, 'verify-apt': verify_apt}[operation]
         function(args.work, install=args.install) if operation.startswith('verify-') else function(args.work)
 
 

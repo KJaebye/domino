@@ -167,19 +167,40 @@ def repository(output, deb, control, epoch, previous_repo=None):
             shutil.copyfile(path, destination)
         if pool.exists() and pool.read_bytes() != deb.read_bytes():
             raise ValueError('Published Debian package version cannot be replaced')
+        for path in sorted((previous_repo / 'dists').rglob('*')):
+            if path.is_symlink():
+                raise ValueError('Previous apt metadata contains a symlink')
+            if path.is_dir() or '/by-hash/' not in path.as_posix():
+                continue
+            relative = path.relative_to(previous_repo).as_posix()
+            match = re.fullmatch(r'dists/stable/main/binary-(?:amd64|arm64)/by-hash/(SHA256|SHA512)/([a-f0-9]+)', relative)
+            if not match or not path.is_file() or path.stat().st_size > 32 * 1024 * 1024:
+                raise ValueError('Invalid previous apt hash index')
+            data = path.read_bytes()
+            if hashlib.new(match[1].lower(), data).hexdigest() != match[2]:
+                raise ValueError('Previous apt hash index is corrupt')
+            destination = repo / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(path, destination)
     shutil.copyfile(deb, pool)
     index = (control + f'Filename: {pool.relative_to(repo).as_posix()}\n'
              f'Size: {pool.stat().st_size}\nSHA256: {digest(pool.read_bytes())}\n\n').encode()
     suite = repo / 'dists/stable'
     for arch in ['amd64', 'arm64']:
         binary = suite / f'main/binary-{arch}'
-        binary.mkdir(parents=True)
+        binary.mkdir(parents=True, exist_ok=True)
         (binary / 'Packages').write_bytes(index)
         (binary / 'Packages.gz').write_bytes(gzip.compress(index, mtime=0))
-    paths = sorted(path for path in suite.rglob('*') if path.is_file())
+    paths = sorted(path for path in suite.rglob('Packages*') if path.is_file())
+    for path in paths:
+        for algorithm in ['sha256', 'sha512']:
+            data = path.read_bytes()
+            target = path.parent / 'by-hash' / algorithm.upper() / hashlib.new(algorithm, data).hexdigest()
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
     release = ('Origin: Domino\nLabel: Domino\nSuite: stable\nCodename: stable\n'
                f'Date: {format_datetime(datetime.fromtimestamp(epoch, timezone.utc), usegmt=True)}\n'
-               'Architectures: amd64 arm64\nComponents: main\nDescription: Domino CLI packages\n')
+               'Architectures: amd64 arm64\nComponents: main\nAcquire-By-Hash: yes\nDescription: Domino CLI packages\n')
     for algorithm in ['sha256', 'sha512']:
         release += algorithm.upper() + ':\n'
         for path in paths:

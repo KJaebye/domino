@@ -106,7 +106,7 @@ python3 scripts/build_resources.py --base-url https://你的域名/domino/ \
 
 `scripts/verify.py` 输出 `dist/verification.json`，记录系统、架构、Python、测试数和跳过项。`DOMINO_TEST_CORE` 可指定临时校验内核。GitHub Actions 的 `Verify` 保留 macOS / Ubuntu × Python 版本矩阵，仅通过 `workflow_dispatch` 手动运行或作为复用测试 workflow 调用；日常 push、PR 和标签推送不自动触发完整测试。真实执行结果以 CI 为准，未运行的矩阵不能记为通过。
 
-三渠道统一发布在 GitHub 的 **Actions → Publish · PyPI / Homebrew / APT → Run workflow** 从 `main` 发起，输入已经存在标签的 `X.Y.Z` 软件版本。先用 `dry_run=true` 演练，再按需同步全部渠道或补发一个渠道；详细配置与命令见 [分发说明](DISTRIBUTION.md#一个-workflow-发布三个渠道)。已发布版本复用原始产物，不因发布工具改动重建软件或升版本。未发布的新标签在 workflow 中验证并构建一次。`Verify` / `Distribution smoke tests` 保留手动平台验收入口；实际结果以运行记录为准。
+三渠道统一发布在本机运行 `.venv/bin/python scripts/release_channels.py publish --version X.Y.Z --channels all`；先用 `--dry-run` 演练，或用 `--channels` 补发单个渠道。Twine、Homebrew 推送、APT 签名与上传均在本机完成，不要求 Actions 额度，也不把私钥放到 GitHub。已发布版本复用原始产物，不因发布工具改动重建软件或升版本。详情见 [分发说明](DISTRIBUTION.md#一个本机流程发布三个渠道)。`release.yml`、`Verify` / `Distribution smoke tests` 只提供可选测试入口；真实安装通过须有运行记录。
 
 `scripts/verify_ssh.py` 仅监听回环地址，临时生成测试密钥并启动用户级 sshd，使用临时 HOME 执行写操作，结束后停止进程和清理目录；某些系统不允许普通用户启动 sshd 时返回未验证状态，不修改系统 Remote Login。
 
@@ -116,7 +116,7 @@ python3 scripts/build_resources.py --base-url https://你的域名/domino/ \
 1. 在干净检出中安装 `.[dev]`，运行 `scripts/check_repository.py`，确认公开文件、文档链接、最低 Python 语法和凭据模式检查通过。
 2. 按 [平台支持](PLATFORMS.md) 运行完整 CI；本地完整回归显式设置临时 `DOMINO_TEST_CORE`，使用 `scripts/verify.py --require-core`。
 3. 同步版本、更新变更记录，运行 `scripts/build_release.py` 和 `scripts/verify_artifacts.py`；再用 `python -m twine check dist/release/*.whl` 检查包元数据。
-4. `publish-pypi.yml` 是唯一公共发布入口，固定软件标签和产物后分发 GitHub Release、PyPI、Homebrew 与签名 APT 源，并汇总各渠道实际核验结果。平台矩阵测试另由 `Verify` / `Distribution smoke tests` 手动运行。
+4. `scripts/release_channels.py publish` 是唯一本机发布入口，固定软件标签和产物后分发 GitHub Release、PyPI、Homebrew 与签名 APT 源，私钥留本机。`release.yml` / `Verify` / `Distribution smoke tests` 仅手动测试，不发布。
 5. 人工确认许可证、第三方声明和本轮平台结果，再创建与版本一致的 Git tag / GitHub Release，仅上传公共 CLI 产物。不要上传 `domino export` 生成的私有部署包、用户配置或本机报告目录。
 
 公共 runtime 和 wheel 都包含 README、文档、动图及第三方声明。仓库源码以 `MANIFEST.in` 限定源码分发内容；不包含缓存、虚拟环境、内核或私有配置。Actions 固定提交 SHA，并使用只读仓库权限；依赖更新通过 Dependabot 提议。

@@ -1,0 +1,68 @@
+name: Release checks (local publishing)
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Already-published software version X.Y.Z to install and verify'
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: release-checks
+  cancel-in-progress: false
+env:
+  RELEASE_VERSION: ${{ inputs.version }}
+  RELEASE_APT_URL: ${{ vars.RELEASE_APT_URL }}
+  RELEASE_APT_REPOSITORY: ${{ vars.RELEASE_APT_REPOSITORY }}
+jobs:
+  tooling:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        with:
+          python-version: '3.9'
+      - run: python -m pip install '.[dev]'
+      - run: python -m unittest tests.test_release_workflow tests.test_channels tests.test_distribution tests.test_release tests.test_repository -q
+  installation:
+    needs: tooling
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {os: ubuntu-24.04, channel: apt}
+          - {os: macos-15, channel: brew}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        with:
+          python-version: '3.9'
+      - run: python -m pip install '.[dev]'
+      - id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/release_channels.py resolve
+      - name: Require an existing immutable release
+        if: steps.resolve.outputs.existing_release != 'true'
+        run: exit 1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ steps.resolve.outputs.source_sha }}
+          path: .release-source
+          persist-credentials: false
+      - run: python scripts/release_channels.py prepare
+      - name: Install and verify the public signed package without publishing credentials
+        env:
+          PUBLIC_CHANNEL: ${{ matrix.channel }}
+          APT_GPG_FINGERPRINT: ${{ vars.APT_GPG_FINGERPRINT }}
+          HOMEBREW_NO_AUTO_UPDATE: '1'
+          HOMEBREW_NO_INSTALL_CLEANUP: '1'
+        run: python scripts/release_channels.py "verify-$PUBLIC_CHANNEL" --install
