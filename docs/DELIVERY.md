@@ -104,9 +104,9 @@ python3 scripts/build_resources.py --base-url https://你的域名/domino/ \
 
 ## 平台验证
 
-`scripts/verify.py` 输出 `dist/verification.json`，记录系统、架构、Python、测试数和跳过项。`DOMINO_TEST_CORE` 可指定临时校验内核。GitHub Actions 的 `Verify` 保留 macOS / Ubuntu × Python 版本矩阵，仅通过 `workflow_dispatch` 手动运行或由 `Release artifacts` 调用；日常 push、PR 和标签推送不自动触发完整测试。真实执行结果以 CI 为准，未运行的矩阵不能记为通过。
+`scripts/verify.py` 输出 `dist/verification.json`，记录系统、架构、Python、测试数和跳过项。`DOMINO_TEST_CORE` 可指定临时校验内核。GitHub Actions 的 `Verify` 保留 macOS / Ubuntu × Python 版本矩阵，仅通过 `workflow_dispatch` 手动运行或作为复用测试 workflow 调用；日常 push、PR 和标签推送不自动触发完整测试。真实执行结果以 CI 为准，未运行的矩阵不能记为通过。
 
-需要发新版时，在 GitHub 的 **Actions → Release artifacts → Run workflow** 选择对应分支或版本标签，执行完整验证并构建下载产物；若只需单独验证，可手动运行 `Verify`。确认版本与产物后，在 **Actions → Publish to PyPI → Run workflow** 选择与源码版本一致的 `vX.Y.Z` 标签（本次为 `v1.0.0`），使用已配置的 Trusted Publisher 发布。`Distribution smoke tests` 同样只手动运行，供分发渠道验收使用。不要在仓库设置中关闭所有 Actions，否则这些手动入口也不可用。
+三渠道统一发布在 GitHub 的 **Actions → Publish · PyPI / Homebrew / APT → Run workflow** 从 `main` 发起，输入已经存在标签的 `X.Y.Z` 软件版本。先用 `dry_run=true` 演练，再按需同步全部渠道或补发一个渠道；详细配置与命令见 [分发说明](DISTRIBUTION.md#一个-workflow-发布三个渠道)。已发布版本复用原始产物，不因发布工具改动重建软件或升版本。未发布的新标签在 workflow 中验证并构建一次。`Verify` / `Distribution smoke tests` 保留手动平台验收入口；实际结果以运行记录为准。
 
 `scripts/verify_ssh.py` 仅监听回环地址，临时生成测试密钥并启动用户级 sshd，使用临时 HOME 执行写操作，结束后停止进程和清理目录；某些系统不允许普通用户启动 sshd 时返回未验证状态，不修改系统 Remote Login。
 
@@ -116,7 +116,7 @@ python3 scripts/build_resources.py --base-url https://你的域名/domino/ \
 1. 在干净检出中安装 `.[dev]`，运行 `scripts/check_repository.py`，确认公开文件、文档链接、最低 Python 语法和凭据模式检查通过。
 2. 按 [平台支持](PLATFORMS.md) 运行完整 CI；本地完整回归显式设置临时 `DOMINO_TEST_CORE`，使用 `scripts/verify.py --require-core`。
 3. 同步版本、更新变更记录，运行 `scripts/build_release.py` 和 `scripts/verify_artifacts.py`；再用 `python -m twine check dist/release/*.whl` 检查包元数据。
-4. `Release artifacts` 工作流先等待 macOS / Ubuntu 验证，再准备 CLI wheel/runtime、SHA256SUMS 和清单供下载。它不会创建公开 Release，也不发布 PyPI。
+4. `publish-pypi.yml` 是唯一公共发布入口，固定软件标签和产物后分发 GitHub Release、PyPI、Homebrew 与签名 APT 源，并汇总各渠道实际核验结果。平台矩阵测试另由 `Verify` / `Distribution smoke tests` 手动运行。
 5. 人工确认许可证、第三方声明和本轮平台结果，再创建与版本一致的 Git tag / GitHub Release，仅上传公共 CLI 产物。不要上传 `domino export` 生成的私有部署包、用户配置或本机报告目录。
 
 公共 runtime 和 wheel 都包含 README、文档、动图及第三方声明。仓库源码以 `MANIFEST.in` 限定源码分发内容；不包含缓存、虚拟环境、内核或私有配置。Actions 固定提交 SHA，并使用只读仓库权限；依赖更新通过 Dependabot 提议。

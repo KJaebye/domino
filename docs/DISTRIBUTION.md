@@ -2,7 +2,7 @@
 
 三个渠道只安装管理命令。包安装、升级、卸载不会初始化本机服务、捕获配置、调整系统代理或改 shell 文件。需要本机代理时，以普通用户显式运行 `domino-install`；已有离线部署包时也可使用 `domino init --bundle /path/to/bundle.tar.gz`。仅管理远端设备则无需初始化本机服务。
 
-**PyPI 已发布，Homebrew / apt 仍在准备中。** 可从 [PyPI 安装 domino-proxy](https://pypi.org/project/domino-proxy/)，可执行命令保持 `domino`。不要安装 PyPI 上的 `domino`：该名字属于另一个项目。Homebrew tap 和 apt 公共地址尚未发布，下文标有占位符的命令不能直接作为公开安装入口。
+**PyPI 已发布，Homebrew / apt 仍在准备中。** 可从 [PyPI 安装 domino-proxy](https://pypi.org/project/domino-proxy/)，可执行命令保持 `domino`。不要安装 PyPI 上的 `domino`：该名字属于另一个项目。Homebrew tap 和 apt 公共地址尚未发布；已补齐渠道准备工具，下文说明维护者如何生成和验收，发布前不能直接使用计划中的地址安装。
 
 | 渠道 | 发行名称 | 管理命令 | 平台 |
 | --- | --- | --- | --- |
@@ -28,7 +28,7 @@ Tab 补全：Homebrew 配方使用 `zsh_completion` / `bash_completion` 安装�
 ```bash
 python3 -m venv .venv
 .venv/bin/python -m pip install '.[dev]'
-.venv/bin/python -m unittest tests.test_distribution tests.test_release -q
+.venv/bin/python -m unittest tests.test_channels tests.test_distribution tests.test_release -q
 .venv/bin/python scripts/build_release.py
 .venv/bin/python scripts/verify_artifacts.py
 .venv/bin/python scripts/verify_pip.py
@@ -98,80 +98,105 @@ pipx ensurepath
 
 不要把旧 `domino` 发行包与新包装在同一个环境，两个发行包提供同名命令。旧开发环境先确认 `python -m pip show domino` 指向本项目，再卸载旧包、安装新包；不能误删同名的其他项目。也可以新建独立环境。
 
-### 维护者发布流程
+## 一个 workflow 发布三个渠道
 
-0.17.8 已通过 Trusted Publisher 发布。后续版本继续使用 `.github/workflows/publish-pypi.yml` 手动发布；工作流只接受与源码版本精确匹配的 `v0.x.y` 标签，并要求仓库有非空 LICENSE。发布前核对：
+唯一发布入口是 `.github/workflows/publish-pypi.yml`，Actions 显示名为 **Publish · PyPI / Homebrew / APT**。沿用文件名及 `pypi` environment，保留现有 Trusted Publisher 绑定。原先只构建产物的 `release.yml` 已合并进这个入口；`Verify` 和 `Distribution smoke tests` 继续作为独立测试入口，不执行公共发布。
 
-1. 核对已选定的 `GPL-3.0-only`、LICENSE 与第三方声明已随发行包交付。
-2. PyPI 项目 `domino-proxy` 的 Trusted Publisher 为 owner `KJaebye`、repository `domino`、workflow `publish-pypi.yml`、environment `pypi`。
-3. 核对 GitHub `pypi` environment 与 Trusted Publisher 的配置一致；发布审批与标签限制由维护者另行配置。
-4. 完成平台验收后，在对应版本标签上手动运行 `Publish to PyPI`。
+发布工具从 `main` 运行，软件内容固定到输入版本对应的标签提交。已发布的版本直接下载并核对 GitHub Release 原始 wheel、sdist、runtime 和 SHA-256 清单，不重新构建；没有 Release 的新标签先执行源码回归，再构建一次、验证并发布。工具更新不提升软件版本，也不移动软件标签。
 
-工作流使用短期 OIDC 凭据，不在仓库保存 PyPI token。参考 [PyPA 官方发布指南](https://packaging.python.org/en/latest/guides/publishing-package-distribution-releases-using-github-actions-ci-cd-workflows/)。工作流文件的存在不会自动发布；普通 push 不触发上传。
-
-日常 push、PR 和标签推送也不自动执行完整平台测试。发版前按需在 Actions 中手动运行 `Release artifacts`（先完整验证再构建）或 `Verify`；发布时进入 **Actions → Publish to PyPI → Run workflow**，选择对应版本的 `v0.x.y` 标签。保留仓库的 Actions 功能及现有 Trusted Publisher 绑定即可。
-
-## Homebrew
-
-`build_release.py` 生成 `domino.rb.in`，包含 runtime 的固定版本及 SHA-256。省略 `post_install`，安装不执行初始化；`caveats` 提示普通用户运行 `domino-install`。
-
-发布者先上传原样 runtime 至稳定 HTTPS 地址，再将配方中的 `https://REPLACE-WITH-PUBLIC-ARTIFACT-HOST` 替换为该目录，保存为自建 tap 的 `Formula/domino.rb`。也可在首次构建时指定：
+对当前 1.2.3 进行只读演练：
 
 ```bash
-.venv/bin/python scripts/build_release.py \
-  --base-url https://YOUR-ARTIFACT-HOST/releases/v0.17.0
+gh workflow run publish-pypi.yml --repo KJaebye/domino --ref main \
+  -f version=1.2.3 -f channels=all -f dry_run=true
 ```
 
-配置公共地址不会自动上传。不要重新打包 runtime 后仍使用原配方的摘要。tap 仓库建议命名 `KJaebye/homebrew-tap`；配方已声明 `GPL-3.0-only`，仓库创建、推送与公共下载地址仍须正式发布时落实。
-
-公共 tap 发布后，计划的用户命令为：
+正式同步发布：
 
 ```bash
+gh workflow run publish-pypi.yml --repo KJaebye/domino --ref main \
+  -f version=1.2.3 -f channels=all
+```
+
+只补发 APT：
+
+```bash
+gh workflow run publish-pypi.yml --repo KJaebye/domino --ref main \
+  -f version=1.2.3 -f channels=apt
+```
+
+`channels` 支持 `all`、`pypi`、`brew`、`apt`。只读演练不上传、不导入生产签名密钥，也不表示真实安装验收通过。真实运行顺序：
+
+```text
+固定标签提交 → 复用 / 构建并验证原始产物 → GitHub Release
+                                            ├─ PyPI：仅上传缺失文件 → 隔离安装并核验
+                                            ├─ Homebrew：更新 tap → 公开安装与 brew test
+                                            └─ APT：保留旧 pool、签名、Pages → 公开 apt 安装核验
+                                                        ↓
+                                           汇总每个渠道的真实结果
+```
+
+每个渠道独立运行，一个失败不阻止另外两个完成。`release-inputs` artifact 固定本次产物，`release-status` artifact 和 Actions Summary 记录 `verified / failed / blocked`。只有三个渠道都核验成功时 `complete=true`；单渠道补发使用 `request_complete` 表示该请求成功，其他渠道不推断为成功。只读演练记为 `checked`，不记作发布完成。
+
+### 首次上线所需配置
+
+以下配置尚需维护者在 GitHub 完成，源码不会创建仓库、签名密钥或设置凭据：
+
+| 配置 | 用途 |
+| --- | --- |
+| 公共 `KJaebye/homebrew-tap`，有初始 `main` 提交 | 保存 `Formula/domino.rb`；工作流只修改本项目配方和缺失的 README |
+| `release` environment 的 `RELEASE_TAP_TOKEN` secret | 只授予 tap 仓库所需的 Contents 写权限，不能使用本仓库的普通 GITHUB_TOKEN 跨仓库推送 |
+| 本仓库 Settings → Pages → GitHub Actions | 工作流托管 APT 到 `https://kjaebye.github.io/domino/apt/`，不再需要独立 APT 仓库 |
+| 仓库 variable `APT_GPG_FINGERPRINT` | 生产签名密钥的完整主公钥指纹 |
+| `github-pages` environment 的 `APT_GPG_PRIVATE_KEY` secret | ASCII armored 专用 APT 私钥；只在临时 GPG HOME 中导入，完成即销毁 |
+| 同 environment 的 `APT_GPG_PASSPHRASE` secret（如有） | 通过 stdin 解锁密钥，不写命令参数或文件 |
+| PyPI Trusted Publisher | owner `KJaebye`、repo `domino`、workflow `publish-pypi.yml`、environment `pypi`；environment 的分支策略须允许 `main` |
+
+可选仓库 variables：`RELEASE_TAP_REPOSITORY`、`RELEASE_APT_URL`。默认指向上表地址；URL 必须是 HTTPS。APT 内容由本 workflow 负责部署；若本仓库已有其他 Pages 网站，需要先安排网站内容的合并，不能直接覆盖已有站点。
+
+PyPI 通过 OIDC 发布，不读取本机 token 文件。此前 Actions 出现过支付 / 额度限制导致任务未启动，当前是否已恢复应以新一次演练结果为准。新文件只有进入远端 `main` 后才能通过 Actions 调度。
+
+### 重试与问题处理
+
+- 版本相同且文件摘要匹配：复用已发布文件；缺少某个 PyPI 文件时仅上传该文件。摘要冲突或已被 yank 的 PyPI 文件直接失败，不静默忽略。
+- GitHub 上传中断：保留 draft；对原运行执行 `gh run rerun RUN_ID --failed`，复用原 artifact，补齐缺失文件。全新运行遇到未完成 draft 会要求先检查该 draft，避免重建出另一套相同版本产物。
+- Homebrew / APT 更新中断：重跑失败 job 或用 `channels` 补发。网络请求有限重试；所有渠道拒绝降级，旧 APT pool 包保留。
+- 修改软件内容才能解决的问题：走新的软件版本；仅修复发布脚本的问题可以继续分发原版本的固定产物。改变生产签名指纹需要单独安排密钥轮换。
+- 同一仓库的生产发布串行执行，不取消正在发布的运行。GitHub 默认仅保留一个 pending 运行，不依赖它提供任意长度的发布队列或版本排序。
+
+Agent 使用同一组命令调度、查看结果和分析失败：
+
+```bash
+gh run list --repo KJaebye/domino --workflow publish-pypi.yml
+gh run view RUN_ID --repo KJaebye/domino --log-failed
+gh run download RUN_ID --repo KJaebye/domino --name release-status
+gh run rerun RUN_ID --repo KJaebye/domino --failed
+```
+
+参考 [PyPI Trusted Publisher](https://docs.pypi.org/trusted-publishers/adding-a-publisher/)、[GitHub Pages 部署](https://docs.github.com/en/pages/getting-started-with-github-pages/using-custom-workflows-with-github-pages)和 [Actions 并发控制](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency)。
+
+### 发布后用户安装命令
+
+以下为计划入口，公开渠道完成发布验收前不可视为可用。
+
+```bash
+# macOS
 brew install KJaebye/tap/domino
-brew upgrade KJaebye/tap/domino
-brew uninstall KJaebye/tap/domino
-```
 
-发布前还需对公开 URL 执行真实 `brew install` / `brew test` 并检查 `brew audit`；目前的本地配方语法检查不能替代公开 tap 验收。本轮没有申请 Homebrew core 收录。
-
-## Ubuntu apt
-
-本地安装已生成的 deb：
-
-```bash
-sudo apt install ./dist/distribution-0.17.0/domino-proxy_0.17.0-1_all.deb
-domino --version
-# 如需本机服务，以当前普通用户运行，不加 sudo：
-domino-install
-```
-
-Debian 元数据默认使用项目 owner 的 GitHub noreply 身份；维护者可通过 `--maintainer 'Name <public-email@example.org>'` 替换为正式公开联系地址。包不提供会调整用户文件的维护脚本，也不声明系统级自动服务。
-
-公开 apt 源需要一个已有、由维护者安全保存的 GPG 签名密钥，脚本不创建或上传密钥：
-
-```bash
-.venv/bin/python scripts/build_distribution.py \
-  --output /path/to/new-signed-distribution \
-  --maintainer 'Name <public-email@example.org>' \
-  --sign-key FULL_EXISTING_GPG_KEY_FINGERPRINT
-```
-
-输出增加 `InRelease`、`Release.gpg` 和 `domino-archive-keyring.gpg`（只有公钥）。生成后用 `gpg --verify .../apt/dists/stable/InRelease` 验证，再将整个 `apt/` 原样托管到稳定 HTTPS 地址。签名依赖当前 gpg-agent 的解锁状态；失败不会留下看似完成的输出目录。更新仓库时保留旧 pool 包，先传新包和索引，再发布 Release / 签名；脚本每次生成的是独立仓库快照，上传时合并旧 pool，不能覆盖掉仍在使用的旧包。托管与签名私钥备份由发布者维护。
-
-未来公开源安装示例，**YOUR-APT-HOST 与 FINGERPRINT 均为占位符**：
-
-```bash
-curl -fsSL https://YOUR-APT-HOST/domino/domino-archive-keyring.gpg -o /tmp/domino-archive-keyring.gpg
-gpg --show-keys --with-fingerprint /tmp/domino-archive-keyring.gpg
-# 从另一可信渠道核对 FINGERPRINT，再安装公钥：
-sudo install -m 644 /tmp/domino-archive-keyring.gpg /usr/share/keyrings/domino-archive-keyring.gpg
-printf '%s\n' 'deb [signed-by=/usr/share/keyrings/domino-archive-keyring.gpg] https://YOUR-APT-HOST/domino stable main' \
-  | sudo tee /etc/apt/sources.list.d/domino.list
+# Ubuntu 22.04+，amd64 / arm64
+curl -fsSL https://kjaebye.github.io/domino/apt/domino.sources \
+  | sudo tee /etc/apt/sources.list.d/domino.sources >/dev/null
 sudo apt update
 sudo apt install domino-proxy
 ```
 
-后续先 `sudo apt update`，再 `sudo apt install --only-upgrade domino-proxy`；移除用 `sudo apt remove domino-proxy`。不用 `apt-key`、`trusted=yes` 或允许未认证软件包。参考 [Debian 维护脚本与包管理规则](https://www.debian.org/doc/debian-policy/ch-maintainerscripts.html)。
+包名是 `domino-proxy`，执行命令是 `domino`。Homebrew 配方使用固定版本的自包含 runtime，APT 使用系统 Python 3.9+ 和包内纯 Python 依赖；没有引入新的打包框架。发布 job 当前实际安装验收分别使用 macOS ARM64 和 Ubuntu 24.04 amd64；其他平台验收仍看 `Distribution smoke tests` 的实际结果，不以索引存在代替安装通过。
+
+本地分发工具相关验证：
+
+```bash
+.venv/bin/python -m unittest tests.test_release_workflow tests.test_channels tests.test_distribution tests.test_release -q
+```
 
 ## 服务、升级与卸载边界
 
@@ -181,6 +206,6 @@ sudo apt install domino-proxy
 
 CLI 包升级不等于内核升级，不重启服务、不改节点与系统代理。仅卸载 CLI 包会保留运行内核、配置库和服务文件；pip 不提供运行时清理钩子。要完整清理，先运行 `domino uninstall`，再使用原包管理器卸载 CLI，例如 `domino uninstall && pip uninstall domino-proxy`。前一步会确认删除配置和备份，并清理终端接入记录；详见 [卸载指南](USAGE.md#卸载与清理)。
 
-仓库目前是私有仓库；仅给配方填入 GitHub Release 地址不能保证用户可下载。正式发布还需要可匿名下载、版本固定的 runtime 地址，以及公开 tap / PyPI Trusted Publisher / 签名 apt HTTPS 托管。三个渠道应交付同一源码版本，先构建并校验，再分别上传 wheel、runtime 与 deb / apt 索引；不要在发布步骤改包内容或把生产私钥交给构建脚本。
+项目仓库已公开；新增渠道仍需核验可匿名下载、版本固定的 runtime 地址，以及公开 tap 与签名 apt HTTPS 托管。三个渠道应交付同一源码版本，先构建并校验，再分别上传 wheel、runtime 与 deb / apt 索引；不要在发布步骤改包内容或把生产私钥交给构建脚本。
 
 源安装的 shell 加载器使用 `/usr/bin/env python3`，避免引用随后被删除的安装临时 venv。移除 pip 环境或升级 brew Python 后，运行文件中的纯 Python shell helper 仍可由系统可用的 Python 3.9+ 执行。

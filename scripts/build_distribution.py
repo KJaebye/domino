@@ -140,10 +140,33 @@ def payload(runtime):
     return files
 
 
-def repository(output, deb, control, epoch):
+def repository(output, deb, control, epoch, previous_repo=None):
     repo = output / 'apt'
     pool = repo / 'pool/main/d/domino-proxy' / deb.name
     pool.parent.mkdir(parents=True)
+    if previous_repo is not None:
+        previous_repo = Path(previous_repo)
+        old_pool = previous_repo / 'pool'
+        if previous_repo.is_symlink() or old_pool.is_symlink():
+            raise ValueError('Previous apt pool cannot be a symlink')
+        if not old_pool.is_dir():
+            raise ValueError('Previous apt repository lacks a pool directory')
+        for path in sorted(old_pool.rglob('*')):
+            if path.is_symlink():
+                raise ValueError('Previous apt pool contains a symlink')
+            if path.is_dir():
+                continue
+            relative = path.relative_to(old_pool).as_posix()
+            if (not re.fullmatch(r'main/d/domino-proxy/domino-proxy_\d+\.\d+\.\d+-\d+_all\.deb', relative)
+                    or not path.is_file() or path.stat().st_size > 32 * 1024 * 1024):
+                raise ValueError('Invalid previous apt pool member')
+            if not path.read_bytes().startswith(b'!<arch>\n'):
+                raise ValueError('Previous apt pool member is not a Debian archive')
+            destination = repo / 'pool' / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(path, destination)
+        if pool.exists() and pool.read_bytes() != deb.read_bytes():
+            raise ValueError('Published Debian package version cannot be replaced')
     shutil.copyfile(deb, pool)
     index = (control + f'Filename: {pool.relative_to(repo).as_posix()}\n'
              f'Size: {pool.stat().st_size}\nSHA256: {digest(pool.read_bytes())}\n\n').encode()
@@ -171,15 +194,20 @@ def sign_repository(repo, key):
         raise ValueError('Use a full existing GPG signing key fingerprint')
     release = repo / 'dists/stable/Release'
     common = ['gpg', '--batch', '--local-user', key]
-    subprocess.run(common + ['--output', str(release.with_name('InRelease')), '--clearsign', str(release)], check=True)
-    subprocess.run(common + ['--output', str(release.with_name('Release.gpg')), '--detach-sign', str(release)], check=True)
+    options = {}
+    if 'APT_GPG_PASSPHRASE' in os.environ:
+        # Read a passphrase over stdin, never put it in command arguments or files.
+        common += ['--pinentry-mode', 'loopback', '--passphrase-fd', '0']
+        options['input'] = (os.environ['APT_GPG_PASSPHRASE'] + '\n').encode()
+    subprocess.run(common + ['--output', str(release.with_name('InRelease')), '--clearsign', str(release)], check=True, **options)
+    subprocess.run(common + ['--output', str(release.with_name('Release.gpg')), '--detach-sign', str(release)], check=True, **options)
     public = subprocess.run(['gpg', '--batch', '--export', key], check=True, capture_output=True).stdout
     if not public:
         raise ValueError('Signing public key export is empty')
     (repo / 'domino-archive-keyring.gpg').write_bytes(public)
 
 
-def build(release, output, maintainer=MAINTAINER, sign_key=None, epoch=None):
+def build(release, output, maintainer=MAINTAINER, sign_key=None, epoch=None, previous_repo=None):
     if output.exists() or output.is_symlink():
         raise FileExistsError('Distribution output already exists; choose a new directory')
     if '\n' in maintainer or '\r' in maintainer or not parseaddr(maintainer)[1] or '@' not in parseaddr(maintainer)[1]:
@@ -206,7 +234,7 @@ def build(release, output, maintainer=MAINTAINER, sign_key=None, epoch=None):
         staged.mkdir()
         deb = staged / f'{PACKAGE}_{version}-1_all.deb'
         deb.write_bytes(deb_bytes(control_files, files, epoch))
-        repo = repository(staged, deb, control, epoch)
+        repo = repository(staged, deb, control, epoch, previous_repo)
         if sign_key:
             sign_repository(repo, sign_key)
         formula = next(item['name'] for item in manifest['files'] if item['name'].endswith(('.rb', '.rb.in')))
@@ -235,11 +263,13 @@ def main():
     parser.add_argument('--output', type=Path)
     parser.add_argument('--maintainer', default=MAINTAINER, help='Public Debian maintainer identity')
     parser.add_argument('--sign-key', help='Existing GPG key fingerprint; omit for an unsigned preview')
+    parser.add_argument('--previous-repo', type=Path, help='Retain immutable pool packages from the previous apt site')
     args = parser.parse_args()
     version = json.loads((args.release / 'release.json').read_text())['version']
     output = args.output or ROOT / ('dist/distribution-' + version)
     report = build(args.release, output, args.maintainer, args.sign_key,
-                   int(os.environ['SOURCE_DATE_EPOCH']) if 'SOURCE_DATE_EPOCH' in os.environ else None)
+                   int(os.environ['SOURCE_DATE_EPOCH']) if 'SOURCE_DATE_EPOCH' in os.environ else None,
+                   args.previous_repo)
     print(json.dumps({'output': str(output), **report}))
 
 

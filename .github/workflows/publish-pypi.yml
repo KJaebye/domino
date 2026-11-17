@@ -1,13 +1,37 @@
-name: Publish to PyPI
+name: Publish · PyPI / Homebrew / APT
 on:
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'Software version X.Y.Z (existing tag required; never bumps the version)'
+        required: true
+        type: string
+      channels:
+        description: 'Publish all channels, or resume one channel'
+        default: all
+        type: choice
+        options: [all, pypi, brew, apt]
+      dry_run:
+        description: 'Validate and prepare only; do not publish'
+        default: false
+        type: boolean
 permissions:
   contents: read
+concurrency:
+  group: domino-production-release
+  cancel-in-progress: false
+env:
+  RELEASE_VERSION: ${{ inputs.version }}
+  RELEASE_TAP_REPOSITORY: ${{ vars.RELEASE_TAP_REPOSITORY }}
+  RELEASE_APT_URL: ${{ vars.RELEASE_APT_URL }}
 jobs:
-  build:
-    if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-22.04
-    timeout-minutes: 15
+  prepare:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+      source_sha: ${{ steps.resolve.outputs.source_sha }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -15,41 +39,206 @@ jobs:
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
         with:
           python-version: '3.9'
-      - name: Require a chosen license and an exact version tag
-        env:
-          EXPECTED_TAG: ${{ github.ref_name }}
-        run: |
-          test -s LICENSE
-          python - <<'PY'
-          import os, sys
-          sys.path.insert(0, "src")
-          import domino_cli
-          assert os.environ['EXPECTED_TAG'] == 'v' + domino_cli.VERSION, 'Tag and source version differ'
-          PY
       - run: python -m pip install '.[dev]'
-      - run: python -m unittest tests.test_distribution tests.test_release -q
-      - run: python scripts/build_release.py && python scripts/verify_artifacts.py
-      - run: python scripts/verify_pip.py
-      - run: python -m build --sdist --outdir dist/pypi
-      - run: cp dist/release/*.whl dist/pypi/ && python -m twine check dist/pypi/*
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+      - id: resolve
+        name: Pin the tag commit and discover existing immutable release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/release_channels.py resolve
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          name: pypi-distributions
-          path: dist/pypi/*
+          ref: ${{ steps.resolve.outputs.source_sha }}
+          path: .release-source
+          persist-credentials: false
+      - name: Test release tooling using disposable inputs
+        run: python -m unittest tests.test_release_workflow tests.test_channels tests.test_distribution tests.test_release -q
+      - name: Verify an unpublished software version before its only build
+        if: steps.resolve.outputs.existing_release == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y zsh dbus-x11 dconf-cli dconf-service gsettings-desktop-schemas
+          python -m pip install './.release-source[dev]'
+          gh api repos/MetaCubeX/mihomo/releases/tags/v1.19.33 > "$RUNNER_TEMP/mihomo-release.json"
+          python .release-source/scripts/fetch_test_core.py --release-json "$RUNNER_TEMP/mihomo-release.json" --output "$RUNNER_TEMP/mihomo"
+          DOMINO_TEST_CORE="$RUNNER_TEMP/mihomo" python .release-source/scripts/verify.py --require-core
+          python .release-source/scripts/check_repository.py
+      - name: Reuse published bytes, or build the new tagged source once
+        run: python scripts/release_channels.py prepare
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: always() && steps.resolve.outcome == 'success'
+        with:
+          name: release-inputs
+          path: release-work/
+          include-hidden-files: true # channels.json also covers the generated .nojekyll marker.
           if-no-files-found: error
-  publish:
-    needs: build
+          retention-days: 90
+
+  github:
+    needs: prepare
+    if: ${{ !inputs.dry_run }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        with:
+          python-version: '3.9'
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # pinned main
+        with:
+          name: release-inputs
+          path: release-work
+      - name: Publish fixed assets without overwriting an existing file
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/release_channels.py publish-github
+
+  pypi:
+    needs: [prepare, github]
+    if: ${{ !inputs.dry_run && (inputs.channels == 'all' || inputs.channels == 'pypi') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
     environment:
       name: pypi
       url: https://pypi.org/p/domino-proxy
     permissions:
+      contents: read
       id-token: write
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        with:
+          python-version: '3.9'
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # pinned main
         with:
-          name: pypi-distributions
-          path: dist/
-      - name: Publish using a configured PyPI Trusted Publisher
+          name: release-inputs
+          path: release-work
+      - id: upload
+        name: Compare PyPI hashes and stage only missing files
+        run: python scripts/release_channels.py stage-pypi
+      - name: Publish missing files using the existing Trusted Publisher
+        if: steps.upload.outputs.needed == 'true'
         uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # release/v1
+        with:
+          packages-dir: release-work/pypi-upload/
+      - name: Verify PyPI hashes and install the public package in a temporary venv
+        run: python scripts/release_channels.py verify-pypi --install
+
+  brew:
+    needs: [prepare, github]
+    if: ${{ !inputs.dry_run && (inputs.channels == 'all' || inputs.channels == 'brew') }}
+    runs-on: macos-15
+    timeout-minutes: 20
+    environment: release
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        with:
+          python-version: '3.9'
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # pinned main
+        with:
+          name: release-inputs
+          path: release-work
+      - name: Update the tap, preserving other formulas and rejecting downgrades
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TAP_TOKEN }}
+        run: python scripts/release_channels.py publish-brew
+      - name: Install and test from the public tap
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: '1'
+          HOMEBREW_NO_INSTALL_CLEANUP: '1'
+        shell: bash
+        run: |
+          tap_formula="$(python -c 'import json; p=json.load(open("release-work/plan.json")); print(p["tap_repository"].replace("/homebrew-", "/", 1)+"/domino")')"
+          brew install "$tap_formula"
+          brew test "$tap_formula"
+          cli_path="$(brew --prefix "$tap_formula")/bin/domino"
+          python - "$cli_path" <<'PY'
+          import json, sys
+          from scripts.release_channels import check_cli
+          check_cli(sys.argv[1], json.load(open('release-work/plan.json'))['version'])
+          PY
+
+  apt:
+    needs: [prepare, github]
+    if: ${{ !inputs.dry_run && (inputs.channels == 'all' || inputs.channels == 'apt') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    env:
+      APT_GPG_FINGERPRINT: ${{ vars.APT_GPG_FINGERPRINT }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        with:
+          python-version: '3.9'
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # pinned main
+        with:
+          name: release-inputs
+          path: release-work
+      - id: sign
+        name: Retain the old package pool and sign with the pinned existing key
+        env:
+          APT_GPG_PRIVATE_KEY: ${{ secrets.APT_GPG_PRIVATE_KEY }}
+          APT_GPG_PASSPHRASE: ${{ secrets.APT_GPG_PASSPHRASE }}
+        run: python scripts/release_channels.py prepare-apt
+      - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # pinned main
+        if: steps.sign.outputs.deploy == 'true'
+      - uses: actions/upload-pages-artifact@5f327015a708106f6f1b7c9a633901af30fe80cb # pinned main
+        if: steps.sign.outputs.deploy == 'true'
+        with:
+          path: release-work/pages
+      - id: deploy
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # pinned main
+        if: steps.sign.outputs.deploy == 'true'
+      - name: Verify public metadata, signing fingerprint and an actual apt installation
+        run: python scripts/release_channels.py verify-apt --install
+
+  report:
+    if: always()
+    needs: [prepare, github, pypi, brew, apt]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        with:
+          python-version: '3.9'
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # pinned main
+        if: needs.prepare.result == 'success'
+        with:
+          name: release-inputs
+          path: release-work
+      - name: Record verified, failed and blocked channels, including partial success
+        env:
+          RELEASE_JOB_RESULTS: ${{ toJSON(needs) }}
+          RELEASE_CHANNELS: ${{ inputs.channels }}
+          RELEASE_DRY_RUN: ${{ inputs.dry_run }}
+        run: python scripts/release_channels.py summary
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: always()
+        with:
+          name: release-status
+          path: release-work/release-status.json
+          if-no-files-found: error
+          retention-days: 90
