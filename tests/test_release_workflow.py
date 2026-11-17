@@ -29,6 +29,7 @@ class ReleaseWorkflowTests(DistributionFixture):
                                  apt_repo='KJaebye/domino', apt_url='https://kjaebye.github.io/domino/apt/')
         self.plan = {'schema': 1, 'version': self.requested, 'source_sha': 'a' * 40,
                      'repository': 'KJaebye/domino', 'tap_repository': 'KJaebye/homebrew-tap',
+                     'apt_repository': 'KJaebye/domino-apt',
                      'apt_url': 'https://kjaebye.github.io/domino/apt/', 'existing_release': True,
                      'pypi_files': self.package_sums,
                      'files': {p.name: hashlib.sha256(p.read_bytes()).hexdigest()
@@ -66,6 +67,76 @@ class ReleaseWorkflowTests(DistributionFixture):
             with self.assertRaisesRegex(ValueError, 'conflicts'):
                 release.stage_pypi(self.work)
         self.assertFalse((self.work / 'pypi-upload').exists())
+
+    def test_local_pypi_uses_twine_only_for_missing_files_without_a_plaintext_config(self):
+        missing = next(iter(self.packages))
+        with patch.object(release, 'fetch', return_value=self.pypi_response(missing=[missing])), \
+                patch.object(release.subprocess, 'run') as command, patch.object(release, 'verify_pypi') as verify, \
+                patch.object(release, 'keychain_password', return_value='disposable-test-token'):
+            release.publish_pypi_local(self.work)
+        args = command.call_args.args[0]
+        self.assertEqual(args[:4], [release.sys.executable, '-m', 'twine', 'upload'])
+        self.assertEqual(args[args.index('--config-file') + 1], os.devnull)
+        self.assertEqual(args[-1], str(self.work / 'pypi-upload' / missing))
+        self.assertNotIn('--skip-existing', args)
+        self.assertNotIn('disposable-test-token', str(args))
+        self.assertEqual(command.call_args.kwargs['env']['TWINE_PASSWORD'], 'disposable-test-token')
+        verify.assert_called_once_with(self.work, install=True)
+
+    def test_local_pypi_already_published_never_calls_twine(self):
+        with patch.object(release, 'fetch', return_value=self.pypi_response()), \
+                patch.object(release.subprocess, 'run') as command, patch.object(release, 'verify_pypi'):
+            release.publish_pypi_local(self.work)
+        command.assert_not_called()
+
+    def test_local_apt_credentials_use_keychain_and_restore_the_environment(self):
+        directory = self.root / 'local-credentials'
+        directory.mkdir(mode=0o700)
+        (directory / 'gnupg').mkdir(mode=0o700)
+        release.write_json(directory / 'state.json', {'keychain_service': 'test-service',
+            'keychain_username': 'test-user', 'apt_fingerprint': 'A' * 40})
+        before = dict(os.environ)
+        with patch.object(release, 'keychain_password', return_value='disposable passphrase') as keychain, \
+                patch.object(release.subprocess, 'run'):
+            with release.local_credentials(directory, 'apt'):
+                self.assertEqual(Path(os.environ['GNUPGHOME']).resolve(), (directory / 'gnupg').resolve())
+                self.assertEqual(os.environ['APT_GPG_PASSPHRASE'], 'disposable passphrase')
+                self.assertNotIn('APT_GPG_PRIVATE_KEY', os.environ)
+            keychain.assert_called_once_with('test-service', 'test-user')
+        self.assertEqual(dict(os.environ), before)
+
+    def test_local_credentials_reject_a_directory_readable_by_other_users(self):
+        directory = self.root / 'unsafe-credentials'
+        directory.mkdir(mode=0o755)
+        directory.chmod(0o755)
+        with self.assertRaisesRegex(ValueError, '0700'):
+            with release.local_credentials(directory, 'brew'):
+                self.fail('insecure directory accepted')
+
+    def test_apt_publisher_refuses_private_paths_before_starting_git(self):
+        source = self.work / 'pages/apt'
+        source.mkdir(parents=True)
+        release.write_json(source / 'channel.json', {'files': {'private.key': '0' * 64}})
+        with patch.object(release.subprocess, 'run') as command:
+            with self.assertRaisesRegex(ValueError, 'Only public APT'):
+                release.publish_apt_git(self.work)
+        command.assert_not_called()
+
+    def test_git_api_publication_is_atomic_preserves_the_base_tree_and_deduplicates_blobs(self):
+        data = b'Public apt index\n'
+        digest = hashlib.sha1(b'blob ' + str(len(data)).encode() + b'\0' + data).hexdigest()
+        replies = [{'object': {'sha': 'old-commit'}}, {'tree': {'sha': 'old-tree'}},
+                   {'tree': [{'path': 'existing-file', 'sha': 'old-blob', 'type': 'blob'}]},
+                   {'sha': digest}, {'sha': 'new-tree'}, {'sha': 'new-commit'}, {}]
+        with patch.object(release, 'api', side_effect=replies) as requests:
+            result = release.publish_git_files('KJaebye/domino-apt', {'index-a': data, 'index-b': data}, 'Publish test')
+        self.assertEqual(result, 'new-commit')
+        calls = requests.call_args_list
+        self.assertEqual(len([call for call in calls if call.args[0].endswith('/git/blobs')]), 1)
+        self.assertEqual(calls[-3].kwargs['data']['base_tree'], 'old-tree')
+        self.assertEqual(calls[-2].kwargs['data']['parents'], ['old-commit'])
+        self.assertEqual(calls[-1].kwargs['method'], 'PATCH')
+        self.assertEqual(calls[-1].kwargs['data'], {'sha': 'new-commit', 'force': False})
 
     def test_modified_prepared_formula_is_rejected(self):
         (self.work / 'channels/tap/Formula/domino.rb').write_text('tampered')
@@ -240,19 +311,16 @@ class ReleaseWorkflowTests(DistributionFixture):
             with self.assertRaisesRegex(ValueError, 'source fields differ'):
                 release.verify_apt(self.work)
 
-    def test_only_one_public_release_workflow_and_summary_always_runs(self):
+    def test_actions_are_optional_read_only_checks_without_publishing_credentials(self):
         import yaml
         root = Path(__file__).resolve().parents[1]
-        path = root / '.github/workflows/publish-pypi.yml'
+        path = root / '.github/workflows/release.yml'
         workflow = yaml.load(path.read_text(), Loader=yaml.BaseLoader)
-        self.assertEqual(workflow['jobs']['report']['if'], 'always()')
         self.assertEqual(workflow['concurrency']['cancel-in-progress'], 'false')
         self.assertEqual(set(workflow['on']), {'workflow_dispatch'})
-        self.assertEqual(set(workflow['jobs']), {'prepare', 'github', 'pypi', 'brew', 'apt', 'report'})
-        self.assertFalse((root / '.github/workflows/release.yml').exists())
-        self.assertIn('dry_run', workflow['on']['workflow_dispatch']['inputs'])
-        upload = next(step for step in workflow['jobs']['prepare']['steps']
-                      if step.get('with', {}).get('name') == 'release-inputs')
-        self.assertEqual(upload['with']['include-hidden-files'], 'true')
-        publishers = [file.name for file in path.parent.glob('*.yml') if 'pypa/gh-action-pypi-publish@' in file.read_text()]
-        self.assertEqual(publishers, ['publish-pypi.yml'])
+        self.assertEqual(set(workflow['jobs']), {'tooling', 'installation'})
+        self.assertFalse((root / '.github/workflows/publish-pypi.yml').exists())
+        self.assertEqual(workflow['permissions'], {'contents': 'read'})
+        self.assertNotIn('secrets.', path.read_text())
+        self.assertNotIn('id-token:', path.read_text())
+        self.assertNotIn('pypa/gh-action-pypi-publish@', path.read_text())

@@ -35,10 +35,11 @@
 
 ## 统一分发
 
-- 三渠道发布只使用 `.github/workflows/publish-pypi.yml`，显示名为 `Publish · PyPI / Homebrew / APT`；保留原文件名及 `pypi` environment，以沿用现有 Trusted Publisher。`Verify` / `Distribution smoke tests` 是测试入口。
-- 从 `main` 调度，`version` 指定已存在的软件标签版本，`channels=all` 或 `pypi/brew/apt`，`dry_run=true` 只准备和校验。发布工具与目标软件的提交分别固定；不为工具更新移动软件标签。
-- 发布已有版本先复用 GitHub Release 原始文件，核对各渠道摘要。成功渠道不重复上传，只恢复失败渠道；内容冲突或降级直接失败。修复发布逻辑不能改写已发布的同版本软件包。
-- Agent 查看任务日志及 `release-status` artifact：`complete=true` 仅表示三个渠道全部核验成功；补发单渠道只记录该次请求的结果，不推断其他渠道状态。真实发布命令与必要配置见 docs/DISTRIBUTION.md。
+- 唯一发布入口是在本机运行 `.venv/bin/python scripts/release_channels.py publish --version X.Y.Z --channels all`；`--dry-run` 只演练，`--channels pypi/brew/apt` 只恢复一个渠道。发布不依赖 GitHub Actions 的额度。
+- PyPI 用 Twine 读取 macOS 钥匙串；Homebrew 使用钥匙串中的专用部署私钥；APT 使用仓库外的 GPG 私钥与钥匙串口令，在本机签名后推送公开静态源。私钥、token 和解锁口令不提交 Git，也不上传 GitHub Secrets；GitHub 仅保存公钥、指纹、签名与公开产物。
+- `.github/workflows/release.yml` 仅提供可选的只读测试与隔离安装验收，不发布软件、不读取生产私钥。其余测试 workflow 同样不是发布入口。
+- 发布已有版本先复用 GitHub Release 原始文件，核对各渠道摘要。成功文件不重复上传，只恢复失败渠道；内容冲突或降级直接失败。不为工具更新移动软件标签或重建已发布的软件包。
+- Agent 查看本机运行目录的 `release-status.json`。`complete=true` 仅表示三个渠道都通过本次核验；补发单渠道只记录 `request_complete`，不推断其他渠道。公开摘要 / 签名校验与真实安装验收分开报告。详细存储位置与命令见 docs/DISTRIBUTION.md。
 
 ## 源码布局
 

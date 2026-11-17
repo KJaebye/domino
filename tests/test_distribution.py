@@ -82,6 +82,9 @@ class DistributionTests(DistributionFixture):
         second = self.root / 'second'
         distro.build(self.release, second, previous_repo=previous)
         self.assertEqual((second / 'apt/pool/main/d/domino-proxy' / old.name).read_bytes(), old.read_bytes())
+        for path in (previous / 'dists').rglob('*'):
+            if path.is_file() and '/by-hash/' in path.as_posix():
+                self.assertEqual((second / 'apt' / path.relative_to(previous)).read_bytes(), path.read_bytes())
         self.assertNotIn('0.15.0', (second / 'apt/dists/stable/main/binary-amd64/Packages').read_text())
         (pool / first['deb']).write_bytes(b'!<arch>\nchanged')
         with self.assertRaisesRegex(ValueError, 'cannot be replaced'):
@@ -144,8 +147,12 @@ class DistributionTests(DistributionFixture):
             self.assertIn('SHA256: ' + distro.digest(deb.read_bytes()), text)
             self.assertEqual(gzip.decompress(index.with_suffix('.gz').read_bytes()), index.read_bytes())
         release = (suite / 'Release').read_text()
+        self.assertIn('Acquire-By-Hash: yes\n', release)
         for index in suite.rglob('Packages*'):
             self.assertIn(distro.digest(index.read_bytes()) + f' {index.stat().st_size:16} {index.relative_to(suite)}', release)
+            for algorithm in ['sha256', 'sha512']:
+                hashed = index.parent / 'by-hash' / algorithm.upper() / hashlib.new(algorithm, index.read_bytes()).hexdigest()
+                self.assertEqual(hashed.read_bytes(), index.read_bytes())
         self.assertFalse(report['apt_signed'])
         self.assertFalse((suite / 'InRelease').exists())
         # An independent system parser validates the portable writer on Ubuntu CI.

@@ -47,6 +47,8 @@ domino --version
 
 venv 安装后再运行 `domino-install`，由它下载 Mihomo 并配置本机服务。新开终端需先激活 venv。[详细说明](docs/DISTRIBUTION.md)
 
+macOS 也可直接 `brew install KJaebye/tap/domino`；Ubuntu 可使用[签名 APT 软件源](docs/DISTRIBUTION.md#用户安装命令)。
+
 ### 2. 准备配置
 
 已有 Clash Verge 或其他兼容配置时：
