@@ -169,6 +169,21 @@ class ReleaseWorkflowTests(DistributionFixture):
                 self.assertIn('StrictHostKeyChecking=yes', env['GIT_SSH_COMMAND'])
         self.assertFalse(key.exists())
 
+    def test_tap_key_from_a_trimmed_secret_can_be_loaded_by_openssh(self):
+        if not shutil.which('ssh-keygen'):
+            self.skipTest('OpenSSH tooling unavailable')
+        original = self.root / 'disposable-ssh-key'
+        subprocess.run(['ssh-keygen', '-q', '-t', 'ed25519', '-N', '', '-f', str(original)],
+                       check=True, capture_output=True)
+        os.environ['RELEASE_TAP_SSH_KEY'] = original.read_text().strip().replace('\n', '\r\n')
+        with patch.object(release, 'api', return_value={'ssh_keys': ['ssh-ed25519 QUJD']}):
+            with release.tap_credentials() as (env, ssh):
+                args = release.shlex.split(env['GIT_SSH_COMMAND'])
+                private = Path(args[args.index('-i') + 1])
+                loaded = subprocess.run(['ssh-keygen', '-y', '-f', str(private)], check=True, capture_output=True)
+                self.assertTrue(loaded.stdout.startswith(b'ssh-ed25519 '))
+        self.assertFalse(private.exists())
+
     def test_apt_downgrade_or_unrecognized_source_is_rejected(self):
         old = {'schema': 1, 'repository': 'KJaebye/domino', 'version': '1.0.0'}
         with patch.object(release, 'fetch', return_value=json.dumps(old).encode()):
