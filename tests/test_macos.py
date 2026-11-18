@@ -1,4 +1,4 @@
-from contextlib import contextmanager, redirect_stdout
+from contextlib import contextmanager, redirect_stdout, nullcontext
 import copy
 import io
 import json
@@ -13,6 +13,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 import domino_macos as mac
+import domino_macos_app as native
 import install_domino as common
 import domino_cli as tool
 import domino_shell as shell
@@ -54,6 +55,25 @@ class ProxyNetwork:
         return ''
 
 
+class MacLaunchLifecycleTests(unittest.TestCase):
+    def test_stop_waits_for_departing_job_before_start_bootstraps(self):
+        gone = SimpleNamespace(returncode=5, stdout='')
+        present = SimpleNamespace(returncode=0, stdout='state = running')
+        with patch.object(mac, 'launch', side_effect=[present, present, gone, gone, present, present]) as launch, \
+                patch.object(mac.time, 'sleep') as sleep:
+            mac.stop(Path('/unused'))
+            mac.start(Path('/unused'))
+        self.assertEqual([call.args[0] for call in launch.call_args_list],
+                         ['bootout', 'print', 'print', 'print', 'enable', 'bootstrap'])
+        sleep.assert_called_once_with(.1)
+
+    def test_stop_reports_timeout_instead_of_starting_a_departing_job(self):
+        with patch.object(mac, 'launch', return_value=SimpleNamespace(returncode=0)), \
+                patch.object(mac.time, 'monotonic', side_effect=[0, 31]), \
+                self.assertRaisesRegex(RuntimeError, '退出超时'):
+            mac.stop(Path('/unused'))
+
+
 class MacTests(unittest.TestCase):
     def test_effective_system_proxy_summary_ignores_terminal_proxy_environment(self):
         output='HTTPEnable : 1\nHTTPProxy : 127.0.0.1\nHTTPPort : 7897\nHTTPSEnable : 1\nHTTPSProxy : 127.0.0.1\nHTTPSPort : 7897\n'
@@ -91,6 +111,17 @@ class MacTests(unittest.TestCase):
                          'api_port': 19091, 'shell_env': True, 'test_url': common.DEFAULT_TEST}
         self.write_manifest()
         self.active = False
+        self.native_app = self.root / 'native' / native.APP_NAME
+        (self.native_app / native.EXECUTABLE).parent.mkdir(parents=True)
+        (self.native_app / native.EXECUTABLE).write_bytes(b'NATIVE-LAUNCHER')
+        (self.native_app / 'Contents/Info.plist').write_bytes(plistlib.dumps({
+            'CFBundleIdentifier': native.BUNDLE_ID, 'DominoManaged': 1}))
+        self.native_prepare = patch.object(native, 'prepared', side_effect=lambda _: nullcontext(self.native_app))
+        self.native_register = patch.object(native, 'register')
+        self.native_prepare.start()
+        self.register = self.native_register.start()
+        self.addCleanup(self.native_prepare.stop)
+        self.addCleanup(self.native_register.stop)
 
     def tearDown(self):
         self.temp.cleanup()
@@ -150,7 +181,8 @@ class MacTests(unittest.TestCase):
         value = plistlib.loads(plist.read_bytes())
         self.assertEqual(value['Label'], 'local.domino.mihomo')
         self.assertTrue(value['KeepAlive'])
-        self.assertEqual(value['ProgramArguments'][0], str(self.app / 'mihomo'))
+        self.assertEqual(value['ProgramArguments'], native.command(self.app))
+        self.assertEqual(value['AssociatedBundleIdentifiers'], [native.BUNDLE_ID])
         shell = (self.home / '.zshrc').read_bytes()
         self.assertIn(b'.config/domino/proxy.env', shell)
         self.assertIn('Managed by Domino shell integration', (self.home / '.config/domino/proxy.env').read_text())
@@ -162,6 +194,52 @@ class MacTests(unittest.TestCase):
         self.assertTrue(self.active)
         self.assertEqual((self.home / '.zshrc').read_bytes(), shell)
         self.assertEqual((self.app / 'mihomo').read_bytes(), b'FAKE-MAC-BINARY')
+
+    def test_launcher_preparation_failure_leaves_running_installation_untouched(self):
+        self.perform_install()
+        before = {str(p.relative_to(self.app)): p.read_bytes() for p in self.app.rglob('*') if p.is_file()}
+        plist = mac.paths(self.home)[0].read_bytes()
+        with patch.object(native, 'prepared', side_effect=common.InstallError('compiler unavailable')), \
+                patch.object(mac, 'snapshot') as snapshot:
+            with self.assertRaises(common.InstallError):
+                self.perform_install()
+        snapshot.assert_not_called()
+        self.assertTrue(self.active)
+        self.assertEqual(mac.paths(self.home)[0].read_bytes(), plist)
+        self.assertEqual({str(p.relative_to(self.app)): p.read_bytes() for p in self.app.rglob('*') if p.is_file()}, before)
+
+    def test_network_app_migration_preserves_core_data_and_proxy_and_rolls_back_failure(self):
+        self.perform_install()
+        plist, _ = mac.paths(self.home)
+        value = plistlib.loads(plist.read_bytes())
+        value['ProgramArguments'] = [str(self.app / 'mihomo'), '-d', str(self.app / 'data'), '-f', str(self.app / 'data/config.json')]
+        value.pop('AssociatedBundleIdentifiers')
+        plist.write_bytes(plistlib.dumps(value))
+        shutil.rmtree(native.app_path(self.app))
+        original = plist.read_bytes()
+        core = (self.app / 'mihomo').read_bytes()
+        config = (self.app / 'data/config.json').read_bytes()
+        def register(ctx, runtime, **kwargs):
+            if not kwargs.get('remove') and native.app_path(runtime).exists():
+                raise common.InstallError('synthetic registration failure')
+        with patch.object(mac, 'state', return_value=(True, True)), \
+                patch.object(mac, 'stop'), patch.object(mac, 'start'), \
+                patch.object(native, 'register', side_effect=register), \
+                patch.object(mac, 'system_proxy', side_effect=AssertionError('No proxy changes')):
+            with self.assertRaises(common.InstallError) as error:
+                mac.setup_network_app(self.ctx)
+        self.assertEqual(error.exception.effect, 'rolled_back')
+        self.assertEqual(plist.read_bytes(), original)
+        self.assertFalse(native.app_path(self.app).exists())
+        with patch.object(mac, 'state', return_value=(True, True)), \
+                patch.object(mac, 'stop'), patch.object(mac, 'start') as start, \
+                patch.object(mac, 'system_proxy', side_effect=AssertionError('No proxy changes')), \
+                redirect_stdout(io.StringIO()):
+            mac.setup_network_app(self.ctx)
+        start.assert_called_once_with(self.home)
+        self.assertEqual(plistlib.loads(plist.read_bytes())['ProgramArguments'], native.command(self.app))
+        self.assertEqual((self.app / 'mihomo').read_bytes(), core)
+        self.assertEqual((self.app / 'data/config.json').read_bytes(), config)
 
     def seed_registry(self):
         root = self.home / '.config/domino/subscriptions'

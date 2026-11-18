@@ -22,6 +22,8 @@ domino user@192.168.1.10
 
 支持 **macOS / Ubuntu**，需要 **Python 3.9+**。
 
+macOS 本机初始化还需要 Xcode Command Line Tools（缺少时运行 `xcode-select --install`），用于构建原生后台启动器。首次访问局域网时，请允许 **Domino** 的本地网络权限；已拒绝时可在“系统设置 → 隐私与安全性 → 本地网络”中开启。
+
 ### 1. 安装
 
 ```bash
@@ -58,6 +60,8 @@ domino catch                 # 捕获外部配置，完成后自动开启 Domino
 domino list                  # 查看配置名称
 domino status                # 查看服务与系统代理状态
 ```
+
+界面支持中英文切换：`domino language en` / `domino language zh` 保存偏好；`domino --lang en list` 临时使用英文；交互界面输入 `/language` 选择。English: run `domino language en` to save English as the default.
 
 也可以用 `domino catch all` 一次捕获全部配置，重复内容自动跳过。捕获成功后自动启动服务并接通系统代理；已有 Domino 时保留当前配置和节点选择，需要切换时使用 `domino switch '配置名'`。
 

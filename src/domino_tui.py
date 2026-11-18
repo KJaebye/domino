@@ -2,6 +2,7 @@
 # Copyright (C) 2026 KJaebye
 """Persistent slash-command terminal workspace over the regular CLI commands."""
 from __future__ import annotations
+from domino_i18n import tr as _t
 
 import asyncio
 from dataclasses import dataclass, field
@@ -15,6 +16,7 @@ import sys
 import time
 
 COMMANDS = [
+    ('/language', '切换中英文界面'),
     ('/nodes', '当前配置、代理链路和节点'), ('/select', '按名称或关键词选择节点'),
     ('/catch', '选择配置或捕获全部'), ('/mode', '规则 / 全局 / 直连模式'),
     ('/status', '检查服务和真实 HTTPS 出网'), ('/test', '选择全部配置、单个配置或节点检测'),
@@ -49,15 +51,15 @@ def command_banner(data, version, *, columns=100, color=None):
         while value and human_width(value+'…')>width: value=value[:-1]
         return value+'…' if width else ''
     def style(value, code): return human_style(value,code,color=color)
-    mode={'rule':'规则','global':'全局','direct':'直连'}.get(str(data.get('mode')),'模式未知')
-    metadata='localhost  ·  '+text(data.get('subscription') or ('未关联配置库' if data.get('installed') else '未初始化'))+'  ·  '+mode
-    status='未初始化' if not data.get('installed') else '接口在线' if data.get('reachable') else '接口离线'
+    mode={'rule':_t('规则'),'global':_t('全局'),'direct':_t('直连')}.get(str(data.get('mode')),_t('模式未知'))
+    metadata='localhost  ·  '+text(data.get('subscription') or (_t('未关联配置库') if data.get('installed') else _t('未初始化')))+'  ·  '+mode
+    status=_t('未初始化') if not data.get('installed') else _t('接口在线') if data.get('reachable') else _t('接口离线')
     tone='33' if not data.get('installed') else '32' if data.get('reachable') else '31'
-    if data.get('awaiting_subscription') and data.get('reachable'):status,tone='待添加订阅','33'
+    if data.get('awaiting_subscription') and data.get('reachable'):status,tone=_t('待添加订阅'),'33'
     status_line='● '+status
     if data.get('proxy_port'):status_line+=f"  ·  :{data['proxy_port']}"
     if data.get('node_count') is not None:
-        status_line+=f"  ·  {data['node_count']} 节点 / {data['group_count']} 组"
+        status_line+=_t('  ·  {0} 节点 / {1} 组', data['node_count'], data['group_count'])
     rows=[('Domino  v'+text(version),'1'),(metadata,'2'),(status_line,tone)]
     def render(index, width):
         value=clip(rows[index][0],width)
@@ -134,14 +136,14 @@ def traffic_notice(snapshot):
     state = routing.get('routing')
     if state == 'other':
         ports = '/'.join(str(p) for p in routing.get('ports', []))
-        return f'仅统计 {scope}；系统代理仍指向其他代理' + (f' :{ports}' if ports else '')
+        return _t('仅统计 {0}；系统代理仍指向其他代理', scope) + (f' :{ports}' if ports else '')
     if state == 'mixed':
-        return f'仅统计 {scope}；部分系统代理指向其他代理'
+        return _t('仅统计 {0}；部分系统代理指向其他代理', scope)
     if state == 'pac':
-        return f'仅统计 {scope}；系统使用 PAC / 自动发现'
+        return _t('仅统计 {0}；系统使用 PAC / 自动发现', scope)
     if state == 'off':
-        return f'仅统计 {scope}；系统代理未开启，应用需单独设置代理'
-    return f'仅统计 {scope}，不包含其他代理或系统总流量'
+        return _t('仅统计 {0}；系统代理未开启，应用需单独设置代理', scope)
+    return _t('仅统计 {0}，不包含其他代理或系统总流量', scope)
 
 
 def parse_command(text):
@@ -153,9 +155,9 @@ def parse_command(text):
         name = '/exit'
     name = {'/delay': '/test'}.get(name, name)
     if name not in dict(COMMANDS) and name != '/proxy':
-        raise ValueError('未知命令，输入 /help 查看可用操作。')
+        raise ValueError(_t('未知命令，输入 /help 查看可用操作。'))
     if name == '/shell' and parts[1:] not in [[], ['status'], ['on'], ['off']]:
-        raise ValueError('用法：/shell status，/shell on，/shell off。')
+        raise ValueError(_t('用法：/shell status，/shell on，/shell off。'))
     return name, parts[1:]
 
 
@@ -239,7 +241,7 @@ def load_toolkit():
             if (path / 'prompt_toolkit').is_dir():
                 sys.path.insert(0, str(path))
                 return importlib.import_module('prompt_toolkit')
-    raise RuntimeError('交互界面需要 prompt-toolkit；请安装项目依赖，或更新带 UI 组件的 Domino 安装包。')
+    raise RuntimeError(_t('交互界面需要 prompt-toolkit；请安装项目依赖，或更新带 UI 组件的 Domino 安装包。'))
 
 
 def make_completer():
@@ -250,7 +252,7 @@ def make_completer():
             if text.startswith('/') and not any(c.isspace() for c in text):
                 for name, description in COMMANDS:
                     if name.startswith(text):
-                        yield Completion(name, start_position=-len(text), display_meta=description)
+                        yield Completion(name, start_position=-len(text), display_meta=_t(description))
     return Commands()
 
 
@@ -351,13 +353,13 @@ class Workspace:
                 self.close_panel()
             elif self.job and not self.job.done():
                 if self.job_mutates:
-                    self.state.append('pending','正在应用设置，完成后即可继续；此阶段不强行中断。')
+                    self.state.append('pending',_t('正在应用设置，完成后即可继续；此阶段不强行中断。'))
                 else:
                     self.job.cancel()
             elif time.monotonic() - self.last_interrupt < 1.5:
                 event.app.exit()
             else:
-                self.state.append('muted', '再次按 Ctrl+C 退出，代理服务会继续运行。')
+                self.state.append('muted', _t('再次按 Ctrl+C 退出，代理服务会继续运行。'))
                 self.last_interrupt = time.monotonic()
 
         @bindings.add('c-d')
@@ -378,13 +380,13 @@ class Workspace:
         @bindings.add('f5')
         def refresh(event):
             self.refresh.set()
-            if self.config_open() and not self.config_form:self.queue('刷新配置','configs','--json',done=self.config_panel)
+            if self.config_open() and not self.config_form:self.queue(_t('刷新配置'),'configs','--json',done=self.config_panel)
 
         @bindings.add('c-t', filter=Condition(lambda:self.state.panel is not None and self.state.panel.kind=='nodes'))
         def speed(event):
             panel, item = self.state.panel, self.state.panel.selected()
             if panel.kind == 'nodes' and item:
-                self.queue('测试节点延迟', 'test', '--node', item['value'], '--json', done=self.delay_result)
+                self.queue(_t('测试节点延迟'), 'test', '--node', item['value'], '--json', done=self.delay_result)
 
         self.app = Application(layout=Layout(root, focused_element=self.input), key_bindings=bindings,
             style=Style.from_dict({
@@ -409,15 +411,15 @@ class Workspace:
         if data.get('subscription'):
             metadata += [('class:muted', '  ·  ' + clean(data['subscription']).replace('\n',' ').replace('\t',' '))]
         if data.get('mode'):
-            mode = {'rule':'规则','global':'全局','direct':'直连'}.get(data['mode'],'?')
+            mode = {'rule':_t('规则'),'global':_t('全局'),'direct':_t('直连')}.get(data['mode'],'?')
             metadata += [('class:muted','  ·  '+mode)]
-        if not data: status,style='连接中…','pending'
-        elif not data.get('installed'): status,style='未初始化','pending'
-        elif not data.get('active',data.get('reachable')): status,style='服务已停止','error'
-        elif not data.get('reachable'): status,style='接口离线','error'
-        elif data.get('awaiting_subscription'): status,style='待添加订阅','pending'
-        elif self.state.last_error: status,style='状态待刷新','pending'
-        else: status,style='接口在线','success'
+        if not data: status,style=_t('连接中…'),'pending'
+        elif not data.get('installed'): status,style=_t('未初始化'),'pending'
+        elif not data.get('active',data.get('reachable')): status,style=_t('服务已停止'),'error'
+        elif not data.get('reachable'): status,style=_t('接口离线'),'error'
+        elif data.get('awaiting_subscription'): status,style=_t('待添加订阅'),'pending'
+        elif self.state.last_error: status,style=_t('状态待刷新'),'pending'
+        else: status,style=_t('接口在线'),'success'
         status_line = [('class:'+style,'● '),('class:muted',status)]
         if self.header_height() == 2:
             if data.get('proxy_port') and self.app.output.get_size().columns >= 72:
@@ -426,8 +428,8 @@ class Workspace:
         if data.get('proxy_port'):
             status_line += [('class:muted',f"  ·  :{data['proxy_port']}")]
         if data.get('node_count') is not None:
-            counts = f"  ·  {data['node_count']} 节点"
-            if isinstance(data.get('groups'),list): counts += f" / {len(data['groups'])} 组"
+            counts = _t('  ·  {0} 节点', data['node_count'])
+            if isinstance(data.get('groups'),list): counts += _t(' / {0} 组', len(data['groups']))
             status_line += [('class:muted',counts)]
         rows = [[('class:title','Domino'),('class:muted','  v'+self.version)],metadata,status_line]
         from prompt_toolkit.utils import get_cwidth
@@ -471,14 +473,14 @@ class Workspace:
         panel = self.state.panel
         if not panel: return []
         values = panel.filtered()
-        if not values: return [('class:muted', '  配置库为空，可在下方添加配置。' if self.config_open() and not self.config_view['configs'] else '  没有匹配项；继续输入或按 Esc 返回。')]
+        if not values: return [('class:muted', _t('  配置库为空，可在下方添加配置。') if self.config_open() and not self.config_view['configs'] else _t('  没有匹配项；继续输入或按 Esc 返回。'))]
         fragments = []
         for index, item in enumerate(values):
             style = 'class:selected' if index == panel.index else 'class:current' if item.get('current') else ''
             label = ('● ' if item.get('current') else '  ') + clean(item['label'])
             if panel.kind == 'nodes' and item['value'] in self.state.delays:
                 number = self.state.delays[item['value']]
-                label += f'  {number} ms' if number is not None else '  不可用'
+                label += f'  {number} ms' if number is not None else _t('  不可用')
             def clicked(event, item=item):
                 from prompt_toolkit.mouse_events import MouseButton, MouseEventType
                 if event.event_type!=MouseEventType.MOUSE_UP or event.button!=MouseButton.LEFT:return NotImplemented
@@ -505,9 +507,9 @@ class Workspace:
         sample={'upload_bytes_per_second':self.state.up,'download_bytes_per_second':self.state.down,
                 'upload_total':data.get('upload_total',0),'download_total':data.get('download_total',0),
                 'connections':data.get('connections',0),'memory':data.get('memory')} if available else None
-        error=None if available else '控制接口不可用，正在重试…'
+        error=None if available else _t('控制接口不可用，正在重试…')
         rows=traffic_frame(sample,error,self.state.traffic_history,2,self.app.output.get_size().columns-4)
-        rows[-1]=('Esc / /traffic 关闭面板 · 底部每 2 秒刷新','muted')
+        rows[-1]=(_t('Esc / /traffic 关闭面板 · 底部每 2 秒刷新'),'muted')
         if len(rows)>self.traffic_height():rows=[row for row in rows if row[1]!='space']
         if len(rows)>self.traffic_height():rows=rows[:self.traffic_height()-1]+rows[-1:]
         styles={'title':'class:title','up':'class:success','down':'class:brand','error':'class:error','muted':'class:muted'}
@@ -521,22 +523,22 @@ class Workspace:
         data = self.state.snapshot
         available = data.get('stats_available',data.get('reachable',bool(data)))
         connections = str(data.get('connections',0)) if available else '—'
-        stats = f"↑ {format_bytes(self.state.up,True)}  ↓ {format_bytes(self.state.down,True)}  ·  {connections} 连接"
-        left, right = [('class:muted',stats)], [('class:muted','/ 命令')]
+        stats = _t('↑ {0}  ↓ {1}  ·  {2} 连接', format_bytes(self.state.up, True), format_bytes(self.state.down, True), connections)
+        left, right = [('class:muted',stats)], [('class:muted',_t('/ 命令'))]
         if self.state.busy:
             left = [('class:pending','⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'[int(time.monotonic()*8)%10]+' '+clean(self.state.progress or self.state.busy))]
             right = []
         elif self.state.last_error:
-            left,right = [('class:error','状态刷新失败 · /refresh 重试')],[]
+            left,right = [('class:error',_t('状态刷新失败 · /refresh 重试'))],[]
         elif self.state.panel:
-            hint = ('Enter 提交 · Esc 取消输入' if self.config_form else '↑↓ 选配置 · Tab 操作栏 · ←→ 选操作 · Enter 执行 · Esc 返回') if self.config_open() else '↑↓ / 点击选择 · Enter 确认 · Esc 取消'
-            if self.app.output.get_size().columns<80:hint='Tab 操作 · Enter 确认 · Esc 返回'
-            if self.state.panel.kind == 'nodes': hint += ' · Ctrl+T 测速'
-            left,right = [('class:muted',hint)],[('class:muted','输入筛选')]
+            hint = (_t('Enter 提交 · Esc 取消输入') if self.config_form else _t('↑↓ 选配置 · Tab 操作栏 · ←→ 选操作 · Enter 执行 · Esc 返回')) if self.config_open() else _t('↑↓ / 点击选择 · Enter 确认 · Esc 取消')
+            if self.app.output.get_size().columns<80:hint=_t('Tab 操作 · Enter 确认 · Esc 返回')
+            if self.state.panel.kind == 'nodes': hint += _t(' · Ctrl+T 测速')
+            left,right = [('class:muted',hint)],[('class:muted',_t('输入筛选'))]
         else:
             routing = data.get('system_proxy',{}).get('routing')
-            notices = {'other':'系统代理指向其他代理 :'+('/'.join(str(v) for v in data.get('system_proxy',{}).get('ports',[])) or '?'),
-                       'mixed':'系统代理混用','pac':'系统代理 PAC','off':'系统代理未开启','unknown':'系统代理未知','unsupported':'无桌面系统代理'}
+            notices = {'other':_t('系统代理指向其他代理 :')+('/'.join(str(v) for v in data.get('system_proxy',{}).get('ports',[])) or '?'),
+                       'mixed':_t('系统代理混用'),'pac':_t('系统代理 PAC'),'off':_t('系统代理未开启'),'unknown':_t('系统代理未知'),'unsupported':_t('无桌面系统代理')}
             if routing in notices:
                 left = [('class:pending' if routing in ['other','mixed','pac'] else 'class:muted',notices[routing])]
                 right = [('class:muted',stats)]
@@ -590,7 +592,7 @@ class Workspace:
             self.close_panel()
             if item: panel.callback(item['value'])
         elif buffer.text.strip() == '/':
-            self.panel('命令', [{'label': n + '  ' + d, 'value': n} for n,d in COMMANDS], self.dispatch)
+            self.panel(_t('命令'), [{'label': n + '  ' + d, 'value': n} for n,d in COMMANDS], self.dispatch)
         elif buffer.text.strip(): self.dispatch(buffer.text.strip())
         return False
 
@@ -621,7 +623,7 @@ class Workspace:
         while True:
             try: self.state.update(json.loads(await self.call('overview', timeout=8)))
             except asyncio.CancelledError: raise
-            except Exception: self.state.stale('无法刷新控制接口；/refresh 重试，/logs 查看日志。')
+            except Exception: self.state.stale(_t('无法刷新控制接口；/refresh 重试，/logs 查看日志。'))
             self.app.invalidate()
             self.refresh.clear()
             try: await asyncio.wait_for(self.refresh.wait(), 2)
@@ -635,7 +637,7 @@ class Workspace:
 
     def queue(self, title, action, *options, done=None, foreground=False, prompt=None, reload_configs=False):
         if self.job and not self.job.done():
-            self.state.append('pending', '已有任务进行中；Ctrl+C 可中断。')
+            self.state.append('pending', _t('已有任务进行中；Ctrl+C 可中断。'))
             return
         self.state.busy = title
         self.state.progress = ''
@@ -659,13 +661,13 @@ class Workspace:
                             arguments = (*options, value)
                         await self.call(action, *arguments, capture=False)
                     self.state.append('muted' if action=='catch' else 'success',
-                                      '捕获流程已结束，使用 /list 查看配置。' if action=='catch' else title+'完成。')
+                                      _t('捕获流程已结束，使用 /list 查看配置。') if action=='catch' else title+_t('完成。'))
                     if action in ['start','stop','restart','uninstall']:
                         try:
                             self.state.update(json.loads(await self.call('overview',timeout=8)))
                             self.runtime_result()
                         except Exception:
-                            self.state.stale('操作已完成，但状态刷新失败；使用 /refresh 重试。')
+                            self.state.stale(_t('操作已完成，但状态刷新失败；使用 /refresh 重试。'))
                             self.state.append('pending',self.state.last_error)
                 else:
                     def progress(value):
@@ -674,16 +676,16 @@ class Workspace:
                     output = await self.call(action, *options,on_progress=progress if action=='test' else None)
                     if done: done(output)
                     elif output: self.state.append('info', output.rstrip(), ansi=True)
-                    else: self.state.append('success', title + '完成。')
+                    else: self.state.append('success', title + _t('完成。'))
                 self.refresh.set()
-            except asyncio.CancelledError: self.state.append('muted', '已中断命令；可用 /status 查看实际状态。')
-            except (EOFError,KeyboardInterrupt):self.state.append('muted','已取消操作；未继续提交。')
-            except asyncio.TimeoutError: self.state.append('error', '操作超时，请重试或使用 /logs 检查。')
-            except (Exception, SystemExit) as error: self.state.append('error', clean(str(error)) or '操作失败。')
+            except asyncio.CancelledError: self.state.append('muted', _t('已中断命令；可用 /status 查看实际状态。'))
+            except (EOFError,KeyboardInterrupt):self.state.append('muted',_t('已取消操作；未继续提交。'))
+            except asyncio.TimeoutError: self.state.append('error', _t('操作超时，请重试或使用 /logs 检查。'))
+            except (Exception, SystemExit) as error: self.state.append('error', clean(str(error)) or _t('操作失败。'))
             finally:
                 if reload_configs and self.config_open():
                     try:self.config_panel(await self.call('configs','--json'))
-                    except Exception:self.state.append('pending','配置列表刷新失败；按 F5 重试。')
+                    except Exception:self.state.append('pending',_t('配置列表刷新失败；按 F5 重试。'))
                 self.state.busy = ''
                 self.state.progress = ''
                 self.job_mutates = False
@@ -701,7 +703,7 @@ class Workspace:
                 self.state.snapshot.update(groups=result['groups'],mode=result.get('mode',self.state.snapshot.get('mode','rule')))
                 if not for_delay:self.describe_nodes()
                 self.group_panel(result['groups'],for_delay)
-            self.queue('读取策略组','nodes','--json',done=loaded)
+            self.queue(_t('读取策略组'),'nodes','--json',done=loaded)
 
     def selection_paths(self):
         from install_domino import current_proxy_paths
@@ -713,9 +715,9 @@ class Workspace:
         return current_proxy_paths(self.state.snapshot.get('mode','rule'),live)
 
     def describe_nodes(self):
-        self.state.append('info','当前配置  '+(self.state.snapshot.get('subscription') or '未关联配置库的配置'))
-        for path in self.selection_paths():self.state.append('success','当前代理  '+path)
-        if self.state.snapshot.get('mode')=='rule':self.state.append('muted','当前选择按规则分流，不代表所有请求都使用同一节点。')
+        self.state.append('info',_t('当前配置  ')+(self.state.snapshot.get('subscription') or _t('未关联配置库的配置')))
+        for path in self.selection_paths():self.state.append('success',_t('当前代理  ')+path)
+        if self.state.snapshot.get('mode')=='rule':self.state.append('muted',_t('当前选择按规则分流，不代表所有请求都使用同一节点。'))
 
     def choose_node(self, query=None, group_name=None):
         import domino_cli
@@ -725,54 +727,54 @@ class Workspace:
                 result=json.loads(text)
                 self.state.snapshot.update(groups=result['groups'],mode=result.get('mode',self.state.snapshot.get('mode','rule')))
                 if any(g.get('selectable') for g in self.state.snapshot['groups']):self.choose_node(query,group_name)
-                else:self.state.append('error','没有可手动选择的策略组。')
-            self.queue('读取可选节点','nodes','--json',done=loaded)
+                else:self.state.append('error',_t('没有可手动选择的策略组。'))
+            self.queue(_t('读取可选节点'),'nodes','--json',done=loaded)
             return
         if group_name:
             matches=domino_cli.select_matches(group_name,[g['name'] for g in groups])
-            if len(matches)!=1:raise ValueError('请填写唯一的手动策略组名称。')
+            if len(matches)!=1:raise ValueError(_t('请填写唯一的手动策略组名称。'))
             groups=[g for g in groups if g['name']==matches[0]]
         elif self.state.snapshot.get('mode')=='global' and any(g['name']=='GLOBAL' for g in groups):
             groups=[g for g in groups if g['name']=='GLOBAL']
         def commit(node):
             eligible=[g for g in groups if node in g['choices']]
-            def apply(group):self.queue('切换节点','select','--group',group['name'],'--node',node)
+            def apply(group):self.queue(_t('切换节点'),'select','--group',group['name'],'--node',node)
             if len(eligible)==1:apply(eligible[0])
-            else:self.panel('选择策略组',[{'label':g['name'],'value':g} for g in eligible],apply,'select-group')
+            else:self.panel(_t('选择策略组'),[{'label':g['name'],'value':g} for g in eligible],apply,'select-group')
         if query is None:
             self.describe_nodes()
             if len(groups)==1:self.nodes(groups[0])
             else:self.group_panel(groups)
             return
         matches=domino_cli.select_matches(query,list(dict.fromkeys(name for g in groups for name in g['choices'])))
-        if not matches:raise ValueError('没有匹配的节点；使用 /nodes 查看名称。')
+        if not matches:raise ValueError(_t('没有匹配的节点；使用 /nodes 查看名称。'))
         if len(matches)==1:commit(matches[0])
-        else:self.panel('选择匹配节点',[{'label':name,'value':name,'current':any(g.get('current')==name for g in groups)} for name in matches],commit,'select-matches')
+        else:self.panel(_t('选择匹配节点'),[{'label':name,'value':name,'current':any(g.get('current')==name for g in groups)} for name in matches],commit,'select-matches')
 
     def runtime_result(self):
         d=self.state.snapshot
-        self.state.append('success' if d.get('active') else 'error','● 已开启' if d.get('active') else '● 已关闭')
-        self.state.append('info','当前配置  '+(d.get('subscription') or '未关联配置库'))
+        self.state.append('success' if d.get('active') else 'error',_t('● 已开启') if d.get('active') else _t('● 已关闭'))
+        self.state.append('info',_t('当前配置  ')+(d.get('subscription') or _t('未关联配置库')))
         routing=d.get('system_proxy',{}).get('routing')
-        if routing=='domino':self.state.append('success',f"系统代理已开启 → Domino 127.0.0.1:{d.get('proxy_port')}")
-        elif routing=='unsupported':self.state.append('muted','无桌面系统代理；终端使用 /shell on/off/status。')
-        elif not d.get('active'):self.state.append('muted','服务已停止，Domino 系统代理接管已解除。')
-        else:self.state.append('pending','系统代理尚未接通；/status 查看详情。')
+        if routing=='domino':self.state.append('success',_t('系统代理已开启 → Domino 127.0.0.1:{0}', d.get('proxy_port')))
+        elif routing=='unsupported':self.state.append('muted',_t('无桌面系统代理；终端使用 /shell on/off/status。'))
+        elif not d.get('active'):self.state.append('muted',_t('服务已停止，Domino 系统代理接管已解除。'))
+        else:self.state.append('pending',_t('系统代理尚未接通；/status 查看详情。'))
 
     def group_panel(self, groups, for_delay=False):
         def selected(group):
-            if for_delay: self.queue('测试策略组延迟','test','--group',group['name'],'--json',done=self.delay_result)
+            if for_delay: self.queue(_t('测试策略组延迟'),'test','--group',group['name'],'--json',done=self.delay_result)
             else: self.nodes(group)
-        self.panel('策略组 · '+(self.state.snapshot.get('subscription') or '未关联配置库'),
-            [{'label': f"{g['name']} → {g.get('current') or '自动策略'}", 'search':g['name'], 'value':g} for g in groups], selected)
+        self.panel(_t('策略组 · ')+(self.state.snapshot.get('subscription') or _t('未关联配置库')),
+            [{'label': _t('{0} → {1}', g['name'], g.get('current') or _t('自动策略')), 'search':g['name'], 'value':g} for g in groups], selected)
 
     def nodes(self, group, for_delay=False):
         def selected(name):
-            if for_delay:self.queue('测试节点延迟','test','--node',name,'--json',done=self.delay_result)
+            if for_delay:self.queue(_t('测试节点延迟'),'test','--node',name,'--json',done=self.delay_result)
             elif not group['selectable']:
-                self.state.append('muted', '该组由策略自动选择；请在上层 Selector 策略组中切换。')
-            else: self.queue('切换节点','select','--group',group['name'],'--node',name)
-        self.panel((self.state.snapshot.get('subscription') or '未关联配置库')+' · '+group['name'] + ('' if group['selectable'] else ' · 自动策略'),
+                self.state.append('muted', _t('该组由策略自动选择；请在上层 Selector 策略组中切换。'))
+            else: self.queue(_t('切换节点'),'select','--group',group['name'],'--node',name)
+        self.panel((self.state.snapshot.get('subscription') or _t('未关联配置库'))+' · '+group['name'] + ('' if group['selectable'] else _t(' · 自动策略')),
             [{'label':n,'value':n,'current':n==group.get('current')} for n in group['choices']], selected, 'nodes')
 
     def menu(self, title, choices):
@@ -782,10 +784,10 @@ class Workspace:
         values=json.loads(text)
         items=[{'label':v['name']+' · '+v['path'],'value':v['path']} for v in values]
         if not items:
-            self.state.append('muted','没有发现兼容外部配置；可使用 /catch --source "配置路径"。')
+            self.state.append('muted',_t('没有发现兼容外部配置；可使用 /catch --source "配置路径"。'))
             return
-        self.panel('选择捕获的外部配置',items,
-                   lambda path:self.queue('捕获外部配置','catch','--source',path,foreground=True),'catch-sources')
+        self.panel(_t('选择捕获的外部配置'),items,
+                   lambda path:self.queue(_t('捕获外部配置'),'catch','--source',path,foreground=True),'catch-sources')
 
     def configuration_picker(self, action):
         def loaded(text):
@@ -793,30 +795,30 @@ class Workspace:
             else:
                 self.config_panel(text)
                 if action=='add':self.config_manage('add')
-        self.queue('读取配置','configs','--json',done=loaded)
+        self.queue(_t('读取配置'),'configs','--json',done=loaded)
 
     def configuration_choices(self, result, action):
-        items=[{'label':'全部配置 · 汇总可用/不可用节点','value':None}]
+        items=[{'label':_t('全部配置 · 汇总可用/不可用节点'),'value':None}]
         for item in result['configs']:
             items.append({'label':item['name'],'value':item,'current':item['active']})
-        items.extend([{'label':'当前配置 · 选择策略组检测','value':'group'},
-                      {'label':'当前配置 · 选择单个节点检测','value':'node'}])
+        items.extend([{'label':_t('当前配置 · 选择策略组检测'),'value':'group'},
+                      {'label':_t('当前配置 · 选择单个节点检测'),'value':'node'}])
         def selected(item):
             if item is None:
-                self.queue('检测全部配置','test','--all','--json',done=self.delay_result)
+                self.queue(_t('检测全部配置'),'test','--all','--json',done=self.delay_result)
             elif isinstance(item,str):
                 if item=='group':self.groups(for_delay=True)
                 else:self.test_node_picker()
-            else:self.queue('检测配置节点','test','--config',item['name'],'--json',done=self.delay_result)
-        self.panel('检测配置节点 · 选择配置',items,selected,'config-test')
+            else:self.queue(_t('检测配置节点'),'test','--config',item['name'],'--json',done=self.delay_result)
+        self.panel(_t('检测配置节点 · 选择配置'),items,selected,'config-test')
 
     def test_node_picker(self):
         def loaded(groups):
-            self.panel('选择节点所在策略组',[{'label':g['name'],'value':g} for g in groups],
+            self.panel(_t('选择节点所在策略组'),[{'label':g['name'],'value':g} for g in groups],
                        lambda g:self.nodes(g,for_delay=True),'test-group')
         groups=self.state.snapshot.get('groups',[])
         if groups:loaded(groups)
-        else:self.queue('读取策略组','nodes','--json',done=lambda s:loaded(json.loads(s)['groups']))
+        else:self.queue(_t('读取策略组'),'nodes','--json',done=lambda s:loaded(json.loads(s)['groups']))
 
     def traffic_toggle(self):
         self.state.traffic_open=not self.state.traffic_open
@@ -824,9 +826,9 @@ class Workspace:
             d=self.state.snapshot
             self.state.append('muted',traffic_notice(d))
             if d.get('system_proxy',{}).get('routing') in ['other','off','mixed']:
-                self.state.append('muted','执行 /start 开启 Domino 并接通系统代理。')
-            self.state.append('muted','动态面板已打开；底部每 2 秒刷新；Esc 或 /traffic 关闭。')
-        else:self.state.append('muted','动态流量面板已关闭。')
+                self.state.append('muted',_t('执行 /start 开启 Domino 并接通系统代理。'))
+            self.state.append('muted',_t('动态面板已打开；底部每 2 秒刷新；Esc 或 /traffic 关闭。'))
+        else:self.state.append('muted',_t('动态流量面板已关闭。'))
 
     def delay_result(self, text):
         data=json.loads(text)
@@ -834,33 +836,33 @@ class Workspace:
         current=set(usage.get('nodes',[]))
         if isinstance(data,dict):
             configuration=data.get('configuration')
-            if configuration:self.state.append('success' if usage.get('active') else 'muted',('● 当前配置  ' if usage.get('active') else '测试配置  ')+configuration)
-            if usage.get('active') is False:self.state.append('muted','未启用 · 当前使用 '+(usage.get('current') or '未关联配置库的配置'))
-            for path in usage.get('paths',[]):self.state.append('success','当前代理  '+path)
-            if usage.get('active') and not usage.get('known'):self.state.append('pending','运行选择无法读取，本次不标记当前节点。')
+            if configuration:self.state.append('success' if usage.get('active') else 'muted',(_t('● 当前配置  ') if usage.get('active') else _t('测试配置  '))+configuration)
+            if usage.get('active') is False:self.state.append('muted',_t('未启用 · 当前使用 ')+(usage.get('current') or _t('未关联配置库的配置')))
+            for path in usage.get('paths',[]):self.state.append('success',_t('当前代理  ')+path)
+            if usage.get('active') and not usage.get('known'):self.state.append('pending',_t('运行选择无法读取，本次不标记当前节点。'))
         for item in data.get('results',[]) if isinstance(data,dict) else data:
             if 'status' in item and 'total' in item:
-                counts = f"{item['total']} 节点 · {item['available']} 可用 · {item['unavailable']} 超时/不可用" if item['status']=='tested' else item['message']
+                counts = _t('{0} 节点 · {1} 可用 · {2} 超时/不可用', item['total'], item['available'], item['unavailable']) if item['status']=='tested' else item['message']
                 self.state.append('success' if item.get('available') else 'muted',('● ' if item.get('active') else '')+item['name'] + '  ' + counts)
                 continue
             self.state.delays[item['name']] = item['delay_ms']
             self.state.append('success' if item['ok'] else 'error',
-                ('● ' if item['name'] in current else '')+item['name'] + (f"  {item['delay_ms']} ms" if item['ok'] else '  超时 / 不可用')+
-                ('  · 当前选中' if item['name'] in current else ''))
+                ('● ' if item['name'] in current else '')+item['name'] + (f"  {item['delay_ms']} ms" if item['ok'] else _t('  超时 / 不可用'))+
+                (_t('  · 当前选中') if item['name'] in current else ''))
 
     def choices(self, title, values, action):
         self.panel(title,[{'label':label,'value':v,'current':v==self.state.snapshot.get('log_level' if action=='log' else 'mode')} for v,label in values],
             lambda v:self.queue(title,action,*([v] if action=='proxy' else ['--set',v]),foreground=action=='proxy'))
 
     def help(self):
-        self.state.append('info','\n'.join(f'\033[1;36m{n:14}\033[0m {d}' for n,d in COMMANDS),ansi=True)
-        self.state.append('muted','直接输入命令并回车进入选择面板，↑↓ 选择、Enter 确认；也可输入参数作为快捷操作。')
-        self.state.append('muted','/shell 只管理终端代理策略；UI 不修改父 shell，退出后由已加载的 shell 集成同步。')
-        self.state.append('muted','面板中输入筛选，↑↓ 导航，Enter 确认，Ctrl+T 测速。Ctrl+C 中断命令或清空输入。')
+        self.state.append('info','\n'.join(f'\033[1;36m{n:14}\033[0m {_t(d)}' for n,d in COMMANDS),ansi=True)
+        self.state.append('muted',_t('直接输入命令并回车进入选择面板，↑↓ 选择、Enter 确认；也可输入参数作为快捷操作。'))
+        self.state.append('muted',_t('/shell 只管理终端代理策略；UI 不修改父 shell，退出后由已加载的 shell 集成同步。'))
+        self.state.append('muted',_t('面板中输入筛选，↑↓ 导航，Enter 确认，Ctrl+T 测速。Ctrl+C 中断命令或清空输入。'))
 
     def can_exit(self):
         if self.job and not self.job.done() and self.job_mutates:
-            self.state.append('pending','设置尚在提交，请等操作完成后退出。')
+            self.state.append('pending',_t('设置尚在提交，请等操作完成后退出。'))
             return False
         return True
 
@@ -883,7 +885,7 @@ class Workspace:
                 return
             if name == '/clear': self.state.events.clear(); self.state.scroll=0; return
             if name in ['/status','/logs','/start','/stop','/restart','/help'] and args:
-                raise ValueError(name + ' 不需要额外参数。')
+                raise ValueError(name + _t(' 不需要额外参数。'))
             if name in ['/configs','/catch']:
                 visible, hide_next = [], False
                 for value in args:
@@ -894,175 +896,186 @@ class Workspace:
             else:
                 self.state.append('command',text)
             if name == '/help': self.help()
+            elif name == '/language':
+                if not args:
+                    self.menu(_t('界面语言'), [('English (en)', '/language en'), ('简体中文 (zh)', '/language zh')])
+                elif len(args) == 1:
+                    from domino_i18n import set_language
+                    selected = set_language(args[0])
+                    self.state.append('info', _t('界面语言：{0}', 'English (en)' if selected == 'en' else '简体中文 (zh)'))
+                    self.refresh.set()
+                    self.app.invalidate()
+                else:
+                    raise ValueError(_t('用法：/language，或 /language zh / en。'))
             elif name == '/refresh':
                 self.refresh.set()
-                self.state.append('muted','已请求刷新状态和流量。')
+                self.state.append('muted',_t('已请求刷新状态和流量。'))
             elif name == '/nodes':
-                if args: self.queue('读取策略组','nodes','--group',' '.join(args),'--json',done=lambda s:self.nodes(json.loads(s)['groups'][0]))
+                if args: self.queue(_t('读取策略组'),'nodes','--group',' '.join(args),'--json',done=lambda s:self.nodes(json.loads(s)['groups'][0]))
                 else: self.groups()
             elif name == '/select':
                 import domino_cli,io
                 from contextlib import redirect_stderr
                 try:
                     with redirect_stderr(io.StringIO()):selection=domino_cli.build_parser().parse_args(['select',*args])
-                except SystemExit:raise ValueError('用法：/select，/select "节点名或关键词"，可附加 --group "策略组"。') from None
+                except SystemExit:raise ValueError(_t('用法：/select，/select "节点名或关键词"，可附加 --group "策略组"。')) from None
                 self.choose_node(selection.name or selection.node,selection.group)
             elif name == '/catch':
-                if not args:self.menu('捕获外部配置',[('选择一个外部配置','/catch --choose'),('全部配置 · 重复项自动跳过','/catch all')])
-                elif args==['--choose']:self.queue('读取外部配置','catch-options',done=self.catch_panel)
-                else:self.queue('捕获外部配置','catch',*args,foreground=True)
+                if not args:self.menu(_t('捕获外部配置'),[(_t('选择一个外部配置'),'/catch --choose'),(_t('全部配置 · 重复项自动跳过'),'/catch all')])
+                elif args==['--choose']:self.queue(_t('读取外部配置'),'catch-options',done=self.catch_panel)
+                else:self.queue(_t('捕获外部配置'),'catch',*args,foreground=True)
             elif name == '/configs':
                 if not args or args == ['list']:
-                    self.queue('读取配置', 'configs', '--json', done=lambda s:self.config_panel(json.loads(s)))
+                    self.queue(_t('读取配置'), 'configs', '--json', done=lambda s:self.config_panel(json.loads(s)))
                 elif len(args)==1 and args[0]=='add':
                     self.configuration_picker('add')
                 elif len(args)==1 and args[0] in ['switch','update','remove','rename','set-url']:
                     self.configuration_picker(args[0])
                 elif args[0] in ['add', 'set-url']:
                     action = args[0]
-                    title = '添加订阅' if action == 'add' else '设置订阅地址'
+                    title = _t('添加订阅') if action == 'add' else _t('设置订阅地址')
                     values = args[1:]
                     if len(values) == 1:
                         self.queue(title, action, *values, foreground=True)
                     elif (len(values) == 3 and values[1] == '--url') or (len(values) == 2 and values[1].startswith('--url=')):
                         self.queue(title, action, *values)
                     else:
-                        raise ValueError('用法：/' + action + ' "配置名称"，地址将隐藏输入；也可附加 --url "HTTPS 地址"。')
+                        raise ValueError(_t('用法：/') + action + _t(' "配置名称"，地址将隐藏输入；也可附加 --url "HTTPS 地址"。'))
                 elif args[0] in ['switch', 'update', 'rename', 'remove']:
                     action, values = args[0], args[1:]
                     if action=='rename' and len(values)==1:
-                        self.queue('重命名配置','rename',*values,foreground=True,prompt='新配置名称：')
+                        self.queue(_t('重命名配置'),'rename',*values,foreground=True,prompt=_t('新配置名称：'))
                         return
                     required = 2 if action == 'rename' else 1
                     if len(values) != required:
-                        raise ValueError('用法：/' + action + (' "旧名称" "新名称"' if required == 2 else ' "配置名称"') + ('；/update all 更新全部在线订阅。' if action == 'update' else '。'))
-                    self.queue('订阅管理', action, *values)
+                        raise ValueError(_t('用法：/') + action + (_t(' "旧名称" "新名称"') if required == 2 else _t(' "配置名称"')) + (_t('；/update all 更新全部在线订阅。') if action == 'update' else '。'))
+                    self.queue(_t('订阅管理'), action, *values)
                 else:
                     hidden = any(v in ['--add','--set-url'] or v.startswith(('--add=','--set-url=')) for v in args) and not any(v=='--url' or v.startswith('--url=') for v in args)
-                    self.queue('配置管理', 'configs', *args, foreground=hidden)
+                    self.queue(_t('配置管理'), 'configs', *args, foreground=hidden)
             elif name == '/mode':
                 if args:
                     if (len(args)!=1 and not (len(args)==2 and args[0]=='--set')) or args[-1] not in ['rule','global','direct']:
-                        raise ValueError('用法：/mode，或 /mode rule|global|direct。')
-                    self.queue('切换模式','mode','--set',args[-1])
-                else: self.choices('选择运行模式',[('rule','规则模式  按分流规则选择出口'),('global','全局模式  使用 GLOBAL 当前选择'),('direct','直连模式  直接连接目标')],'mode')
+                        raise ValueError(_t('用法：/mode，或 /mode rule|global|direct。'))
+                    self.queue(_t('切换模式'),'mode','--set',args[-1])
+                else: self.choices(_t('选择运行模式'),[('rule',_t('规则模式  按分流规则选择出口')),('global',_t('全局模式  使用 GLOBAL 当前选择')),('direct',_t('直连模式  直接连接目标'))],'mode')
             elif name in ['/test', '/delay']:
                 if not args or args==['--config']:self.configuration_picker('test')
                 elif args==['--group']:self.groups(for_delay=True)
                 elif args==['--node']:self.test_node_picker()
-                elif args==['--all']:self.queue('检测全部配置','test','--all','--json',done=self.delay_result)
-                elif len(args)==1: self.queue('测试延迟','test',args[0],'--json',done=self.delay_result)
-                elif len(args)==2 and args[0] in ['--node','--group','--config']: self.queue('测试延迟','test',*args,'--json',done=self.delay_result)
-                else: raise ValueError('用法：/test 汇总所有配置，或 /test "配置名" 查看节点明细。')
+                elif args==['--all']:self.queue(_t('检测全部配置'),'test','--all','--json',done=self.delay_result)
+                elif len(args)==1: self.queue(_t('测试延迟'),'test',args[0],'--json',done=self.delay_result)
+                elif len(args)==2 and args[0] in ['--node','--group','--config']: self.queue(_t('测试延迟'),'test',*args,'--json',done=self.delay_result)
+                else: raise ValueError(_t('用法：/test 汇总所有配置，或 /test "配置名" 查看节点明细。'))
             elif name == '/scan':
                 if not args:
-                    self.menu('扫描配置',[('扫描全部外部配置与 Domino 配置','/scan --all'),('指定配置文件路径','/scan --source')])
+                    self.menu(_t('扫描配置'),[(_t('扫描全部外部配置与 Domino 配置'),'/scan --all'),(_t('指定配置文件路径'),'/scan --source')])
                     return
                 if args==['--all']:args=[]
                 elif args==['--source']:
-                    self.queue('扫描指定配置','scan','--source',foreground=True,prompt='配置文件路径：')
+                    self.queue(_t('扫描指定配置'),'scan','--source',foreground=True,prompt=_t('配置文件路径：'))
                     return
                 if args and not ((len(args)==2 and args[0]=='--source') or
                                  (len(args)==1 and args[0].startswith('--source=') and args[0]!='--source=')):
-                    raise ValueError('用法：/scan，或 /scan --source "配置路径"。')
-                self.queue('扫描配置与代理出网','scan',*args)
-            elif name == '/status': self.queue('运行状态','status')
+                    raise ValueError(_t('用法：/scan，或 /scan --source "配置路径"。'))
+                self.queue(_t('扫描配置与代理出网'),'scan',*args)
+            elif name == '/status': self.queue(_t('运行状态'),'status')
             elif name == '/traffic':
                 if not args:
-                    self.menu('动态流量面板',[
-                        ('关闭内嵌面板' if self.state.traffic_open else '打开内嵌动态面板','/traffic --inline'),
-                        ('打开独立全屏面板 · q 返回','/traffic --full')])
+                    self.menu(_t('动态流量面板'),[
+                        (_t('关闭内嵌面板') if self.state.traffic_open else _t('打开内嵌动态面板'),'/traffic --inline'),
+                        (_t('打开独立全屏面板 · q 返回'),'/traffic --full')])
                     return
                 if args==['--full']:
                     self.state.traffic_open=False
-                    self.queue('流量监控','traffic','--full',foreground=True)
+                    self.queue(_t('流量监控'),'traffic','--full',foreground=True)
                     return
-                if args!=['--inline']:raise ValueError('用法：/traffic 选择面板，/traffic --inline，/traffic --full。')
+                if args!=['--inline']:raise ValueError(_t('用法：/traffic 选择面板，/traffic --inline，/traffic --full。'))
                 self.traffic_toggle()
             elif name == '/connections':
-                if not args:self.menu('连接管理',[('查看活跃连接','/connections --list'),('选择关闭一个连接','/connections --choose'),('关闭全部活跃连接','/connections --all')])
-                elif args==['--list']:self.queue('读取连接','connections','--json',done=self.connections_result)
-                elif args==['--choose']:self.queue('读取连接','connections','--json',done=lambda s:self.connection_panel(json.loads(s)))
-                elif args==['--all'] or (len(args)==2 and args[0]=='--close'): self.queue('关闭连接','connections',*args)
-                else: raise ValueError('用法：/connections，/connections --close ID，/connections --all。')
+                if not args:self.menu(_t('连接管理'),[(_t('查看活跃连接'),'/connections --list'),(_t('选择关闭一个连接'),'/connections --choose'),(_t('关闭全部活跃连接'),'/connections --all')])
+                elif args==['--list']:self.queue(_t('读取连接'),'connections','--json',done=self.connections_result)
+                elif args==['--choose']:self.queue(_t('读取连接'),'connections','--json',done=lambda s:self.connection_panel(json.loads(s)))
+                elif args==['--all'] or (len(args)==2 and args[0]=='--close'): self.queue(_t('关闭连接'),'connections',*args)
+                else: raise ValueError(_t('用法：/connections，/connections --close ID，/connections --all。'))
             elif name == '/rules':
                 if not args:
-                    self.menu('分流规则',[('查看运行规则','/rules --list'),('查看自定义规则','/rules --custom'),
-                        ('搜索运行规则','/rules --search'),('添加自定义规则','/rules add'),('选择删除自定义规则','/rules remove')])
-                elif args==['add']:self.queue('新增规则','rules','add',foreground=True,prompt='完整规则（如 DOMAIN-SUFFIX,example.com,DIRECT）：')
-                elif args==['remove']:self.queue('读取自定义规则','rules','--custom','--limit','100000','--json',done=lambda s:self.rule_panel(json.loads(s)))
-                elif args==['--search']:self.queue('搜索规则','rules','--limit','20','--match',foreground=True,prompt='搜索关键词：')
-                elif args==['--list']:self.queue('读取规则','rules','--limit','20')
+                    self.menu(_t('分流规则'),[(_t('查看运行规则'),'/rules --list'),(_t('查看自定义规则'),'/rules --custom'),
+                        (_t('搜索运行规则'),'/rules --search'),(_t('添加自定义规则'),'/rules add'),(_t('选择删除自定义规则'),'/rules remove')])
+                elif args==['add']:self.queue(_t('新增规则'),'rules','add',foreground=True,prompt=_t('完整规则（如 DOMAIN-SUFFIX,example.com,DIRECT）：'))
+                elif args==['remove']:self.queue(_t('读取自定义规则'),'rules','--custom','--limit','100000','--json',done=lambda s:self.rule_panel(json.loads(s)))
+                elif args==['--search']:self.queue(_t('搜索规则'),'rules','--limit','20','--match',foreground=True,prompt=_t('搜索关键词：'))
+                elif args==['--list']:self.queue(_t('读取规则'),'rules','--limit','20')
                 elif args[0] in ['add','remove']:
                     if len(args) != 2:
-                        raise ValueError('用法：/rules ' + args[0] + ' "完整规则"。例如 /rules add "DOMAIN-SUFFIX,example.com,DIRECT"。')
-                    self.queue('新增规则' if args[0]=='add' else '删除自定义规则','rules',*args)
+                        raise ValueError(_t('用法：/rules ') + args[0] + _t(' "完整规则"。例如 /rules add "DOMAIN-SUFFIX,example.com,DIRECT"。'))
+                    self.queue(_t('新增规则') if args[0]=='add' else _t('删除自定义规则'),'rules',*args)
                 elif args == ['--custom']:
-                    self.queue('读取自定义规则','rules','--custom')
+                    self.queue(_t('读取自定义规则'),'rules','--custom')
                 else:
-                    self.queue('读取规则','rules','--limit','20',*(['--match',' '.join(args)] if args else []))
+                    self.queue(_t('读取规则'),'rules','--limit','20',*(['--match',' '.join(args)] if args else []))
             elif name == '/providers':
                 if not args:
-                    self.menu('选择集合类型',[('节点集合 · proxy','/providers proxy'),('规则集合 · rule','/providers rule')])
+                    self.menu(_t('选择集合类型'),[(_t('节点集合 · proxy'),'/providers proxy'),(_t('规则集合 · rule'),'/providers rule')])
                     return
                 kind=args[0]
-                if kind not in ['proxy','rule']: raise ValueError('用法：/providers 或 /providers rule。')
-                self.queue('读取集合','providers','--kind',kind,'--json',done=lambda s:self.provider_panel(json.loads(s),kind))
+                if kind not in ['proxy','rule']: raise ValueError(_t('用法：/providers 或 /providers rule。'))
+                self.queue(_t('读取集合'),'providers','--kind',kind,'--json',done=lambda s:self.provider_panel(json.loads(s),kind))
             elif name == '/log':
-                if args and (len(args)==1 or (len(args)==2 and args[0]=='--set')) and args[-1] in ['debug','info','warning','error','silent']: self.queue('日志级别','log','--set',args[-1])
-                elif not args:self.choices('日志级别',[('debug','调试  debug'),('info','信息  info'),('warning','警告  warning'),('error','错误  error'),('silent','静默  silent')],'log')
-                else: raise ValueError('日志级别可选 debug、info、warning、error、silent。')
+                if args and (len(args)==1 or (len(args)==2 and args[0]=='--set')) and args[-1] in ['debug','info','warning','error','silent']: self.queue(_t('日志级别'),'log','--set',args[-1])
+                elif not args:self.choices(_t('日志级别'),[('debug',_t('调试  debug')),('info',_t('信息  info')),('warning',_t('警告  warning')),('error',_t('错误  error')),('silent',_t('静默  silent'))],'log')
+                else: raise ValueError(_t('日志级别可选 debug、info、warning、error、silent。'))
             elif name == '/shell':
                 if not args:
-                    self.menu('终端代理',[('on · 在终端中使用 Domino 代理','/shell on'),('off · 恢复原代理设置','/shell off'),('status · 查看端口和环境变量','/shell status')])
-                elif args == ['status']: self.queue('终端代理策略','shell','status')
-                elif len(args)==1 and args[0] in ['on','off']: self.queue('终端代理策略','shell',args[0])
-                else: raise ValueError('用法：/shell status，/shell on，/shell off。')
+                    self.menu(_t('终端代理'),[(_t('on · 在终端中使用 Domino 代理'),'/shell on'),(_t('off · 恢复原代理设置'),'/shell off'),(_t('status · 查看端口和环境变量'),'/shell status')])
+                elif args == ['status']: self.queue(_t('终端代理策略'),'shell','status')
+                elif len(args)==1 and args[0] in ['on','off']: self.queue(_t('终端代理策略'),'shell',args[0])
+                else: raise ValueError(_t('用法：/shell status，/shell on，/shell off。'))
             elif name == '/proxy':
-                if not args: self.choices('系统代理',[('on','开启 Domino 系统代理'),('off','恢复此前的系统代理设置')],'proxy')
-                elif (len(args)==1 or (len(args)==2 and args[0]=='--set')) and args[-1] in ['on','off']: self.queue('系统代理','proxy',args[-1],foreground=True)
-                elif args==['status']: self.queue('系统代理状态','proxy','status',foreground=True)
-                else: raise ValueError('用法：/proxy，/proxy on，/proxy off，/proxy status。')
-            elif name == '/logs': self.queue('查看内核日志','logs','--lines','30',foreground=True)
+                if not args: self.choices(_t('系统代理'),[('on',_t('开启 Domino 系统代理')),('off',_t('恢复此前的系统代理设置'))],'proxy')
+                elif (len(args)==1 or (len(args)==2 and args[0]=='--set')) and args[-1] in ['on','off']: self.queue(_t('系统代理'),'proxy',args[-1],foreground=True)
+                elif args==['status']: self.queue(_t('系统代理状态'),'proxy','status',foreground=True)
+                else: raise ValueError(_t('用法：/proxy，/proxy on，/proxy off，/proxy status。'))
+            elif name == '/logs': self.queue(_t('查看内核日志'),'logs','--lines','30',foreground=True)
             elif name == '/uninstall':
                 if not args:
-                    self.menu('卸载 Domino',[('预览清理范围（不修改）','/uninstall --dry-run'),
-                        ('卸载运行环境并删除配置、备份（需确认）','/uninstall --confirm')])
-                elif args == ['--dry-run']: self.queue('卸载预览','uninstall','--dry-run')
-                elif args == ['--confirm']: self.queue('卸载 Domino','uninstall',foreground=True)
-                else: raise ValueError('使用 /uninstall 选择预览或卸载。')
-            elif name in ['/start','/stop','/restart']: self.queue('执行 '+name[1:],name[1:],foreground=True)
+                    self.menu(_t('卸载 Domino'),[(_t('预览清理范围（不修改）'),'/uninstall --dry-run'),
+                        (_t('卸载运行环境并删除配置、备份（需确认）'),'/uninstall --confirm')])
+                elif args == ['--dry-run']: self.queue(_t('卸载预览'),'uninstall','--dry-run')
+                elif args == ['--confirm']: self.queue(_t('卸载 Domino'),'uninstall',foreground=True)
+                else: raise ValueError(_t('使用 /uninstall 选择预览或卸载。'))
+            elif name in ['/start','/stop','/restart']: self.queue(_t('执行 ')+name[1:],name[1:],foreground=True)
         except ValueError as error: self.state.append('error',str(error))
 
     def connections_result(self, text):
         values=json.loads(text).get('connections',[])
-        self.state.append('info',f'活跃连接 {len(values)} 条；显示前 20 条。')
+        self.state.append('info',_t('活跃连接 {0} 条；显示前 20 条。', len(values)))
         for v in values[:20]: self.state.append('info',f"{v['id']}  {v.get('network')}  {v.get('host')}:{v.get('port')}  {' → '.join(v.get('chains') or [])}")
 
     def connection_panel(self, result):
         values=result.get('connections',[])
         if not values:
-            self.state.append('muted','没有活跃连接。')
+            self.state.append('muted',_t('没有活跃连接。'))
             return
-        self.panel('选择关闭的连接',[{'label':f"{v.get('network')} {v.get('host')}:{v.get('port')} · {v['id']}",'value':v['id']} for v in values],
-                   lambda value:self.queue('关闭连接','connections','--close',value),'connections')
+        self.panel(_t('选择关闭的连接'),[{'label':f"{v.get('network')} {v.get('host')}:{v.get('port')} · {v['id']}",'value':v['id']} for v in values],
+                   lambda value:self.queue(_t('关闭连接'),'connections','--close',value),'connections')
 
     def rule_panel(self, result):
         values=result.get('rules',[])
         if not values:
-            self.state.append('muted','没有自定义规则。')
+            self.state.append('muted',_t('没有自定义规则。'))
             return
-        self.panel('选择删除的自定义规则',[{'label':v,'value':v} for v in values],
-                   lambda value:self.queue('删除自定义规则','rules','remove',value),'rules-remove')
+        self.panel(_t('选择删除的自定义规则'),[{'label':v,'value':v} for v in values],
+                   lambda value:self.queue(_t('删除自定义规则'),'rules','remove',value),'rules-remove')
 
     def provider_panel(self, values, kind):
-        if not values: self.state.append('muted','没有可用集合。'); return
+        if not values: self.state.append('muted',_t('没有可用集合。')); return
         def selected(item):
             if str(item.get('vehicleType','')).lower() not in ['http','file']:
-                self.state.append('muted','这是内置节点快照；请用 /list 管理和更新完整订阅。')
-            else: self.queue('更新集合','providers','--kind',kind,'--update',item['name'])
-        self.panel('订阅集合 · Enter 更新 HTTP / file 集合',
-            [{'label':f"{v['name']}  [{v.get('vehicleType')}]  {v.get('count')} 项",'value':v} for v in values],selected)
+                self.state.append('muted',_t('这是内置节点快照；请用 /list 管理和更新完整订阅。'))
+            else: self.queue(_t('更新集合'),'providers','--kind',kind,'--update',item['name'])
+        self.panel(_t('订阅集合 · Enter 更新 HTTP / file 集合'),
+            [{'label':_t('{0}  [{1}]  {2} 项', v['name'], v.get('vehicleType'), v.get('count')),'value':v} for v in values],selected)
 
     def config_open(self):
         return self.config_view is not None and self.state.panel is not None and self.state.panel.kind=='configs'
@@ -1072,18 +1085,18 @@ class Workspace:
         item=item['value'] if item else None
         actions=[]
         if item:
-            actions=[('switch','切换')]
-            actions.extend([('rename','重命名'),('set-url','修改地址'),('test','检测')])
-            if not item['active']:actions.append(('remove','删除'))
-        actions.extend([('add','添加'),('catch','捕获'),('snapshot','保存快照')])
-        if any(v['kind']=='subscription' for v in self.config_view['configs']):actions.append(('update-all','全部更新'))
-        return actions+([('update','更新配置')] if item else [])
+            actions=[('switch',_t('切换'))]
+            actions.extend([('rename',_t('重命名')),('set-url',_t('修改地址')),('test',_t('检测'))])
+            if not item['active']:actions.append(('remove',_t('删除')))
+        actions.extend([('add',_t('添加')),('catch',_t('捕获')),('snapshot',_t('保存快照'))])
+        if any(v['kind']=='subscription' for v in self.config_view['configs']):actions.append(('update-all',_t('全部更新')))
+        return actions+([('update',_t('更新配置'))] if item else [])
 
     def config_toolbar(self):
         if not self.config_open():return []
         item=self.state.panel.selected()
-        label=item['value']['name'] if item else '未选择配置'
-        fragments=[('class:muted','  操作对象：'+clean(label)+'\n  ')]
+        label=item['value']['name'] if item else _t('未选择配置')
+        fragments=[('class:muted',_t('  操作对象：')+clean(label)+'\n  ')]
         for index,(action,title) in enumerate(self.config_actions()):
             def clicked(event,action=action):
                 from prompt_toolkit.mouse_events import MouseButton,MouseEventType
@@ -1104,8 +1117,8 @@ class Workspace:
         def row(v):
             name=clean(v['name'])
             while human_width(name)>width:name=name[:-1]
-            return name+' '*max(2,width-human_width(name)+2)+('在线订阅' if v['kind']=='subscription' else '配置快照')+'  '+str(v.get('node_count') if v.get('node_count') is not None else '—')+' 节点  '+('已缓存' if v.get('cached') else '未缓存')+'  '+(human_time(v['updated_at']) if v.get('updated_at') else '尚未更新')
-        self.panel('配置管理 · '+str(len(result['configs']))+' 个配置 · 当前：'+str(result.get('active') or result.get('current_source') or '未关联配置库'),
+            return name+' '*max(2,width-human_width(name)+2)+(_t('在线订阅') if v['kind']=='subscription' else _t('配置快照'))+'  '+str(v.get('node_count') if v.get('node_count') is not None else '—')+_t(' 节点  ')+(_t('已缓存') if v.get('cached') else _t('未缓存'))+'  '+(human_time(v['updated_at']) if v.get('updated_at') else _t('尚未更新'))
+        self.panel(_t('配置管理 · ')+str(len(result['configs']))+_t(' 个配置 · 当前：')+str(result.get('active') or result.get('current_source') or _t('未关联配置库')),
             [{'label':row(v),'search':v['name'],'value':v,'current':v['active']} for v in result['configs']],lambda _:None,'configs')
         panel=self.state.panel
         panel.query=query
@@ -1122,16 +1135,16 @@ class Workspace:
         if action not in dict(self.config_actions()):return
         self.config_keep=item.get('id',item['name']) if item else None
         if action in ['add','rename','set-url','snapshot']:
-            fields=[('name','配置名称'),('url','HTTPS 订阅地址（隐藏输入）')] if action=='add' else [('url','HTTPS 订阅地址（隐藏输入）')] if action=='set-url' else [('name','新配置名称' if action=='rename' else '快照名称')]
+            fields=[('name',_t('配置名称')),('url',_t('HTTPS 订阅地址（隐藏输入）'))] if action=='add' else [('url',_t('HTTPS 订阅地址（隐藏输入）'))] if action=='set-url' else [('name',_t('新配置名称') if action=='rename' else _t('快照名称'))]
             self.config_form={'action':action,'item':item,'fields':fields,'values':{}}
             self.form_input.buffer.reset();self.app.layout.focus(self.form_input)
-        elif action=='catch':self.queue('捕获外部配置','catch',foreground=True,reload_configs=True)
-        elif action=='update-all':self.queue('更新全部在线订阅','update','all',reload_configs=True)
+        elif action=='catch':self.queue(_t('捕获外部配置'),'catch',foreground=True,reload_configs=True)
+        elif action=='update-all':self.queue(_t('更新全部在线订阅'),'update','all',reload_configs=True)
         elif action=='update':
             command = ('configs','--update','all') if item['name']=='all' else ('update',item['name'])
-            self.queue('更新配置',*command,done=lambda _:self.state.append('success','配置已更新：'+item['name']),reload_configs=True)
-        elif action=='test':self.queue('检测配置节点','test','--config',item['name'],'--json',done=self.delay_result,reload_configs=True)
-        else:self.queue('配置管理',action,item['name'],reload_configs=True)
+            self.queue(_t('更新配置'),*command,done=lambda _:self.state.append('success',_t('配置已更新：')+item['name']),reload_configs=True)
+        elif action=='test':self.queue(_t('检测配置节点'),'test','--config',item['name'],'--json',done=self.delay_result,reload_configs=True)
+        else:self.queue(_t('配置管理'),action,item['name'],reload_configs=True)
 
     def cancel_config_form(self):
         self.config_form=None;self.form_input.buffer.reset()
@@ -1148,10 +1161,10 @@ class Workspace:
             from urllib.parse import urlsplit
             try:url=urlsplit(value)
             except ValueError:
-                self.state.append('error','请输入有效的 HTTPS 订阅地址。')
+                self.state.append('error',_t('请输入有效的 HTTPS 订阅地址。'))
                 return False
             if url.scheme!='https' or not url.hostname or url.username or url.password or any(c.isspace() for c in value):
-                self.state.append('error','请输入有效的 HTTPS 订阅地址。')
+                self.state.append('error',_t('请输入有效的 HTTPS 订阅地址。'))
                 return False
         form['values'][field]=value;form['fields'].pop(0)
         if form['fields']:return False
@@ -1161,7 +1174,7 @@ class Workspace:
         options=([values['name'],'--url',values['url']] if action=='add' else
                  [item['name'],values['name']] if action=='rename' else
                  [item['name'],'--url',values['url']] if action=='set-url' else ['--import-current',values['name']])
-        self.queue('保存配置','configs' if action=='snapshot' else action,*options,reload_configs=True)
+        self.queue(_t('保存配置'),'configs' if action=='snapshot' else action,*options,reload_configs=True)
         return False
 
     def run(self):
@@ -1172,7 +1185,7 @@ class Workspace:
             self.app.run(pre_run=start)
         except (EOFError, KeyboardInterrupt):
             pass
-        print('已退出 Domino 界面；代理服务继续运行。')
+        print(_t('已退出 Domino 界面；代理服务继续运行。'))
 
 
 def run(target, execute, version=''):

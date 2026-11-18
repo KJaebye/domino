@@ -2,6 +2,7 @@
 # Copyright (C) 2026 KJaebye
 """Private, portable parsed import snapshots (not verbatim source documents)."""
 from __future__ import annotations
+from domino_i18n import tr as _t
 
 import copy
 from datetime import datetime, timezone
@@ -19,7 +20,7 @@ _CERT_KEYS = {'certificate', 'private-key'}
 
 
 def _fail():
-    raise DomainError(_ERROR, code='INVALID_SOURCE_SNAPSHOT', exit_code=2) from None
+    raise DomainError(_t(_ERROR), code='INVALID_SOURCE_SNAPSHOT', exit_code=2) from None
 
 
 def _canonical(value):
@@ -42,7 +43,7 @@ def origin_info(raw, source: Path, *, subscription=None):
         digest = _digest(raw)
         source = Path(source)
         info = {'version': 1, 'capture_kind': 'subscription' if subscription else 'file',
-                'origin_label': '在线订阅' if subscription else '配置文件',
+                'origin_label': _t('在线订阅') if subscription else _t('配置文件'),
                 'captured_at': datetime.now(timezone.utc).isoformat(timespec='seconds'),
                 'parsed_digest': digest}
         identity = {'kind': info['capture_kind'], 'digest': digest}
@@ -51,12 +52,12 @@ def origin_info(raw, source: Path, *, subscription=None):
             client = client_name(source)
             if client:
                 details = client_identity(source)
-                info.update(origin_label=client + ' 配置快照',
-                            profile_name=_label(details.get('profile_name') or source.stem, '配置快照'))
+                info.update(origin_label=client + _t(' 配置快照'),
+                            profile_name=_label(details.get('profile_name') or source.stem, _t('配置快照')))
             info['original_path'] = str(source.resolve())
             identity = {'kind': 'file', 'path': str(source.resolve())}
             if source.name == 'config.json' and source.parent.name == 'data' and source.parent.parent.name in ('domino', 'robot-clash'):
-                info.update(capture_kind='legacy-runtime-snapshot', origin_label='旧版运行配置快照')
+                info.update(capture_kind='legacy-runtime-snapshot', origin_label=_t('旧版运行配置快照'))
                 identity = {'kind': 'legacy-runtime-snapshot', 'digest': digest}
             import domino_cli as tool
             resolved = source.resolve()
@@ -70,12 +71,12 @@ def origin_info(raw, source: Path, *, subscription=None):
             if runtime:
                 matches = [v for p, v in profiles.items() if v.get('client_current') is True and p.parent.parent == resolved.parent]
                 selected = matches[0] if len(matches) == 1 else None
-                info.update(capture_kind='verge-runtime', origin_label='Clash Verge 运行配置')
+                info.update(capture_kind='verge-runtime', origin_label=_t('Clash Verge 运行配置'))
             elif selected:
-                info.update(capture_kind='verge-profile', origin_label='Clash Verge 保存配置')
+                info.update(capture_kind='verge-profile', origin_label=_t('Clash Verge 保存配置'))
             if selected and isinstance(selected.get('profile_id'), str):
                 info.update(profile_id=_label(selected['profile_id'], 'unknown'),
-                            profile_name=_label(selected.get('profile_name'), '未命名配置'),
+                            profile_name=_label(selected.get('profile_name'), _t('未命名配置')),
                             association='index' if runtime else 'selected-profile')
                 identity = {'kind': info['capture_kind'], 'profile_id': info['profile_id'],
                             'client_root': str(resolved.parent if runtime else resolved.parent.parent)}
@@ -176,12 +177,12 @@ class ResourceResolver:
 
     def find(self, value, *, relative_to=()):
         if not isinstance(value, str) or not value or '\\' in value or '\0' in value or '://' in value:
-            raise DomainError('本地资源引用路径无效。', code='INVALID_RESOURCE_PATH', exit_code=2)
+            raise DomainError(_t('本地资源引用路径无效。'), code='INVALID_RESOURCE_PATH', exit_code=2)
         path = Path(value).expanduser()
         candidates = [path] if path.is_absolute() else [root / path for root in (*relative_to, *self.roots)]
         for candidate in candidates:
             if candidate.is_symlink() or _unsafe_parents(candidate):
-                raise DomainError('本地资源引用包含符号链接，未读取。', code='INVALID_RESOURCE_PATH', exit_code=2)
+                raise DomainError(_t('本地资源引用包含符号链接，未读取。'), code='INVALID_RESOURCE_PATH', exit_code=2)
             if candidate.is_file():
                 return candidate.resolve()
         return None
@@ -189,7 +190,7 @@ class ResourceResolver:
     def require(self, value, kind, *, relative_to=()):
         path = self.find(value, relative_to=relative_to)
         if path is None:
-            raise DomainError('缺少' + kind + '文件；请检查配置引用，或使用 --resource-dir 指定资源目录。',
+            raise DomainError(_t('缺少') + kind + _t('文件；请检查配置引用，或使用 --resource-dir 指定资源目录。'),
                               code='SOURCE_RESOURCE_MISSING', exit_code=3)
         return path
 
@@ -224,14 +225,14 @@ def create_source(raw, source: Path, destination: Path, *, proxy=None, metadata=
                 for provider in profile.get(kind, {}).values():
                     if provider.get('type') in ('http', 'file'):
                         value = provider.get('path')
-                        resolver.require(value, 'provider 缓存')
+                        resolver.require(value, _t('provider 缓存'))
         origins = tool.provider_resources(profile, source.parent, destination, proxy, resolver=resolver, allow_download=not _offline)
 
         def certificates(content, relative_to=()):
             for node, key, value in _walk_certs(content):
                 if online:
                     _fail()
-                original = resolver.require(value, '证书/私钥', relative_to=relative_to)
+                original = resolver.require(value, _t('证书/私钥'), relative_to=relative_to)
                 payload = original.read_bytes()
                 relative = Path('certs') / (hashlib.sha256(payload).hexdigest()[:24] + '.pem')
                 _write(destination / relative, payload)
@@ -271,8 +272,8 @@ def create_source(raw, source: Path, destination: Path, *, proxy=None, metadata=
             prepare_geo(profile, destination, tool.download_resource, proxy)
         missing = sorted(name for name in needed if not (destination / name).is_file())
         if require_geo and missing:
-            raise DomainError('捕获缺少 Geo 数据库：' + '、'.join(missing) +
-                              '。请先让来源客户端完成 Geo 数据更新，或配置 Domino 的 Geo 资源源后重试；未更改当前配置。',
+            raise DomainError(_t('捕获缺少 Geo 数据库：') + '、'.join(missing) +
+                              _t('。请先让来源客户端完成 Geo 数据更新，或配置 Domino 的 Geo 资源源后重试；未更改当前配置。'),
                               code='GEO_RESOURCE_MISSING', exit_code=3)
         _write(destination / 'config.json', _canonical(profile))
         files = _manifest(destination)
@@ -384,7 +385,7 @@ def public_info(data_dir):
         if key in metadata:
             value = metadata[key]
             if key in ('profile_name', 'origin_label'):
-                value = _label(value, '未知来源')
+                value = _label(value, _t('未知来源'))
             result[public_key] = value
     return result
 

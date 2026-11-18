@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # Copyright (C) 2026 KJaebye
 """Read-only configuration sources for ClashX and v2rayN imports."""
+from domino_i18n import tr as _t
 import json
 from contextlib import closing
 import os
@@ -11,7 +12,8 @@ import tempfile
 from domino_model import DomainError
 
 
-def _error(message='v2rayN 配置无法读取或格式不受支持；未输出配置内容。'):
+def _error(message=None):
+    message = message or _t('v2rayN 配置无法读取或格式不受支持；未输出配置内容。')
     raise DomainError(message, code='UNSUPPORTED_CLIENT_CONFIG', exit_code=2) from None
 
 
@@ -69,9 +71,9 @@ def identity(path):
     path = Path(path)
     client = client_name(path)
     if client == 'v2rayN':
-        name, note = '节点快照', '转换全部支持的节点为 Mihomo 快照；不迁移 v2rayN 分流、DNS、链式代理或客户端设置，不检查保存端口。'
+        name, note = _t('节点快照'), _t('转换全部支持的节点为 Mihomo 快照；不迁移 v2rayN 分流、DNS、链式代理或客户端设置，不检查保存端口。')
     elif client and path.name not in ('config.yaml', 'config.yml'):
-        name, note = path.stem, 'ClashX 保存配置；未核验客户端当前加载项，不检查保存端口。'
+        name, note = path.stem, _t('ClashX 保存配置；未核验客户端当前加载项，不检查保存端口。')
     else:
         return {}
     return {'source_kind': 'profile', 'profile_id': path.name, 'profile_name': name,
@@ -111,7 +113,7 @@ def _rows(path):
             destination.write_bytes(_read(source, 64 * 1024 * 1024))
             destination.chmod(0o600)
         if before != signature():
-            _error('v2rayN 数据库正在变化，请稍后重试。')
+            _error(_t('v2rayN 数据库正在变化，请稍后重试。'))
         with closing(sqlite3.connect(str(target), timeout=1)) as database:
             database.execute('PRAGMA query_only=ON')
             database.row_factory = sqlite3.Row
@@ -137,15 +139,15 @@ def _node(row, number):
     kind = {1: 'vmess', 3: 'ss', 4: 'socks5', 5: 'vless', 6: 'trojan',
             7: 'hysteria2', 8: 'tuic', 10: 'http', 11: 'anytls'}.get(row.get('configtype'))
     if kind is None:
-        _error('v2rayN 含自定义配置、链式代理或暂不支持的协议；请导出完整 Clash/Mihomo 配置后导入。')
+        _error(_t('v2rayN 含自定义配置、链式代理或暂不支持的协议；请导出完整 Clash/Mihomo 配置后导入。'))
     extra, transport = _extra(row.get('protoextra')), _extra(row.get('transportextra'))
     if any(row.get(key) for key in ('cert', 'certsha', 'echconfiglist', 'verifypeercertbyname',
                                     'finalmask', 'mldsa65verify', 'presocksport')):
-        _error('v2rayN 含暂不支持的证书、加密或前置代理设置；未生成不完整配置。')
+        _error(_t('v2rayN 含暂不支持的证书、加密或前置代理设置；未生成不完整配置。'))
     allowed = {'alterid', 'vmesssecurity', 'ssmethod', 'flow', 'vlessencryption', 'salamanderpass',
                'upmbps', 'downmbps', 'ports', 'hopinterval', 'congestioncontrol'}
     if any(value not in (None, '', False, 0) for key, value in extra.items() if key not in allowed):
-        _error('v2rayN 含暂不支持的协议扩展；未生成不完整配置。')
+        _error(_t('v2rayN 含暂不支持的协议扩展；未生成不完整配置。'))
     name = row.get('remarks') or '节点'
     if not isinstance(name, str) or len(name) > 160 or any(ord(c) < 32 or ord(c) == 127 for c in name) or '://' in name:
         name = '节点'
@@ -161,7 +163,7 @@ def _node(row, number):
                         alterId=int(extra.get('alterid') or row.get('alterid') or 0))
         else:
             if extra.get('vlessencryption') not in (None, '', 'none'):
-                _error('v2rayN 的 VLESS encryption 暂不支持转换。')
+                _error(_t('v2rayN 的 VLESS encryption 暂不支持转换。'))
             if extra.get('flow') or row.get('flow'):
                 node['flow'] = extra.get('flow') or row['flow']
     elif kind == 'ss':
@@ -177,12 +179,12 @@ def _node(row, number):
         _error()
     security = row.get('streamsecurity') or ''
     if security not in ('', 'none', 'tls', 'reality'):
-        _error('v2rayN TLS 设置暂不支持转换。')
+        _error(_t('v2rayN TLS 设置暂不支持转换。'))
     if (kind == 'ss' and security not in ('', 'none')) or (kind == 'trojan' and security == 'none'):
-        _error('v2rayN 此协议的 TLS 设置暂不支持转换。')
+        _error(_t('v2rayN 此协议的 TLS 设置暂不支持转换。'))
     if security == 'reality':
         if kind != 'vless' or not row.get('publickey'):
-            _error('v2rayN Reality 配置不完整或协议暂不支持。')
+            _error(_t('v2rayN Reality 配置不完整或协议暂不支持。'))
         node['reality-opts'] = {'public-key': row['publickey'], 'short-id': row.get('shortid') or ''}
     if security in ('tls', 'reality') or kind in ('trojan', 'hysteria2', 'tuic', 'anytls'):
         if kind in ('vmess', 'vless', 'socks5', 'http'):
@@ -196,10 +198,10 @@ def _node(row, number):
             node['alpn'] = [item.strip() for item in row['alpn'].split(',') if item.strip()]
     network = row.get('network') or 'tcp'
     if network not in ('tcp', 'raw', 'ws', 'grpc'):
-        _error('v2rayN 传输暂仅支持 TCP、WebSocket 和 gRPC；未生成不完整配置。')
+        _error(_t('v2rayN 传输暂仅支持 TCP、WebSocket 和 gRPC；未生成不完整配置。'))
     if network in ('ws', 'grpc'):
         if kind not in ('vmess', 'vless', 'trojan'):
-            _error('v2rayN 此协议的传输方式暂不支持转换。')
+            _error(_t('v2rayN 此协议的传输方式暂不支持转换。'))
         node['network'] = network
         if network == 'ws':
             node['ws-opts'] = {'path': transport.get('path') or row.get('path') or '/'}
@@ -207,14 +209,14 @@ def _node(row, number):
             if host:
                 node['ws-opts']['headers'] = {'Host': host}
             if '?ed=' in node['ws-opts']['path'] or '&ed=' in node['ws-opts']['path']:
-                _error('v2rayN WebSocket early-data 暂不支持转换。')
+                _error(_t('v2rayN WebSocket early-data 暂不支持转换。'))
         else:
             if ((transport.get('grpcmode') or row.get('headertype')) not in (None, '', 'none', 'gun')
                     or transport.get('grpcauthority') or row.get('requesthost')):
-                _error('v2rayN gRPC 扩展暂不支持转换。')
+                _error(_t('v2rayN gRPC 扩展暂不支持转换。'))
             node['grpc-opts'] = {'grpc-service-name': transport.get('grpcservicename') or row.get('path') or ''}
     elif (transport.get('rawheadertype') or row.get('headertype') or 'none') != 'none':
-        _error('v2rayN TCP 伪装暂不支持转换。')
+        _error(_t('v2rayN TCP 伪装暂不支持转换。'))
     if kind == 'hysteria2':
         if extra.get('salamanderpass'):
             node.update(obfs='salamander', **{'obfs-password': extra['salamanderpass']})
@@ -238,7 +240,7 @@ def load(path):
         config = _json(path) if path.name == 'guiNConfig.json' else {}
         rows = config.get('vmess') if config else _rows(path)
         if not isinstance(rows, list) or not rows or len(rows) > 5000:
-            _error('v2rayN 未保存节点、节点超过 5000 个或配置格式不受支持。')
+            _error(_t('v2rayN 未保存节点、节点超过 5000 个或配置格式不受支持。'))
         nodes = [_node(row, i) for i, row in enumerate(rows, 1)]
         if not config and (path.parent / 'guiNConfig.json').is_file():
             config = _json(path.parent / 'guiNConfig.json')

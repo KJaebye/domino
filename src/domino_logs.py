@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # Copyright (C) 2026 KJaebye
 """Bounded owned-service logs with URL and known credential redaction."""
+from domino_i18n import tr as _t
 import json
 import platform
 import re
@@ -52,7 +53,7 @@ def read_logs(ctx,limit=100):
         _,service=ctx.current_installation()
         process=subprocess.run(['journalctl','-u',service.name,'-n',str(limit),'--no-pager','--output=json'],capture_output=True,text=True,timeout=15)
         if process.returncode:
-            raise DomainError('无法读取服务日志，请检查当前用户的日志权限。',code='LOG_ACCESS_DENIED',exit_code=4)
+            raise DomainError(_t('无法读取服务日志，请检查当前用户的日志权限。'),code='LOG_ACCESS_DENIED',exit_code=4)
         raw=process.stdout[-1048576:]
         if len(process.stdout)>1048576: raw=raw.partition('\n')[2]; truncated=True
         lines=[]

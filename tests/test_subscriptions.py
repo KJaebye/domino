@@ -23,7 +23,119 @@ TEST_CORE = Path(os.environ.get("DOMINO_TEST_CORE", str(Path.home() / ".local/sh
 TEST_MMDB = Path(os.environ.get("DOMINO_TEST_MMDB", str(Path.home() / ".local/share/domino/data/Country.mmdb")))
 
 
+class UsageDisplayTests(unittest.TestCase):
+    def test_thresholds_include_exact_boundaries_and_do_not_cap_overages(self):
+        for used, total, status, color, percent in [
+            (6999, 10000, 'normal', '32', '69.9%'),
+            (7000, 10000, 'warning', '33', '70.0%'),
+            (8999, 10000, 'warning', '33', '89.9%'),
+            (9000, 10000, 'critical', '31', '90.0%'),
+            (10000, 10000, 'critical', '31', '100.0%'),
+            (10001, 10000, 'exceeded', '2', '100.0%'),
+            (12000, 10000, 'exceeded', '2', '120.0%'),
+        ]:
+            with self.subTest(used=used):
+                value = subscriptions.usage_summary({'usage': {'upload': 0, 'download': used, 'total': total}})
+                text, tone = subscriptions.usage_cell(control, {'usage': value})
+                self.assertEqual((value['status'], tone), (status, color))
+                self.assertIn(percent, text)
+                self.assertEqual('已超额' in text, status == 'exceeded')
+        value = subscriptions.usage_summary({'usage': {'upload': 1, 'download': 2, 'total': 0}})
+        self.assertIsNone(value['percent_used'])
+        self.assertIn('未知总量', subscriptions.usage_cell(control, {'usage': value})[0])
+
+    def test_invalid_counters_are_unknown_instead_of_being_reported_as_unused(self):
+        for value in [None, '', 'upload=1; total=100', 'upload=-1; download=2; total=100',
+                      'upload=1; download=2e3; total=100', 'upload=1; upload=2; download=2; total=100',
+                      'upload=1; download=2; total=99999999999999999999999']:
+            with self.subTest(value=value):
+                self.assertIsNone(subscriptions.subscription_usage(value))
+        self.assertEqual(subscriptions.subscription_usage('upload=1; download=2; total=100; expire='),
+                         {'upload': 1, 'download': 2, 'total': 100})
+        self.assertIsNone(subscriptions.usage_summary({'usage': {'upload': True, 'download': 2, 'total': 100}}))
+
+    def test_no_color_output_keeps_usage_and_exceeded_label_readable(self):
+        value = subscriptions.usage_summary({'usage': {'upload': 0, 'download': 101, 'total': 100}})
+        cell = subscriptions.usage_cell(control, {'usage': value})
+        with patch.dict(os.environ, {'NO_COLOR': '1'}), patch.object(control.sys.stdout, 'isatty', return_value=True):
+            text = control.human_style(*cell)
+        self.assertIn('101.0%', text)
+        self.assertIn('已超额', text)
+        self.assertNotIn('\033[', text)
+
+
 class SubscriptionTests(unittest.TestCase):
+    def test_normal_subscription_update_records_usage_from_the_downloaded_response(self):
+        self.add()
+        def response(url, path, proxy, *, user_agent=None):
+            self.download_config(url, path, proxy, user_agent=user_agent)
+            return {'subscription-userinfo': 'upload=5; download=85; total=100; ignored=HEADER-PRIVATE'}
+        self.download.side_effect = response
+        self.execute('--update', '机场一')
+        item = self.manager().registry['items'][0]
+        self.assertEqual(item['usage'], {'upload': 5, 'download': 85, 'total': 100})
+        self.assertEqual(item['usage_checked_at'], item['updated_at'])
+        self.assertEqual(self.manager().listing()['configs'][0]['usage']['status'], 'critical')
+        self.assertNotIn('HEADER-PRIVATE', self.manager().index.read_text())
+
+    def test_usage_refresh_only_changes_account_cache_and_deduplicates_addresses(self):
+        self.add()
+        self.add('机场二')
+        before = (self.app / 'data/config.json').read_bytes()
+        self.api.reset_mock()
+        with patch.object(tool, 'download_subscription_usage', return_value={
+                'subscription-userinfo': 'upload=10; download=60; total=100; token=PRIVATE'}) as fetch:
+            value = json.loads(self.execute('--refresh-usage', '--json'))
+        fetch.assert_called_once()
+        self.api.assert_not_called()
+        self.assertEqual((self.app / 'data/config.json').read_bytes(), before)
+        self.assertEqual(value['configs'][0]['usage']['used_bytes'], 70)
+        self.assertEqual(value['configs'][0]['usage']['status'], 'warning')
+        self.assertNotIn('PRIVATE', json.dumps(value))
+        registry = self.manager().registry
+        self.assertEqual(registry['items'][0]['usage'], {'upload': 10, 'download': 60, 'total': 100})
+        index = self.manager().index.read_bytes()
+        with patch.object(tool, 'download_subscription_usage', side_effect=AssertionError('list must be offline')):
+            self.execute('--json')
+        self.assertEqual(self.manager().index.read_bytes(), index)
+
+    def test_usage_refresh_failure_keeps_counters_and_marks_them_as_cached(self):
+        self.add()
+        with patch.object(tool, 'download_subscription_usage', return_value={
+                'subscription-userinfo': 'upload=1; download=20; total=100'}):
+            self.execute('--refresh-usage')
+        with patch.object(tool, 'download_subscription_usage', side_effect=tool.ToolError('PRIVATE-URL')):
+            text = self.execute('--refresh-usage')
+        usage = self.manager().listing()['configs'][0]['usage']
+        self.assertTrue(usage['stale'])
+        self.assertEqual(usage['used_bytes'], 21)
+        self.assertIn('缓存', text)
+        self.assertNotIn('PRIVATE-URL', text)
+
+    def test_missing_usage_and_address_change_do_not_display_old_or_zero_counters(self):
+        self.add()
+        with patch.object(tool, 'download_subscription_usage', return_value={
+                'subscription-userinfo': 'upload=1; download=20; total=100'}):
+            self.execute('--refresh-usage')
+        with patch.object(tool, 'download_subscription_usage', return_value={}):
+            self.assertIn('未提供', self.execute('--refresh-usage'))
+        self.assertIsNone(self.manager().listing()['configs'][0]['usage'])
+        self.execute('--set-url', '机场一', '--url', 'https://other.example/sub')
+        self.assertIsNone(self.manager().registry['items'][0].get('usage_checked_at'))
+
+    def test_snapshot_usage_uses_recorded_origin_without_turning_it_into_a_subscription(self):
+        self.execute('--import-current', '当前快照')
+        before = (self.app / 'data/config.json').read_bytes()
+        with patch.object(subscriptions.Manager, 'source_subscription_url', return_value='https://airport.example/sub'), \
+                patch.object(tool, 'download_subscription_usage', return_value={
+                    'subscription-userinfo': 'upload=1; download=89; total=100'}):
+            self.execute('--refresh-usage')
+        item = self.manager().registry['items'][0]
+        self.assertEqual(item['kind'], 'snapshot')
+        self.assertNotIn('url', item)
+        self.assertEqual(item['usage']['download'], 89)
+        self.assertEqual((self.app / 'data/config.json').read_bytes(), before)
+
     def setUp(self):
         if hasattr(control, '_domino_registry_backup'):
             del control._domino_registry_backup

@@ -17,6 +17,16 @@ import shlex
 import sys
 from typing import Optional
 
+def _t(message, *values):
+    # Shell startup also supports a standalone copy of this helper. Localization
+    # must never become a prerequisite for restoring the terminal environment.
+    try:
+        from domino_i18n import tr
+    except ModuleNotFoundError:
+        return message.format(*values) if values else message
+    return tr(message, *values)
+
+
 VARIABLES = ('http_proxy', 'https_proxy', 'HTTP_PROXY', 'HTTPS_PROXY',
              'all_proxy', 'ALL_PROXY', 'no_proxy', 'NO_PROXY')
 NO_PROXY = 'localhost,127.0.0.1,::1,.local,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16'
@@ -91,22 +101,22 @@ export NO_PROXY="$no_proxy"
 def display_value(name: str, value: Optional[str]) -> str:
     """Display proxy endpoints without credentials, paths or terminal controls."""
     if value is None:
-        return '未设置'
+        return _t('未设置')
     if not value:
-        return '空值'
+        return _t('空值')
     if name.lower() == 'no_proxy':
-        return value if re.fullmatch(r'[A-Za-z0-9:.,*/_ -]+', value) else '已设置（值已隐藏）'
+        return value if re.fullmatch(r'[A-Za-z0-9:.,*/_ -]+', value) else _t('已设置（值已隐藏）')
     from urllib.parse import urlsplit
     try:
         url = urlsplit(value)
         if url.scheme not in ('http', 'https', 'socks4', 'socks4a', 'socks5', 'socks5h') or not url.hostname:
-            return '已设置（值已隐藏）'
+            return _t('已设置（值已隐藏）')
         host = '[' + url.hostname + ']' if ':' in url.hostname else url.hostname
         if not all(c.isprintable() for c in host):
-            return '已设置（值已隐藏）'
+            return _t('已设置（值已隐藏）')
         return url.scheme + '://' + host + (':' + str(url.port) if url.port else '')
     except ValueError:
-        return '已设置（值已隐藏）'
+        return _t('已设置（值已隐藏）')
 
 
 def _desired(port: int) -> dict:
@@ -229,9 +239,9 @@ def sync_state(app: Path, current: dict, *, metadata: str = '', pid: str = '',
     commands.append(f'export {STATE_VAR}={shlex.quote(encoded)}')
     manual = sum(name not in owned and (reported[name]['present'] or name in detached)
                  for name in VARIABLES)
-    summary = 'Domino 已接管终端代理' if len(owned)==len(VARIABLES) else 'Domino 已接管部分变量' if owned else '使用原有代理设置'
-    if manual:summary+=' · 保留手动设置'
-    if readonly_count:summary+=' · 跳过只读变量'
+    summary = _t('Domino 已接管终端代理') if len(owned)==len(VARIABLES) else _t('Domino 已接管部分变量') if owned else _t('使用原有代理设置')
+    if manual:summary+=_t(' · 保留手动设置')
+    if readonly_count:summary+=_t(' · 跳过只读变量')
     commands.append(f'_DOMINO_SHELL_SUMMARY={shlex.quote(summary)}')
     if intent in ('on', 'off') and readonly_count:
         commands.append("printf '%s\\n' 'Domino: readonly proxy parameters skipped; terminal application is partial.' >&2")

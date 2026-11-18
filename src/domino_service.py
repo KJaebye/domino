@@ -2,6 +2,7 @@
 # Copyright (C) 2026 KJaebye
 """Application services: structured domain data, without terminal rendering."""
 from __future__ import annotations
+from domino_i18n import tr as _t
 
 import hashlib
 import json
@@ -166,27 +167,27 @@ def validate(value, schema, field='arguments'):
         for branch in schema['oneOf']:
             try: validate(value,branch,field); matches+=1
             except DomainError: pass
-        if matches!=1: raise DomainError('需要唯一的资源选择条件。',code='INVALID_ARGUMENT',exit_code=2)
+        if matches!=1: raise DomainError(_t('需要唯一的资源选择条件。'),code='INVALID_ARGUMENT',exit_code=2)
     kind=schema.get('type')
     valid={'object':isinstance(value,dict),'array':isinstance(value,list),'string':isinstance(value,str),
            'boolean':type(value) is bool,'integer':type(value) is int,'number':type(value) in (int,float)}
     if kind and not valid.get(kind,False):
-        raise DomainError('参数类型不符合接口定义。',code='INVALID_ARGUMENT',exit_code=2,details={'field':field})
+        raise DomainError(_t('参数类型不符合接口定义。'),code='INVALID_ARGUMENT',exit_code=2,details={'field':field})
     if 'enum' in schema and value not in schema['enum']:
-        raise DomainError('参数取值不符合接口定义。',code='INVALID_ARGUMENT',exit_code=2,details={'field':field})
+        raise DomainError(_t('参数取值不符合接口定义。'),code='INVALID_ARGUMENT',exit_code=2,details={'field':field})
     if kind in ['integer','number'] and (not math.isfinite(value) or value < schema.get('minimum',value) or value > schema.get('maximum',value)):
-        raise DomainError('参数超出允许范围。',code='INVALID_ARGUMENT',exit_code=2,details={'field':field})
+        raise DomainError(_t('参数超出允许范围。'),code='INVALID_ARGUMENT',exit_code=2,details={'field':field})
     if kind=='string' and len(value)<schema.get('minLength',0):
-        raise DomainError('参数不能为空。',code='INVALID_ARGUMENT',exit_code=2,details={'field':field})
+        raise DomainError(_t('参数不能为空。'),code='INVALID_ARGUMENT',exit_code=2,details={'field':field})
     if kind=='string' and (len(value)>schema.get('maxLength',len(value)) or ('pattern' in schema and not re.fullmatch(schema['pattern'],value))):
-        raise DomainError('参数格式不符合接口定义。',code='INVALID_ARGUMENT',exit_code=2,details={'field':field})
+        raise DomainError(_t('参数格式不符合接口定义。'),code='INVALID_ARGUMENT',exit_code=2,details={'field':field})
     if kind=='object' or 'required' in schema:
-        if not isinstance(value,dict): raise DomainError('需要参数对象。',code='INVALID_ARGUMENT',exit_code=2)
+        if not isinstance(value,dict): raise DomainError(_t('需要参数对象。'),code='INVALID_ARGUMENT',exit_code=2)
         properties=schema.get('properties',{})
         if any(key not in value for key in schema.get('required',[])):
-            raise DomainError('缺少必填参数。',code='MISSING_ARGUMENT',exit_code=2)
+            raise DomainError(_t('缺少必填参数。'),code='MISSING_ARGUMENT',exit_code=2)
         if not schema.get('additionalProperties',True) and any(key not in properties for key in value):
-            raise DomainError('包含未支持的参数。',code='INVALID_ARGUMENT',exit_code=2)
+            raise DomainError(_t('包含未支持的参数。'),code='INVALID_ARGUMENT',exit_code=2)
         for key,item in value.items():
             if key in properties: validate(item,properties[key],key)
 
@@ -298,10 +299,10 @@ class Application:
                 timeout_ms=arguments.get('timeout',5000),render=False)
         if operation=='delay.test':
             if sum(key in arguments for key in ['node','name','group','config'])>1:
-                raise DomainError('只能指定一种测速对象。',code='INVALID_ARGUMENT',exit_code=2)
+                raise DomainError(_t('只能指定一种测速对象。'),code='INVALID_ARGUMENT',exit_code=2)
             return ctx.delay(node=arguments.get('node'),group=arguments.get('group'),name=arguments.get('name'),config=arguments.get('config'),
                 url=arguments.get('url','https://www.gstatic.com/generate_204'),timeout_ms=arguments.get('timeout',5000),render=False)
-        raise DomainError('未支持的操作。',code='UNSUPPORTED_OPERATION',exit_code=3)
+        raise DomainError(_t('未支持的操作。'),code='UNSUPPORTED_OPERATION',exit_code=3)
 
     def manager(self):
         import domino_subscriptions
@@ -310,7 +311,7 @@ class Application:
     def subscription(self, manager, arguments):
         if 'id' in arguments:
             item=next((value for value in manager.registry['items'] if value['id']==arguments['id']),None)
-            if not item: raise DomainError('未找到订阅。',code='SUBSCRIPTION_NOT_FOUND',exit_code=3)
+            if not item: raise DomainError(_t('未找到订阅。'),code='SUBSCRIPTION_NOT_FOUND',exit_code=3)
             return item
         return manager.find(arguments['name'])
 
@@ -321,7 +322,7 @@ class Application:
             args=self.export_arguments(arguments)
             output=Path(arguments['output']).expanduser()
             if output.exists() or output.is_symlink():
-                raise DomainError('导出文件已存在，请使用新的输出路径。',code='OUTPUT_EXISTS',exit_code=6)
+                raise DomainError(_t('导出文件已存在，请使用新的输出路径。'),code='OUTPUT_EXISTS',exit_code=6)
             with domino_cli.source_input(args) as prepared:
                 source,raw,_=domino_cli.source_config(prepared)
                 selections=domino_cli.live_selections(prepared,raw,source)
@@ -331,13 +332,13 @@ class Application:
             with self.bundle(arguments) as directory:
                 manifest=json.loads((directory/'manifest.json').read_text())
                 if manifest.get('platform','linux')!=platform.system().lower():
-                    raise DomainError('安装包平台与目标不符。',code='BUNDLE_PLATFORM_MISMATCH',exit_code=3)
+                    raise DomainError(_t('安装包平台与目标不符。'),code='BUNDLE_PLATFORM_MISMATCH',exit_code=3)
                 import domino_cli
                 if manifest.get('arch')!=domino_cli.normalize_arch(platform.machine()):
-                    raise DomainError('安装包架构与目标不符。',code='BUNDLE_ARCH_MISMATCH',exit_code=3)
+                    raise DomainError(_t('安装包架构与目标不符。'),code='BUNDLE_ARCH_MISMATCH',exit_code=3)
                 config=json.loads((directory/'data/config.json').read_text())
                 if config.get('external-controller')!=f"127.0.0.1:{manifest.get('api_port')}" or config.get('mixed-port')!=manifest.get('proxy_port'):
-                    raise DomainError('安装包端口与配置不一致。',code='INVALID_BUNDLE',exit_code=2)
+                    raise DomainError(_t('安装包端口与配置不一致。'),code='INVALID_BUNDLE',exit_code=2)
                 self.ctx.run([str(directory/'mihomo'),'-t','-d',str(directory/'data'),'-f',str(directory/'data/config.json')],capture_output=True,text=True,timeout=60)
                 result.update(version=manifest.get('version'),arch=manifest.get('arch'),proxy_port=manifest.get('proxy_port'),
                     changes=['kernel','configuration','background service','management CLI'],requires_sudo=platform.system().lower()=='linux')
@@ -373,7 +374,7 @@ class Application:
                 app,_=self.ctx.current_installation()
                 try: domino_shell.proxy_port(app)
                 except ValueError as error:
-                    raise self.ctx.InstallError('终端代理端口无效；请检查安装配置。',code='SHELL_POLICY_INVALID') from error
+                    raise self.ctx.InstallError(_t('终端代理端口无效；请检查安装配置。'),code='SHELL_POLICY_INVALID') from error
             return dict(result,would_change=current['enabled']!=(operation=='shell.on'),policy_only=True,current_shell_applied=False)
         if operation.startswith('configs.'):
             manager=self.manager()
@@ -391,10 +392,10 @@ class Application:
                     if result['would_change']: manager.available_name(arguments['new_name'])
                     result['new_name']=arguments['new_name']
                 if operation=='configs.remove' and item['id']==manager.active_id():
-                    raise DomainError('请先切换订阅，再删除当前订阅。',code='ACTIVE_SUBSCRIPTION',exit_code=3)
+                    raise DomainError(_t('请先切换订阅，再删除当前订阅。'),code='ACTIVE_SUBSCRIPTION',exit_code=3)
                 if operation=='configs.set-url': manager.url(arguments['url'])
                 if operation=='configs.update' and not item.get('url'):
-                    raise DomainError('本地快照没有在线订阅地址。',code='SUBSCRIPTION_URL_REQUIRED',exit_code=3)
+                    raise DomainError(_t('本地快照没有在线订阅地址。'),code='SUBSCRIPTION_URL_REQUIRED',exit_code=3)
                 if operation=='configs.switch': self.ctx.api_json('/configs')
         elif operation.startswith('rules.'):
             preview=self.ctx.edit_rule(arguments['rule'],remove=operation.endswith('remove'),render=False,validate_only=True)
@@ -403,7 +404,7 @@ class Application:
             _,live=self.ctx.proxy_state()
             group=live.get(arguments['group'],{})
             if str(group.get('type','')).lower() not in ['selector','select'] or arguments['node'] not in group.get('all',[]):
-                raise DomainError('需要手动策略组及其中有效的节点。',code='INVALID_SELECTION',exit_code=2)
+                raise DomainError(_t('需要手动策略组及其中有效的节点。'),code='INVALID_SELECTION',exit_code=2)
             result.update(group=arguments['group'],node=arguments['node'],would_change=group.get('now')!=arguments['node'])
         elif operation in ['mode.set','log-level.set']:
             key=operation.split('.')[0]
@@ -411,14 +412,14 @@ class Application:
         elif operation.startswith('connections.'):
             values=self.ctx.collect_connections()['connections']
             if operation=='connections.close' and arguments['id'] not in [item['id'] for item in values]:
-                raise DomainError('未找到连接。',code='CONNECTION_NOT_FOUND',exit_code=3)
+                raise DomainError(_t('未找到连接。'),code='CONNECTION_NOT_FOUND',exit_code=3)
             result['would_change']=bool(values)
             result['ids']=[item['id'] for item in values if operation=='connections.clear' or item['id']==arguments.get('id')]
         elif operation=='providers.update':
             route='/providers/'+('proxies' if arguments.get('kind','proxy')=='proxy' else 'rules')
             provider=self.ctx.api_json(route)['providers'].get(arguments['name'])
             if not provider or str(provider.get('vehicleType','')).lower() not in ['http','file']:
-                raise DomainError('需要可更新的 HTTP 或文件集合。',code='PROVIDER_NOT_UPDATABLE',exit_code=3)
+                raise DomainError(_t('需要可更新的 HTTP 或文件集合。'),code='PROVIDER_NOT_UPDATABLE',exit_code=3)
             result.update(name=arguments['name'],kind=arguments.get('kind','proxy'))
         return result
 
@@ -429,9 +430,9 @@ class Application:
             import domino_cli
             path=Path(arguments['bundle']).expanduser()
             if path.is_symlink() or not path.is_file() or path.stat().st_mode & 0o077:
-                raise DomainError('安装包需为权限 600 的普通文件。',code='INVALID_BUNDLE',exit_code=2)
+                raise DomainError(_t('安装包需为权限 600 的普通文件。'),code='INVALID_BUNDLE',exit_code=2)
             if hashlib.sha256(path.read_bytes()).hexdigest()!=arguments['bundle_sha256']:
-                raise DomainError('安装包摘要不一致。',code='BUNDLE_DIGEST_MISMATCH',exit_code=2)
+                raise DomainError(_t('安装包摘要不一致。'),code='BUNDLE_DIGEST_MISMATCH',exit_code=2)
             with tempfile.TemporaryDirectory(prefix='domino-agent-install-') as work:
                 directory=Path(work)
                 domino_cli.unpack_bundle(path,directory)
@@ -444,13 +445,13 @@ class Application:
     def export_arguments(self,arguments):
         import domino_cli
         selectors=[name for name in ['source','subscription'] if name in arguments]
-        if len(selectors)>1: raise DomainError('只能选择一种配置来源。',code='INVALID_ARGUMENT',exit_code=2)
+        if len(selectors)>1: raise DomainError(_t('只能选择一种配置来源。'),code='INVALID_ARGUMENT',exit_code=2)
         args=domino_cli.build_parser().parse_args(['export','--arch',arguments['arch'],'--output',arguments['output']])
         for field in ['source','subscription','local_proxy','mihomo_version','proxy_port','api_port']:
             if field in arguments: setattr(args,field,arguments[field])
         args.target_system=arguments.get('system','linux')
         args.batch=True
-        if args.proxy_port==args.api_port: raise DomainError('代理和控制端口不能相同。',code='INVALID_ARGUMENT',exit_code=2)
+        if args.proxy_port==args.api_port: raise DomainError(_t('代理和控制端口不能相同。'),code='INVALID_ARGUMENT',exit_code=2)
         if args.subscription: self.manager().url(args.subscription)
         return args
 
@@ -461,13 +462,13 @@ class Application:
             with tempfile.TemporaryDirectory(prefix='domino-agent-export-') as work:
                 package,manifest=domino_cli.prepare(self.export_arguments(arguments),arguments['arch'],Path(work))
                 output=Path(arguments['output']).expanduser()
-                if output.exists() or output.is_symlink(): raise DomainError('导出路径已被占用。',code='OUTPUT_EXISTS',exit_code=6)
+                if output.exists() or output.is_symlink(): raise DomainError(_t('导出路径已被占用。'),code='OUTPUT_EXISTS',exit_code=6)
                 output.parent.mkdir(parents=True,exist_ok=True,mode=0o700)
                 descriptor,temporary=tempfile.mkstemp(dir=output.parent)
                 try:
                     with os.fdopen(descriptor,'wb') as handle: handle.write(package.read_bytes())
                     try: os.link(temporary,output)
-                    except FileExistsError: raise DomainError('导出路径已被占用。',code='OUTPUT_EXISTS',exit_code=6) from None
+                    except FileExistsError: raise DomainError(_t('导出路径已被占用。'),code='OUTPUT_EXISTS',exit_code=6) from None
                 finally: Path(temporary).unlink(missing_ok=True)
                 digest=hashlib.sha256(output.read_bytes()).hexdigest()
             return {'output':str(output),'bundle_sha256':digest,'version':manifest['version'],'arch':manifest['arch'],'system':manifest['platform']}
@@ -487,16 +488,16 @@ class Application:
                     if not item.get('url'): continue
                     entry={'id':item['id'],'name':item['name']}
                     if uncertain:
-                        outcomes.append(dict(entry,ok=False,effect='none',error={'code':'NOT_ATTEMPTED','message':'前一项结果未确认，尚未尝试。','retryable':False}))
+                        outcomes.append(dict(entry,ok=False,effect='none',error={'code':'NOT_ATTEMPTED','message':_t('前一项结果未确认，尚未尝试。'),'retryable':False}))
                         continue
                     try: manager.update(item); entry.update(ok=True,effect='applied')
                     except DomainError as error: entry.update(ok=False,effect=error.effect,error=error.document())
-                    except (OSError,ValueError,KeyError): entry.update(ok=False,effect='none',error={'code':'SUBSCRIPTION_UPDATE_FAILED','message':'订阅更新未完成。','retryable':True})
+                    except (OSError,ValueError,KeyError): entry.update(ok=False,effect='none',error={'code':'SUBSCRIPTION_UPDATE_FAILED','message':_t('订阅更新未完成。'),'retryable':True})
                     outcomes.append(entry)
                     uncertain=entry['effect']=='unknown'
                     manager=self.manager()
                 if any(not entry['ok'] for entry in outcomes):
-                    raise DomainError('部分订阅更新未完成。',code='PARTIAL_FAILURE',exit_code=9,
+                    raise DomainError(_t('部分订阅更新未完成。'),code='PARTIAL_FAILURE',exit_code=9,
                         effect='unknown' if any(item['effect']=='unknown' for item in outcomes) else 'applied' if any(item['ok'] for item in outcomes) else 'none',
                         details={'results':outcomes})
                 return {'results':outcomes}
@@ -536,10 +537,10 @@ class Application:
             result=ctx.connections(close=arguments.get('id'),close_all=operation.endswith('clear'),render=False)
             remaining={item['id'] for item in ctx.collect_connections()['connections']}
             if remaining.intersection(plan['ids']):
-                raise DomainError('关闭连接后读回结果尚未一致。',code='READBACK_MISMATCH',effect='unknown')
+                raise DomainError(_t('关闭连接后读回结果尚未一致。'),code='READBACK_MISMATCH',effect='unknown')
             return result
         if operation=='providers.update': return ctx.collect_providers(arguments.get('kind','proxy'),arguments['name'])
-        raise DomainError('未支持的写操作。',code='UNSUPPORTED_OPERATION',exit_code=3)
+        raise DomainError(_t('未支持的写操作。'),code='UNSUPPORTED_OPERATION',exit_code=3)
 
     def mutate(self, request, result):
         from domino_store import OperationStore
@@ -553,7 +554,7 @@ class Application:
                 if cached: return cached
             before=self.revision()
             if request.get('if_revision') is not None and request['if_revision']!=before:
-                raise DomainError('配置已变化，请重新读取状态。',code='REVISION_CONFLICT',exit_code=6,details={'current_revision':before})
+                raise DomainError(_t('配置已变化，请重新读取状态。'),code='REVISION_CONFLICT',exit_code=6,details={'current_revision':before})
             plan=self.plan(operation,arguments)
             if request.get('dry_run'):
                 result.data=dict(plan,dry_run=True)
@@ -574,11 +575,11 @@ class Application:
                 if error.details and 'results' in error.details: result.data={'results':error.details['results']}
             except (OSError,ValueError,KeyError,RuntimeError,KeyboardInterrupt) as failure:
                 effect=getattr(failure,'domino_effect','unknown')
-                result.error=DomainError('操作已取消并恢复。' if effect=='rolled_back' else '写操作未获得已确认结果，请查询操作记录。',code='CANCELLED' if isinstance(failure,KeyboardInterrupt) else 'APPLY_UNCERTAIN',exit_code=7 if isinstance(failure,KeyboardInterrupt) else 8,effect=effect)
+                result.error=DomainError(_t('操作已取消并恢复。') if effect=='rolled_back' else _t('写操作未获得已确认结果，请查询操作记录。'),code='CANCELLED' if isinstance(failure,KeyboardInterrupt) else 'APPLY_UNCERTAIN',exit_code=7 if isinstance(failure,KeyboardInterrupt) else 8,effect=effect)
                 result.effect,result.changed=effect,None if effect=='unknown' else False
             try: store.finish(record,result)
             except OSError:
-                result.error=DomainError('无法确认操作记录已落盘。',code='OPERATION_RECORD_FAILED',exit_code=1,effect='unknown')
+                result.error=DomainError(_t('无法确认操作记录已落盘。'),code='OPERATION_RECORD_FAILED',exit_code=1,effect='unknown')
                 result.effect,result.changed='unknown',None
             return result
 
@@ -589,27 +590,27 @@ class Application:
         result=Result(operation,target,operation_id=identifier)
         try:
             if request.get('client','domino') != 'domino':
-                raise DomainError('只支持 Domino 自有服务。',code='INVALID_ARGUMENT',exit_code=2)
+                raise DomainError(_t('只支持 Domino 自有服务。'),code='INVALID_ARGUMENT',exit_code=2)
             if request.get('schema_version') != 1:
-                raise DomainError('不支持的协议版本。',code='UNSUPPORTED_PROTOCOL',exit_code=2)
+                raise DomainError(_t('不支持的协议版本。'),code='UNSUPPORTED_PROTOCOL',exit_code=2)
             definition=OPERATIONS.get(operation)
-            if not definition: raise DomainError('未支持的操作。',code='UNSUPPORTED_OPERATION',exit_code=3)
+            if not definition: raise DomainError(_t('未支持的操作。'),code='UNSUPPORTED_OPERATION',exit_code=3)
             arguments=request.get('arguments',{})
             validate(arguments,definition['parameters'])
             if request.get('if_revision') is not None: validate(request['if_revision'],{'type':'string','pattern':'[a-f0-9]{64}'})
             if request.get('request_id') is not None: validate(request['request_id'],dict(STRING,maxLength=200))
             if 'dry_run' in request: validate(request['dry_run'],BOOLEAN)
             if request.get('dry_run') and request.get('request_id'):
-                raise DomainError('预览不接受请求去重键。',code='INVALID_ARGUMENT',exit_code=2)
+                raise DomainError(_t('预览不接受请求去重键。'),code='INVALID_ARGUMENT',exit_code=2)
             request=dict(request,operation_id=identifier)
             if platform.system().lower() not in definition['platforms']:
-                raise DomainError('目标平台不支持该操作。',code='UNSUPPORTED_PLATFORM',exit_code=3)
+                raise DomainError(_t('目标平台不支持该操作。'),code='UNSUPPORTED_PLATFORM',exit_code=3)
             app,_=self.ctx.current_installation()
             if definition['requires_installation'] and not self.runtime_available():
-                raise DomainError('目标尚未安装 Domino 运行环境。',code='NOT_INSTALLED',exit_code=3)
+                raise DomainError(_t('目标尚未安装 Domino 运行环境。'),code='NOT_INSTALLED',exit_code=3)
             if definition['write']: return self.mutate(request,result)
             if request.get('dry_run') or request.get('if_revision') is not None or request.get('request_id') is not None:
-                raise DomainError('只读操作不接受写操作控制参数。',code='INVALID_ARGUMENT',exit_code=2)
+                raise DomainError(_t('只读操作不接受写操作控制参数。'),code='INVALID_ARGUMENT',exit_code=2)
             result.data=self.read(operation,arguments)
             result.revision=self.revision()
         except DomainError as error:
@@ -619,9 +620,9 @@ class Application:
                 result.changed=None
                 if error.details and error.details.get('operation_id'): result.operation_id=error.details['operation_id']
         except TimeoutError:
-            result.error=DomainError('目标请求超时。',code='TIMEOUT',exit_code=7,retryable=True)
+            result.error=DomainError(_t('目标请求超时。'),code='TIMEOUT',exit_code=7,retryable=True)
         except OSError:
-            result.error=DomainError('无法读取目标服务或配置。',code='TARGET_UNREACHABLE',exit_code=5,retryable=True)
+            result.error=DomainError(_t('无法读取目标服务或配置。'),code='TARGET_UNREACHABLE',exit_code=5,retryable=True)
         except (ValueError,KeyError,TypeError):
-            result.error=DomainError('目标返回的数据不符合接口定义。',code='INVALID_TARGET_RESPONSE',exit_code=1)
+            result.error=DomainError(_t('目标返回的数据不符合接口定义。'),code='INVALID_TARGET_RESPONSE',exit_code=1)
         return result

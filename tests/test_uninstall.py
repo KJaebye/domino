@@ -13,6 +13,7 @@ from unittest.mock import Mock, patch
 import domino_cli as cli
 import domino_completion as completion
 import domino_macos as mac
+import domino_macos_app as native
 import domino_uninstall as uninstall
 import domino_tui as ui
 import install_domino as ctx
@@ -107,6 +108,34 @@ class UninstallTests(unittest.TestCase):
         self.sudo.assert_not_called()
         for p in (*mac.paths(self.home), self.home / 'Library/Caches/domino', self.app):
             self.assertFalse(p.exists())
+
+    def test_macos_native_launcher_is_unregistered_after_stop_before_deleting_files(self):
+        self.seed('darwin')
+        service, _ = mac.paths(self.home)
+        value = plistlib.loads(service.read_bytes())
+        value['ProgramArguments'] = native.command(self.app)
+        service.write_bytes(plistlib.dumps(value))
+        def unregister(context, runtime, *, remove=False):
+            self.assertTrue(remove)
+            self.assertTrue(runtime.exists())
+            self.calls.append('unregister')
+        with patch.object(native, 'register', side_effect=unregister):
+            uninstall.uninstall(ctx, yes=True)
+        self.assertEqual(self.calls, ['proxy', 'stop', 'unregister'])
+        self.assertFalse(self.app.exists())
+
+    def test_macos_native_launcher_with_foreign_core_is_rejected_before_changes(self):
+        self.seed('darwin')
+        service, _ = mac.paths(self.home)
+        value = plistlib.loads(service.read_bytes())
+        value['ProgramArguments'] = native.command(self.app)
+        value['ProgramArguments'][1] = '/opt/foreign/mihomo'
+        service.write_bytes(plistlib.dumps(value))
+        before = self.snapshot()
+        with self.assertRaises(ctx.InstallError):
+            uninstall.uninstall(ctx, yes=True)
+        self.assertEqual(self.snapshot(), before)
+        self.assertEqual(self.calls, [])
 
     def test_preview_is_read_only_without_password_process_or_lock(self):
         self.seed()

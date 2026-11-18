@@ -34,7 +34,7 @@ def verify(release):
         for location,docs in [(wheel,wheel/f'{distribution}-{version}.data/data/share/doc/domino'),
                               (runtime/f'domino-{version}/cli',runtime/f'domino-{version}')]:
             for name in manifest['source_files']:
-                if name.startswith('src/') and name.endswith('.py'):assert (location/Path(name).name).read_bytes()==(ROOT/name).read_bytes(),name
+                if name.startswith('src/'):assert (location/name[4:]).read_bytes()==(ROOT/name).read_bytes(),name
             for name in ['README.md','NOTICE','docs/USAGE.md','assets/domino-logo.gif','licenses/mihomo-GPL-3.0.txt']:
                 assert (docs/name).read_bytes()==(ROOT/name).read_bytes(),name
             if (ROOT/'LICENSE').is_file():assert (docs/'LICENSE').read_bytes()==(ROOT/'LICENSE').read_bytes()

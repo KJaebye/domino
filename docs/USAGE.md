@@ -33,6 +33,21 @@ eval "$(domino completion bash)"
 
 保留源配置的规则模式或全局模式，以及可获取的当前节点选择。源客户端处于 `direct` 模式时停止迁移，避免将直连误当作已开启的代理。
 
+## 界面语言 / Interface language
+
+默认中文。使用 `domino language en` 保存英文偏好，`domino language zh` 切回中文；`domino language` 查看当前语言。交互界面可用 `/language` 选择，也支持 `/language en` 和 `/language zh` 即时切换。
+
+```sh
+domino language en           # Save English as the default
+domino language zh           # 保存中文为默认语言
+domino --lang en list        # English for this command only
+domino --lang zh status      # 仅本次命令使用中文
+```
+
+优先级为 `--lang`、`DOMINO_LANG` 环境变量、`~/.config/domino/preferences.json` 中的偏好，最后为中文默认值。SSH 管理沿用发起端语言，不修改目标语言偏好。命令名称、配置与节点名称、规则、日志原文及 JSON 字段名保持不变；帮助、状态说明、错误提示和交互界面随语言切换。
+
+English and Chinese interfaces are available. Use `domino language en` or `domino language zh` to save a default, or `--lang` for one command. The terminal workspace also supports `/language`. Language changes do not restart the proxy service or alter profiles, node names or routing rules.
+
 ## 命令格式
 
 裸 `domino` 先展示与 UI 一致的像素 Logo，以及 CLI 版本、本机目标、当前配置、模式、接口状态、代理端口和节点/策略组数量；窄终端使用紧凑布局。基本信息只读本机配置及回环控制接口，每个接口超时 0.5 秒，不检查外网出网；离线时明确显示接口离线，不将接口在线等同于代理出网成功。其他子命令、帮助、JSON、Agent、env 和日志输出不增加 Logo。随后显示统一风格的命令概览，包含 `usage: domino [USER@IP] COMMAND [ARGS] [options]`，按常用入口、节点与检测、服务与代理分组，列出部署、控制台、扫描、配置库、捕获、节点选择、连通检测、服务启停、终端代理开关及动态流量等命令。概览不扫描、不安装、不重启服务；全部顶层命令通过 `domino -h` 查看。`domino scan` 扫描外部代理配置和 Domino 管理的代理配置；`domino list` 查看 Domino 管理的所有代理配置；`domino catch` 选择并捕获外部代理配置。`domino USER@IP` 等同 `domino USER@IP deploy`，部署到指定电脑，无需先执行 catch 或单独预检查。部署参数可用 `domino USER@IP deploy -h` 查看。
@@ -227,7 +242,8 @@ UI 内支持 `/rules add "完整规则"`、`/rules remove "完整规则"` 和 `/
 使用 `domino list` 统一管理完整 Clash/Mihomo 配置订阅和本地快照，选择其中一个作为本机当前配置；不会自动合并不同机场的节点和规则。`scan` 列出本机发现的导入来源，`configs` 只列出已登记到 Domino 的配置，因此两者数量不必相同。已有安装执行 `catch` 将配置快照登记到配置库并自动开启 Domino，保留当前项和节点选择；首次安装或安装器文件导入成功后会登记快照并设为当前，保留其他在线订阅；不会因为扫描发现了其他配置就自动加入配置库。捕获配置直接使用来源配置名，重名时追加六位随机字母数字后缀，例如 `xlink-xqEiJS`，不把来源说明放入名称。同一来源重复捕获保留已有名称（包括手动重命名）；已有配置不会自动改名。
 
 ```bash
-domino list    # 查看名称、当前项、节点数、更新时间和来源主机
+domino list    # 查看当前项、节点、套餐已用/总量、更新时间和来源
+domino list --refresh-usage    # 只刷新套餐流量，不更新或重载运行配置
 domino list --import-current '原有配置'    # 将现有配置保存为可切回的快照
 domino add '主力机场'    # 隐藏输入地址，添加后不切换
 domino add '备用机场'
@@ -253,6 +269,10 @@ domino user@192.168.8.21 remove '备用'
 `configs update all` 中的 `all` 表示全部订阅；如果某个订阅恰好叫 `all`，可用 `domino list --update all` 单独更新它。
 
 完整配置订阅的下载使用 Clash/Mihomo 兼容客户端标识 `clash.meta`，用于兼容按客户端类型识别请求的订阅服务。下载失败会报告可获取的 HTTP 状态码，并隐藏订阅密钥；本机管理失败保留后端退出码，避免重复输出失败提示。
+
+`domino list` 显示订阅服务提供的套餐已用/总量和百分比；已用量为上传与下载之和。低于 70% 为绿色，70% 至不足 90% 为黄色，90% 至 100% 为红色，超过 100% 使用随终端前景色变化的暗色并标注“已超额”。重定向输出或设置 `NO_COLOR` 时保留数字与状态文字。
+
+默认列表读取缓存，不访问订阅服务。更新订阅时会保存响应中的套餐信息；`domino list --refresh-usage` 仅刷新这些信息，不更新、切换或重载内核配置。Clash Verge 捕获快照可以按记录的来源找回订阅地址以读取流量，不因此改变快照类型。无地址、未提供计数和未知总量会分别标明；刷新失败保留上次计数并显示“缓存”。套餐流量以服务商返回值为准，不等同于内核本次运行的流量。
 
 ### 导入源快照与运行配置
 

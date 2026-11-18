@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # Copyright (C) 2026 KJaebye
 """Shell completion using parser metadata and local JSON files, without I/O writes."""
+from domino_i18n import tr as _t
 import argparse
 import json
 from pathlib import Path
@@ -158,7 +159,7 @@ def main(argv=None):
             mode, values = 'values', []
         print(mode + '\n' + '\n'.join(values))
         return 0
-    parser = argparse.ArgumentParser(prog='domino completion', description='输出 Tab 补全脚本；source 后在当前 shell 生效。')
+    parser = argparse.ArgumentParser(prog='domino completion', description=_t('输出 Tab 补全脚本；source 后在当前 shell 生效。'))
     parser.add_argument('shell', choices=['zsh', 'bash'])
     args = parser.parse_args(argv)
     print(SCRIPTS[args.shell], end='')

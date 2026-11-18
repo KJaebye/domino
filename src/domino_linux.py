@@ -2,6 +2,7 @@
 # Copyright (C) 2026 KJaebye
 """GNOME desktop proxy integration for the current Linux user; no sudo or shell exports."""
 from __future__ import annotations
+from domino_i18n import tr as _t
 
 import ast
 import json
@@ -48,31 +49,31 @@ class Settings:
     def __init__(self):
         self.env = desktop_environment()
         if self.env is None:
-            raise DomainError('没有可用的 GNOME 桌面会话。', code='DESKTOP_UNAVAILABLE', exit_code=3)
+            raise DomainError(_t('没有可用的 GNOME 桌面会话。'), code='DESKTOP_UNAVAILABLE', exit_code=3)
         schemas = self.run('list-schemas').splitlines()
         if any(schema not in schemas for schema in {value[0] for value in KEYS.values()}):
-            raise DomainError('桌面缺少 GNOME 系统代理设置。', code='DESKTOP_UNAVAILABLE', exit_code=3)
+            raise DomainError(_t('桌面缺少 GNOME 系统代理设置。'), code='DESKTOP_UNAVAILABLE', exit_code=3)
 
     def run(self, *args):
         try:
             result = subprocess.run(['gsettings', *args], env=self.env, capture_output=True, text=True, timeout=3)
         except (OSError, subprocess.TimeoutExpired):
-            raise DomainError('无法访问当前用户的桌面代理设置。', code='SYSTEM_PROXY_FAILED', exit_code=5) from None
+            raise DomainError(_t('无法访问当前用户的桌面代理设置。'), code='SYSTEM_PROXY_FAILED', exit_code=5) from None
         # dconf can report a commit failure on stderr while returning exit code zero.
         if result.returncode or (args[0] == 'set' and result.stderr.strip()):
-            raise DomainError('桌面代理设置读取或写入失败。', code='SYSTEM_PROXY_FAILED', exit_code=8)
+            raise DomainError(_t('桌面代理设置读取或写入失败。'), code='SYSTEM_PROXY_FAILED', exit_code=8)
         return result.stdout.strip()
 
     def get(self, name): return self.run('get', *KEYS[name])
     def set(self, name, value):
         self.run('set', *KEYS[name], value)
         if self.get(name) != value:
-            raise DomainError('桌面代理设置读回不一致。', code='READBACK_MISMATCH', effect='unknown')
+            raise DomainError(_t('桌面代理设置读回不一致。'), code='READBACK_MISMATCH', effect='unknown')
     def state(self): return {key: self.get(key) for key in KEYS}
     def writable(self, keys):
         for key in keys:
             if self.run('writable', *KEYS[key]) != 'true':
-                raise DomainError('桌面代理设置不允许当前用户修改。', code='AUTH_REQUIRED', exit_code=4)
+                raise DomainError(_t('桌面代理设置不允许当前用户修改。'), code='AUTH_REQUIRED', exit_code=4)
 
 
 def record_path(ctx): return ctx.HOME / '.config/domino/linux-system-proxy.json'
@@ -97,7 +98,7 @@ def valid_values(values):
 
 def load_record(path):
     if path.is_symlink():
-        raise DomainError('桌面代理恢复记录不能为符号链接。', code='INVALID_PROXY_RECORD')
+        raise DomainError(_t('桌面代理恢复记录不能为符号链接。'), code='INVALID_PROXY_RECORD')
     if not path.exists(): return None
     try:
         record = json.loads(path.read_text())
@@ -115,7 +116,7 @@ def load_record(path):
                     if not valid_values(previous[name]): raise ValueError()
         return record
     except (OSError, ValueError, KeyError, TypeError):
-        raise DomainError('桌面代理恢复记录无效，未修改设置。', code='INVALID_PROXY_RECORD') from None
+        raise DomainError(_t('桌面代理恢复记录无效，未修改设置。'), code='INVALID_PROXY_RECORD') from None
 
 
 def decoded(value):
@@ -158,7 +159,7 @@ def _recover_transaction(ctx, settings, path, record):
     observed = settings.state()
     if any(observed[key] == before[key] and before[key] != target[key] for key in MANAGED
            if key not in ['same','mode']):
-        raise DomainError('桌面代理恢复未完成，已保留恢复记录。', code='RECOVERY_INCOMPLETE', effect='unknown')
+        raise DomainError(_t('桌面代理恢复未完成，已保留恢复记录。'), code='RECOVERY_INCOMPLETE', effect='unknown')
     previous = transaction.get('previous')
     if previous:
         ctx.write_private(path, json.dumps(previous))
@@ -170,26 +171,26 @@ def recover_transaction(ctx, settings, path, record):
     try:
         return _recover_transaction(ctx,settings,path,record)
     except (DomainError,OSError,ValueError,KeyError,TypeError):
-        raise DomainError('桌面代理恢复未完成，恢复记录已保留；请重试 domino stop。',
+        raise DomainError(_t('桌面代理恢复未完成，恢复记录已保留；请重试 domino stop。'),
                           code='RECOVERY_INCOMPLETE',effect='unknown') from None
 
 
 def system_proxy(ctx, action=None, service=None, as_json=False, batch=False, *, render=True):
     if service:
-        raise DomainError('GNOME 系统代理按当前用户管理，不使用 --service 网络服务名称。', code='INVALID_ARGUMENT', exit_code=2)
+        raise DomainError(_t('GNOME 系统代理按当前用户管理，不使用 --service 网络服务名称。'), code='INVALID_ARGUMENT', exit_code=2)
     path = record_path(ctx)
     previous = load_record(path)
     try: settings = Settings()
     except DomainError as error:
         if error.code != 'DESKTOP_UNAVAILABLE': raise
         if action == 'off' and previous:
-            raise DomainError('桌面会话不可用，无法恢复系统代理；服务未停止。', code='RECOVERY_INCOMPLETE', effect='unknown') from None
-        result = {'supported':False,'service':'无 GNOME 桌面会话','proxies':{},'restore_available':False,
+            raise DomainError(_t('桌面会话不可用，无法恢复系统代理；服务未停止。'), code='RECOVERY_INCOMPLETE', effect='unknown') from None
+        result = {'supported':False,'service':_t('无 GNOME 桌面会话'),'proxies':{},'restore_available':False,
                   'routing':'unsupported','ports':[]}
         return show(ctx, result, as_json, render)
     if previous and previous.get('restore'):
         if action == 'on':
-            raise DomainError('桌面代理有待完成的恢复，请先运行 domino stop。', code='RECOVERY_INCOMPLETE')
+            raise DomainError(_t('桌面代理有待完成的恢复，请先运行 domino stop。'), code='RECOVERY_INCOMPLETE')
         if action == 'off': previous = recover_transaction(ctx, settings, path, previous)
     current = settings.state()
     app, _ = ctx.current_installation()
@@ -201,20 +202,20 @@ def system_proxy(ctx, action=None, service=None, as_json=False, batch=False, *, 
         owned_ports.update(decoded(previous['applied'][kind+'.port']) for kind in KINDS)
     if action == 'on':
         if type(number) is not int or not 1 <= number <= 65535:
-            raise DomainError('Domino 代理端口无效。',code='INVALID_PROXY_PORT',exit_code=3)
+            raise DomainError(_t('Domino 代理端口无效。'),code='INVALID_PROXY_PORT',exit_code=3)
         if ctx.subscription_pending(app, config):
-            raise DomainError('请先用 domino add / domino switch 配好订阅，再运行 domino start。', exit_code=3)
+            raise DomainError(_t('请先用 domino add / domino switch 配好订阅，再运行 domino start。'), exit_code=3)
         if not ctx.systemctl('is-active'):
-            raise DomainError('Domino 服务尚未运行，请执行 domino start。', exit_code=3)
+            raise DomainError(_t('Domino 服务尚未运行，请执行 domino start。'), exit_code=3)
         for attempt in range(20):
             try:
                 ctx.controller(app/'data','/version',timeout=1)
                 break
             except (DomainError,OSError):
-                if attempt == 19: raise DomainError('服务已启动，但控制接口未就绪，系统代理未接通。', effect='unknown') from None
+                if attempt == 19: raise DomainError(_t('服务已启动，但控制接口未就绪，系统代理未接通。'), effect='unknown') from None
                 time.sleep(.25)
         if current['mode'] == "'auto'" or current['auth'] == 'true':
-            raise DomainError('当前桌面使用 PAC 或认证代理，请先处理后再开启 Domino。', exit_code=3)
+            raise DomainError(_t('当前桌面使用 PAC 或认证代理，请先处理后再开启 Domino。'), exit_code=3)
         settings.writable(MANAGED)
         original = dict(current)
         if previous:
@@ -233,13 +234,13 @@ def system_proxy(ctx, action=None, service=None, as_json=False, batch=False, *, 
             for key in MANAGED:
                 if current[key] != target[key]: settings.set(key,target[key])
             if settings.state() != target:
-                raise DomainError('桌面代理读回不一致。',code='READBACK_MISMATCH')
+                raise DomainError(_t('桌面代理读回不一致。'),code='READBACK_MISMATCH')
             ctx.write_private(path, json.dumps(record))
         except BaseException:
             try: recover_transaction(ctx,settings,path,journal)
             except BaseException:
-                raise DomainError('桌面代理设置失败且恢复未完成，恢复记录已保留。',code='RECOVERY_INCOMPLETE',effect='unknown') from None
-            raise DomainError('桌面代理未应用，已恢复本次操作前的设置。',code='APPLY_ROLLED_BACK',effect='rolled_back') from None
+                raise DomainError(_t('桌面代理设置失败且恢复未完成，恢复记录已保留。'),code='RECOVERY_INCOMPLETE',effect='unknown') from None
+            raise DomainError(_t('桌面代理未应用，已恢复本次操作前的设置。'),code='APPLY_ROLLED_BACK',effect='rolled_back') from None
         previous = record
     elif action == 'off':
         target = dict(current)
@@ -269,10 +270,10 @@ def system_proxy(ctx, action=None, service=None, as_json=False, batch=False, *, 
         previous = None
     observed = settings.state()
     if action == 'off' and observed['mode'] == "'manual'" and any(owns(observed,kind,port) for kind in (*KINDS,'ftp') for port in owned_ports):
-        raise DomainError('仍有桌面代理指向 Domino；请修改该设置后重试 domino stop，服务未停止。',
+        raise DomainError(_t('仍有桌面代理指向 Domino；请修改该设置后重试 domino stop，服务未停止。'),
                           code='RECOVERY_INCOMPLETE',effect='unknown')
     overview = overview_from(observed,number)
-    result = dict(overview,service='GNOME 用户桌面',restore_available=bool(previous),proxies={
+    result = dict(overview,service=_t('GNOME 用户桌面'),restore_available=bool(previous),proxies={
         kind:{'enabled':decoded(observed['mode'])=='manual' and bool(decoded(observed[kind+'.host'])) and bool(decoded(observed[kind+'.port'])),
               'server':decoded(observed[kind+'.host']),'port':decoded(observed[kind+'.port']),'authenticated':kind=='http' and observed['auth']=='true'} for kind in KINDS})
     return show(ctx,result,as_json,render)
@@ -282,8 +283,8 @@ def show(ctx, result, as_json, render):
     if render:
         if as_json: ctx.show(result,True)
         else:
-            ctx.human_header('系统代理','● 已指向 Domino' if result['routing']=='domino' else '● 未接通桌面系统代理', '32' if result['routing']=='domino' else '33')
-            ctx.human_row('桌面',result['service'])
+            ctx.human_header(_t('系统代理'),_t('● 已指向 Domino') if result['routing']=='domino' else _t('● 未接通桌面系统代理'), '32' if result['routing']=='domino' else '33')
+            ctx.human_row(_t('桌面'),result['service'])
             for kind,value in result['proxies'].items():
-                ctx.human_row(kind.upper(),f"{value['server']}:{value['port']}" if value['enabled'] else '未开启')
+                ctx.human_row(kind.upper(),f"{value['server']}:{value['port']}" if value['enabled'] else _t('未开启'))
     return result
