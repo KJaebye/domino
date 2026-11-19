@@ -49,6 +49,8 @@ domino --version
 
 venv 安装后再运行 `domino-install`，由它下载 Mihomo 并配置本机服务。新开终端需先激活 venv。[详细说明](docs/DISTRIBUTION.md)
 
+完整安装会同时设置 macOS / Ubuntu 的 Zsh / Bash 补全；新开终端后，`domino sw` + Tab 即可补成 `domino switch`。安装前已打开的窗口需重开或加载一次。
+
 macOS 也可直接 `brew install KJaebye/tap/domino`；Ubuntu 可使用[签名 APT 软件源](docs/DISTRIBUTION.md#用户安装命令)。
 
 ### 2. 准备配置

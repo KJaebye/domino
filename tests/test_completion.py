@@ -14,6 +14,7 @@ from unittest.mock import patch
 
 import domino_cli
 import domino_completion as completion
+import install_domino as installer
 
 
 class CompletionTests(unittest.TestCase):
@@ -130,6 +131,68 @@ value = """data, not a docstring"""
                                     capture_output=True, text=True, check=True, timeout=10)
             replies = [shlex.split(value)[0] for value in result.stdout.splitlines() if value]
             self.assertEqual(replies, expected)
+
+    def test_new_terminals_complete_switch_after_install_and_reinstall_without_manual_source(self):
+        # Use the real installed loader and rc writer. Only the final command is
+        # recorded by our fixture CLI, so pressing Enter cannot change a service.
+        app = self.home / '.local/share/domino'
+        domino_cli.copy_cli(app)
+        local_bin = self.home / '.local/bin'
+        local_bin.mkdir(parents=True)
+        shutil.copy2(self.bin / 'domino', local_bin / 'domino')
+        (self.home / '.bashrc').write_text('export DOMINO_STARTUP_KEEP=preserved\n')
+        (self.home / '.zshrc').write_text('export DOMINO_STARTUP_KEEP=preserved\n'
+                                          'autoload -Uz compinit; compinit -D -i\n')
+        # Ubuntu's existing login profile loads .bashrc; preserve that contract.
+        profile = self.home / '.profile'
+        profile.write_text('[ -z "$BASH_VERSION" ] || . "$HOME/.bashrc"\n')
+        original_profile = profile.read_bytes()
+        for name in ('.bashrc', '.zshrc'):
+            (self.home / name).chmod(0o640)
+        cases = [('macOS-zsh', False, 'zsh', ['-i']),
+                 ('macOS-login-zsh', False, 'zsh', ['-il']),
+                 ('Ubuntu-bash', True, 'bash', ['-i']),
+                 ('Ubuntu-login-bash', True, 'bash', ['--login', '-i']),
+                 ('Ubuntu-zsh', True, 'zsh', ['-i'])]
+        for label, linux, shell, flags in cases:
+            if not shutil.which(shell):
+                continue
+            with self.subTest(startup=label):
+                installer.configure_shell_environment(app, self.home, linux=linux)
+                before = {name: (self.home / name).read_bytes() for name in ('.bashrc', '.zshrc')}
+                installer.configure_shell_environment(app, self.home, linux=linux)
+                self.assertEqual(before, {name: (self.home / name).read_bytes() for name in before})
+                self.assertEqual(profile.read_bytes(), original_profile)
+                for name in before:
+                    self.assertEqual((self.home / name).stat().st_mode & 0o777, 0o640)
+                for session in range(2):
+                    with self.subTest(session=session):
+                        result = self.home / 'result'
+                        result.unlink(missing_ok=True)
+                        master, slave = pty.openpty()
+                        process = subprocess.Popen([shell, *flags], stdin=slave, stdout=slave, stderr=slave,
+                            env={**self.env, 'PATH': '/usr/bin:/bin:/usr/sbin:/sbin',
+                                 'SHELL_SESSION_DID_INIT': '1'}, cwd=self.home, start_new_session=True)
+                        os.close(slave)
+                        try:
+                            # No source, eval, compdef or manual completion setup here.
+                            os.write(master, b'printf "\\nREADY:%s\\n" "$DOMINO_STARTUP_KEEP"\n')
+                            output, deadline = b'', time.monotonic() + 12
+                            while b'\r\nREADY:preserved\r\n' not in output and time.monotonic() < deadline:
+                                if select.select([master], [], [], .1)[0]:
+                                    output += os.read(master, 65536)
+                            self.assertIn(b'\r\nREADY:preserved\r\n', output)
+                            os.write(master, b'domino sw\t\n')
+                            deadline = time.monotonic() + 12
+                            while not result.exists() and time.monotonic() < deadline:
+                                if select.select([master], [], [], .1)[0]:
+                                    output += os.read(master, 65536)
+                            self.assertTrue(result.exists(), output.decode(errors='replace'))
+                            self.assertEqual(json.loads(result.read_text()), ['switch'])
+                        finally:
+                            process.kill()
+                            process.wait(timeout=5)
+                            os.close(master)
 
     def test_real_tab_quotes_node_names_in_bash_and_zsh(self):
         data = self.home / '.local/share/domino/data/config.json'

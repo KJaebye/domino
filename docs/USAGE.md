@@ -18,7 +18,11 @@ domino user@192.168.1.10 deploy    # 将翻墙能力复制到指定电脑
 
 支持 zsh（macOS 常用）和 bash（Ubuntu 常用）。例如输入 `domino sh` 后按 Tab 补成 `shell`，`domino shell ` 后按 Tab 查看 `on/off/status`；`domino test `、`domino switch ` 可补本机配置名，`domino select ` 可补节点和策略组。补全会处理名称中的空格和方括号。
 
-源码初始化会随已有终端加载器接入；已有终端重新打开或重新加载更新后的 `~/.config/domino/proxy.env`。Homebrew / apt 提供标准补全文件，需要 shell 自身的补全机制已启用。pip 安装或独立使用 CLI 时，在当前终端运行对应一行：
+**完整安装会自动配置补全，无需每次手动加载。** macOS 和 Ubuntu 上运行 `domino-install`、源码 `./install.sh` 或部署到远端后，安装程序会在目标用户的 `~/.zshrc`、`~/.bashrc` 写入加载区块。之后新开的 Zsh / Bash 终端自动支持 `domino sw` + Tab → `domino switch`；升级、重新安装会保留其他启动配置，不重复添加区块。终端代理策略为 `off` 时，补全同样可用。显式使用 `--no-shell-env` 会跳过此次终端接入设置。Bash 登录终端沿用 Ubuntu 等系统已有的登录配置来加载 `.bashrc`；自定义登录配置仍需保留这一接入。
+
+安装前已经打开的终端不会重新读取启动文件；重新打开终端即可，或仅在这些旧窗口里手动加载一次。`completion=未注册`、`_domino: none` 表示当前 Zsh 尚未加载补全，并不表示安装文件丢失。
+
+Homebrew / apt 另外提供标准补全文件，需要 shell 自身的补全机制已启用。**只执行 pip 安装 CLI，且没有运行 `domino-install` 的设备**尚未接入本机终端加载器；仅管理远端而不初始化本机服务时，可将对应一行加入 `~/.zshrc` 或 `~/.bashrc`，以后新开终端便自动加载：
 
 ```bash
 # zsh
@@ -27,7 +31,7 @@ eval "$(domino completion zsh)"
 eval "$(domino completion bash)"
 ```
 
-如需永久启用，将对应一行加入 `~/.zshrc` 或 `~/.bashrc`；命令本身只输出脚本，不自动修改 rc 文件。`domino USER@IP ` 也可补命令和选项，但不连接远端获取配置或节点；本机节点来自已保存配置及已有 provider 缓存，不触发刷新或测速。
+上面的 `domino completion zsh/bash` 命令只输出脚本，不自动修改 rc 文件；完整安装无需额外添加这些行。`domino USER@IP ` 也可补命令和选项，但不连接远端获取配置或节点；本机节点来自已保存配置及已有 provider 缓存，不触发刷新或测速。
 
 当前版本自动发现 Mac 的 Clash Verge 配置，以及 Domino 已部署在本机的配置，也支持 `--source` 指定 Clash/Mihomo 配置，或 `--subscription` 提供完整配置订阅。本机 macOS（Apple Silicon / Intel）和使用 systemd 的 Linux（ARM64 / x86_64）通过 `./install.sh` 一次安装管理程序、内核和后台服务。通过 SSH 部署的目标仍支持使用 systemd 的 Linux ARM64 和 x86_64。这里迁移的是兼容的节点配置；不支持直接克隆专用隧道客户端的登录状态或设备证书，不接管目标系统的默认路由。
 
