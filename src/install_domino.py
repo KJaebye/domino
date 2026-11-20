@@ -852,10 +852,14 @@ def human_output(enabled=True, *, color=None):
             stream.finish()
 
 
+# Shared value column for common human-facing fields (display cells, not len).
+HUMAN_LABEL_WIDTH = 16
+
+
 def human_row(label, value, *, wrap=False, columns=None):
     if wrap:
         text,code = (human_text(value[0]),value[1]) if isinstance(value,tuple) else (human_text(value),None)
-        padding = ' ' * max(2,10-human_width(label))
+        padding = ' ' * max(2,HUMAN_LABEL_WIDTH-human_width(label))
         prefix = '  ' + human_style(label,'2') + padding
         indent = ' ' * (2+human_width(label)+len(padding))
         width = max(1,(columns or shutil.get_terminal_size((100,24)).columns)-len(indent))
@@ -875,7 +879,7 @@ def human_row(label, value, *, wrap=False, columns=None):
             print((prefix if index==0 else indent)+human_style(line,code))
         return
     rendered = human_style(*value) if isinstance(value,tuple) else human_text(value)
-    print('  ' + human_style(label,'2') + ' ' * max(2,10-human_width(label)) + rendered)
+    print('  ' + human_style(label,'2') + ' ' * max(2,HUMAN_LABEL_WIDTH-human_width(label)) + rendered)
 
 
 def human_width(value):
@@ -948,7 +952,7 @@ def status_text(result, system_proxy=None, *, color=False):
     country = result.get('exit_country') or (_t('未知') if result.get('healthy') else _t('未检测'))
     lines += [_t('  订阅 ') + styled(subscription,'1') + '  ·  ' + mode + _t('  ·  出口 ') + styled(country,'1')]
     def row(label, value):
-        lines.append('  ' + styled(label,'2') + ' '*(10-2*len(label)) + value)
+        lines.append('  ' + styled(label,'2') + ' '*max(2,HUMAN_LABEL_WIDTH-human_width(label)) + value)
     startup = (_t('登录时自启') if result.get('autostart_scope') == 'user-login' else _t('开机自启')) if result.get('enabled') else _t('未启用自启动')
     row(_t('服务'), (_t('运行中') if result.get('active') else _t('已停止')) + '  ·  ' + startup)
     if system_proxy is not None:
@@ -2501,7 +2505,7 @@ def main(argv=None):
     for child in sub.choices.values():
         child.add_argument('--color',action='store_true',help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
-    formatted = args.action in ['status','nodes','select','rollback','mode','log-level','delay','connections',
+    formatted = args.action in ['doctor','install','status','nodes','select','rollback','mode','log-level','delay','connections',
                                'traffic','rules','providers','proxy','shell','configs','start','stop','restart','scan','uninstall']
     live_traffic = getattr(args,'dashboard',False) or getattr(args,'compact',False)
     with human_output(formatted and not getattr(args,'json',False) and not live_traffic,color=True if args.color else None):
