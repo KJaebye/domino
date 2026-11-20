@@ -47,7 +47,7 @@ eval "$(domino completion bash)"
 
 ## 连接诊断
 
-macOS 与 Ubuntu 均可运行 `domino doctor`，默认比较系统直连与代理到公网测试地址的 HTTPS；指定问题地址使用 `domino doctor --url https://example.com/`，机器结果添加 `--json`。TUI 中使用 `/doctor`，或 `/doctor https://example.com/`。检查会显示时间、解析地址、路由接口及失败阶段，不修改 DNS、规则、VPN 或权限；HTTP 4xx/5xx 与网络无法连通分开解释，登录重定向可正常返回。诊断地址不能包含凭据或查询参数。
+macOS 与 Ubuntu 均可运行 `domino doctor`，默认比较系统直连与代理到公网测试地址的 HTTPS；指定问题地址使用 `domino doctor --url https://example.com/`，机器结果添加 `--json`。TUI 中使用 `/doctor`，或 `/doctor https://example.com/`。默认先显示“已连通 / 未连通 / 未检测”的结论，并分别说明系统直连与经过 Domino 的结果；HTTP 302 会明确解释为网站要求跳转，HTTP 401/403 表示已连通但需要登录或授权，5xx 表示已连通但网站服务异常。默认不展示 DNS 和路由术语，排查详情加 `--verbose`，完整机器数据使用 `--json`（含稳定的 `conclusion.state` 和两条路径的连通布尔值）。检查不修改 DNS、规则、VPN 或权限，也不会跟随跳转或验证登录成功。诊断地址不能包含凭据或查询参数。
 
 套餐信息区分用量与到期：当前套餐显示剩余流量和服务端提供的到期时间；到期套餐单独标记，缺少到期信息显示未提供，不推断为永久有效。流量超过 6 小时或上次刷新失败会标为缓存；表格的“流量更新”专指套餐数据获取时间。普通 `list` 不触发网络刷新，使用 `list --refresh-usage` 主动更新；无总量时剩余流量保持未知。
 

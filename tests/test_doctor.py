@@ -15,7 +15,8 @@ import domino_macos_app as native
 
 
 class DoctorTests(unittest.TestCase):
-    def run_doctor(self, *, proxy_exit=35, uuid_output='', insecure=False, native_launcher=False):
+    def run_doctor(self, *, proxy_exit=35, uuid_output='', insecure=False, native_launcher=False,
+                   proxy_status=200, native_status=200, native_exit=0, plain=False, verbose=False):
         with tempfile.TemporaryDirectory() as directory:
             app = Path(directory)
             (app / 'data').mkdir()
@@ -25,13 +26,15 @@ class DoctorTests(unittest.TestCase):
             if native_launcher:
                 launcher.parent.mkdir(parents=True)
                 launcher.write_bytes(b'launcher')
-            ctx = SimpleNamespace(current_installation=lambda:(app,None), InstallError=common.InstallError, show=common.show)
+            ctx = SimpleNamespace(current_installation=lambda:(app,None), InstallError=common.InstallError, show=common.show,
+                human_header=common.human_header,human_row=common.human_row,human_time=common.human_time)
             def run(args, **kwargs):
                 output = ''
                 code = 0
                 if args[0] == 'curl':
-                    code = proxy_exit if args[args.index('--proxy')+1] else 0
-                    output = '000' if code else '200'
+                    proxy = bool(args[args.index('--proxy')+1])
+                    code = proxy_exit if proxy else native_exit
+                    output = '000' if code else str(proxy_status if proxy else native_status)
                 elif args[0] == 'otool':
                     output = 'uuid 12345678-1234-1234-1234-123456789ABC' if native_launcher and args[-1] == str(launcher) else uuid_output
                 elif args[0] == 'ps': output = '123 1'
@@ -43,10 +46,11 @@ class DoctorTests(unittest.TestCase):
                     patch.object(mac,'system_proxy_overview',return_value={'routing':'domino','ports':[17897]}), \
                     patch.object(mac,'resolve_system',return_value=['10.0.0.2']), patch.object(mac,'system_hosts',return_value=[]), \
                     patch.object(mac.socket,'socket'), redirect_stdout(io.StringIO()) as output:
-                result = mac.doctor(ctx,'https://internal.example/',insecure=insecure,as_json=True)
+                result = mac.doctor(ctx,'https://internal.example/',insecure=insecure,as_json=not plain,verbose=verbose)
                 calls = commands.call_args_list
             self.assertNotIn('PRIVATE',output.getvalue())
-            self.assertEqual(json.loads(output.getvalue()),result)
+            self.rendered = output.getvalue()
+            if not plain:self.assertEqual(json.loads(output.getvalue()),result)
             self.assertTrue(all(call.args[0][0] not in ['networksetup','launchctl','codesign'] for call in calls))
             return result, calls
 
@@ -76,6 +80,45 @@ class DoctorTests(unittest.TestCase):
         self.assertTrue(result['responsible_app']['agent_uses_launcher'])
         self.assertTrue(result['responsible_app']['mach_o_uuids'])
         self.assertEqual(result['hints'], [])
+
+    def test_redirect_is_explicitly_connected_and_default_output_hides_technical_details(self):
+        result, _ = self.run_doctor(proxy_exit=0, proxy_status=302, native_status=302, plain=True)
+        self.assertEqual(result['conclusion']['state'], 'connected')
+        self.assertTrue(result['conclusion']['domino_connected'])
+        self.assertIn('已连通：通过 Domino 可以访问该地址', self.rendered)
+        self.assertIn('网站要求跳转（HTTP 302）', self.rendered)
+        self.assertNotIn('系统解析', self.rendered)
+        self.assertNotIn('LC_UUID', self.rendered)
+        self.assertIn('继续跳转或登录', self.rendered)
+        self.run_doctor(proxy_exit=0, plain=True, verbose=True)
+        self.assertIn('系统解析', self.rendered)
+
+    def test_http_errors_are_connected_and_network_failures_are_not(self):
+        for status in (401, 403, 404, 503):
+            with self.subTest(status=status):
+                result, _ = self.run_doctor(proxy_exit=0, proxy_status=status, plain=True)
+                self.assertEqual(result['conclusion']['state'], 'http_error')
+                self.assertTrue(result['conclusion']['domino_connected'])
+                self.assertIn('已连通', self.rendered)
+                self.assertNotIn('Domino 未连通', self.rendered)
+        result, _ = self.run_doctor(plain=True)
+        self.assertEqual(result['conclusion']['state'], 'proxy_failed')
+        self.assertFalse(result['conclusion']['domino_connected'])
+        self.assertIn('系统直连可以到达网站', self.rendered)
+        result, _ = self.run_doctor(native_exit=7, plain=True)
+        self.assertEqual(result['conclusion']['state'], 'both_failed')
+        self.assertIn('都未收到网站响应', self.rendered)
+
+    def test_insecure_response_does_not_claim_verified_connectivity(self):
+        result, _ = self.run_doctor(proxy_exit=0, insecure=True, plain=True)
+        self.assertIn('跳过了证书校验', self.rendered)
+        self.assertIn('去掉 --insecure', result['conclusion']['next_step'])
+
+    def test_verbose_option_is_forwarded_to_local_and_remote_backend(self):
+        args = cli.build_parser().parse_args(['doctor', '--verbose'])
+        options, privileged = cli.management_options(args)
+        self.assertIn('--verbose', options)
+        self.assertFalse(privileged)
 
     def test_private_or_non_https_url_rejected_before_any_io(self):
         ctx=SimpleNamespace(InstallError=common.InstallError)

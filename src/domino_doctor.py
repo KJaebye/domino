@@ -72,7 +72,64 @@ def probe_result(result):
             'curl_exit': exit_code, 'http_status': status, 'failure_stage': stage}
 
 
-def doctor(ctx, url=None, *, insecure=False, as_json=False):
+def connection_summary(native, proxied, *, installed, insecure=False, private_target=False):
+    native_connected, proxy_connected = bool(native['reachable']), bool(proxied['reachable'])
+    status = proxied.get('http_status')
+    if not installed:
+        state, tone = 'not_checked', '33'
+        summary = _t('代理路径未检测：尚未安装本机运行环境')
+        next_step = _t('请先运行 domino-install，再检查代理路径。')
+    elif proxy_connected:
+        state, tone = ('connected', '32') if status < 400 else ('http_error', '33')
+        if status in (401, 403):
+            summary = _t('已连通，但网站要求登录或授权')
+            next_step = _t('请在浏览器登录，或确认账号有访问权限。')
+        elif status >= 400:
+            summary = _t('已连通，但网站返回错误')
+            next_step = _t('请确认网址路径是否正确。') if status == 404 else _t('网络已连通，请检查网站服务状态。')
+        else:
+            summary = _t('已连通：通过 Domino 可以访问该地址')
+            next_step = _t('请在浏览器打开该地址，继续跳转或登录。') if status >= 300 else _t('可在浏览器打开该地址，确认页面和登录功能。')
+        if insecure:
+            tone = '33'
+            summary = _t('已收到网站响应，但跳过了证书校验')
+            next_step = _t('请去掉 --insecure 重新检测，以确认网站证书有效。')
+    elif native_connected:
+        state, tone = 'proxy_failed', '31'
+        summary = _t('Domino 未连通；系统直连可以到达网站')
+        next_step = _t('请先执行 domino status，再用 --verbose 查看 DNS 和路由详情。')
+    else:
+        state, tone = 'both_failed', '31'
+        summary = _t('未连通：系统直连和 Domino 都未收到网站响应')
+        next_step = _t('请先连接公司网络或 VPN，再重新检测。') if private_target else _t('请先确认当前网络和目标网址可用，再重新检测。')
+    return {'state': state, 'summary': summary, 'tone': tone,
+            'native_connected': native_connected, 'domino_connected': proxy_connected, 'next_step': next_step}
+
+
+def connection_message(value):
+    status = value.get('http_status')
+    if value['reachable']:
+        if status >= 500:
+            return _t('已连通，但网站服务异常（HTTP {0}）', status)
+        if status in (401, 403):
+            return _t('已连通，网站要求登录或授权（HTTP {0}）', status)
+        if status == 404:
+            return _t('已连通，但页面不存在（HTTP 404）')
+        if status >= 400:
+            return _t('已连通，但网站返回错误（HTTP {0}）', status)
+        if status >= 300:
+            return _t('已连通，网站要求跳转（HTTP {0}）', status)
+        return _t('已连通，网站正常响应（HTTP {0}）', status)
+    stages = {'proxy_dns': _t('代理地址无法解析'), 'dns': _t('域名无法解析'),
+              'connection': _t('无法建立连接'), 'timeout': _t('连接或响应超时'),
+              'tls': _t('安全连接握手失败'), 'certificate': _t('网站证书校验未通过'),
+              'tunnel': _t('代理隧道建立失败'), 'request': _t('未收到网站响应')}
+    if value.get('failure_stage') == 'not_installed':
+        return _t('未检测（尚未安装本机服务）')
+    return _t('未连通：{0}', stages.get(value.get('failure_stage'), _t('未收到网站响应')))
+
+
+def doctor(ctx, url=None, *, insecure=False, as_json=False, verbose=False):
     url = url or getattr(ctx, 'DEFAULT_TEST', 'https://www.cloudflare.com/cdn-cgi/trace')
     try:
         parsed = validate_url(url)
@@ -180,20 +237,30 @@ def doctor(ctx, url=None, *, insecure=False, as_json=False):
                              'internal_dns_enabled': bool(dns.get('enable')), 'system_hosts_enabled': bool(dns.get('enable') and dns.get('use-system-hosts', True))},
               'certificate_verified': not insecure, 'native': native, 'configured_proxy': proxied,
               'routing_note': _t('代理探测沿用当前分流规则；成功不代表命中 DIRECT，CONNECT 200 不计为 HTTPS 成功。'), 'hints': hints}
+    conclusion = connection_summary(native, proxied, installed=bool(config), insecure=insecure,
+        private_target=any(ipaddress.ip_address(v).is_private for v in addresses + hosts))
+    result['conclusion'] = {k: v for k, v in conclusion.items() if k != 'tone'}
     if as_json:
         ctx.show(result, True)
     else:
-        ctx.human_header(_t('连接诊断'), _t('仅检查，不修改网络设置'))
+        ctx.human_header(_t('连接诊断'), conclusion['summary'], tone=conclusion['tone'])
         ctx.human_row(_t('目标地址'), url, wrap=True)
-        for label, value in ((_t('系统直连'), native), (_t('Domino 请求'), proxied)):
-            text = 'HTTP ' + str(value['http_status']) if value['reachable'] else _t('失败阶段：{0}', value['failure_stage'])
-            ctx.human_row(label, text)
-        ctx.human_row(_t('系统解析'), ', '.join(addresses) or _t('未返回地址'))
-        ctx.human_row(_t('内部 DNS 查询'), ', '.join(core_addresses) if core_addresses else
-                      _t('无 DNS 记录；系统 hosts 提供映射') if core_addresses == [] and hosts and dns.get('enable') and dns.get('use-system-hosts', True) else
-                      _t('未返回地址') if core_addresses == [] else _t('未能检查'))
-        ctx.human_row(_t('检查时间'), result['checked_at'])
-        ctx.human_row(_t('路由说明'), result['routing_note'], wrap=True)
-        for hint in hints:
-            ctx.human_row(_t('排查建议'), hint, wrap=True)
+        for label, value in ((_t('系统直连'), native), (_t('经过 Domino'), proxied)):
+            tone = '32' if value['ok'] and not insecure else '33' if value['reachable'] or value.get('failure_stage') == 'not_installed' else '31'
+            ctx.human_row(label, (connection_message(value), tone))
+        ctx.human_row(_t('检查时间'), ctx.human_time(result['checked_at']))
+        print()
+        ctx.human_row(_t('下一步'), conclusion['next_step'], wrap=True)
+        if verbose:
+            print()
+            ctx.human_row(_t('详细信息'), _t('仅检查，不修改网络设置'))
+            ctx.human_row(_t('系统解析'), ', '.join(addresses) or _t('未返回地址'))
+            ctx.human_row(_t('内部 DNS 查询'), ', '.join(core_addresses) if core_addresses else
+                          _t('无 DNS 记录；系统 hosts 提供映射') if core_addresses == [] and hosts and dns.get('enable') and dns.get('use-system-hosts', True) else
+                          _t('未返回地址') if core_addresses == [] else _t('未能检查'))
+            ctx.human_row(_t('路由接口'), ', '.join(v['interface'] or '?' for v in routes) or _t('未能检查'))
+            ctx.human_row(_t('路由说明'), result['routing_note'], wrap=True)
+            for hint in hints:
+                ctx.human_row(_t('排查建议'), hint, wrap=True)
+
     return result

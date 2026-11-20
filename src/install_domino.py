@@ -2420,6 +2420,7 @@ def main(argv=None):
     p = sub.add_parser('doctor')
     p.add_argument('--url', default=DEFAULT_TEST)
     p.add_argument('--insecure', action='store_true')
+    p.add_argument('--verbose', action='store_true')
     p.add_argument('--json', action='store_true')
     p = sub.add_parser('nodes')
     p.add_argument('--group')
@@ -2548,7 +2549,7 @@ def _run_command(args):
             return status(args.json)
         elif args.action == 'doctor':
             import domino_doctor
-            domino_doctor.doctor(sys.modules[__name__], args.url, insecure=args.insecure, as_json=args.json)
+            domino_doctor.doctor(sys.modules[__name__], args.url, insecure=args.insecure, as_json=args.json, verbose=args.verbose)
         elif args.action == 'nodes':
             nodes(args.group, args.json)
         elif args.action == 'select':

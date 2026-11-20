@@ -1605,6 +1605,7 @@ def build_parser(*, advanced_delay_help=False, installing=False, machine_mode=Fa
     p = sub.add_parser('doctor', parents=[manage_parent], help=_t('比较系统直连与代理 HTTPS，检查 DNS 和路由（不修改设置）'))
     p.add_argument('--url', default='https://www.cloudflare.com/cdn-cgi/trace', help=_t('无凭据和查询参数的 HTTPS 地址；省略时检查默认公网地址'))
     p.add_argument('--insecure', action='store_true', help=_t('仅诊断时跳过证书校验'))
+    p.add_argument('--verbose', action='store_true', help=_t('显示 DNS、hosts 和路由等排查详情'))
     p.add_argument('--json', action='store_true')
     p = sub.add_parser('nodes', parents=[manage_parent], help=_t('查看策略组、当前选择和可用节点'))
     p.add_argument('--group', help=_t('只查看指定策略组的候选节点'))
@@ -2319,6 +2320,7 @@ def management_options(args):
     if args.command == 'doctor':
         options += ['--url', args.url]
         if args.insecure: options += ['--insecure']
+        if args.verbose: options += ['--verbose']
     if args.command=='scan':
         if args.source: options+=['--source',args.source]
     if args.command == 'configs':
