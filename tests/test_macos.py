@@ -100,6 +100,7 @@ class MacTests(unittest.TestCase):
                                    prepare_shell_policy=common.prepare_shell_policy,
                                    install_shell_policy=common.install_shell_policy,
                                    human_header=common.human_header, human_row=common.human_row,
+                                   installation_summary=common.installation_summary,
                                    show=common.show,
                                    probe=Mock(return_value={'healthy': True, 'exit_country': 'JP'}))
         self.bundle = self.root / 'bundle'

@@ -263,14 +263,5 @@ def _apply_install(ctx, bundle, manifest, ports, pending, shell_state, preserve_
         raise ctx.InstallError(_t('安装未完成，已恢复原状态；备份：')+str(backup),code='APPLY_ROLLED_BACK',effect='rolled_back') from None
     finally:
         vars(ctx).pop('_domino_registry_backup', None)
-    print(_t('Domino 已独立运行；代理端口 {0}，控制端口 {1}；登录当前用户时自动启动。', ports[0], ports[1]))
-    if health is None:
-        print(_t('基础环境已就绪，待添加订阅：domino configs add "名称"；domino configs switch "名称"。'))
-    else:
-        print(_t('代理出网通过；出口地区：') + (health['exit_country'] or _t('未返回')))
-    if manifest['shell_env']:
-        print(_t('终端代理策略：') + (_t('已开启') if shell_state[0]['enabled'] else _t('已关闭')) + _t('；与系统代理独立，使用 domino shell on/off/status 管理。'))
-        print(_t('已有终端请加载一次：. "$HOME/.config/domino/proxy.env"；Bash 登录配置需已加载 .bashrc。'))
-        print(_t('其他已接入终端下次提示符同步；运行中的 VS Code 不会更新环境。'))
-    print(_t('部署前备份：') + backup.name)
-    print(_t('首次访问局域网时，请允许 Domino 的本地网络访问；也可在系统设置 → 隐私与安全性 → 本地网络中开启。'))
+    ctx.installation_summary(ctx.APP, ctx.HOME, system='darwin', shell_env=manifest['shell_env'],
+                             pending=pending, health=health, backup=backup)

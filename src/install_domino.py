@@ -512,6 +512,33 @@ def owned_cli(path):
         return False
 
 
+def installation_summary(app, home, *, system, shell_env, pending, health, backup):
+    """One completion view; installing a service does not imply application access."""
+    import domino_shell
+    shell = 'Zsh' if system == 'darwin' else 'Bash'
+    human_header(_t('安装结果'), _t('基础环境已安装 · 待添加订阅') if pending else _t('运行环境已安装'))
+    human_row('CLI / Mihomo', _t('已交付'))
+    human_row(_t('后台服务'), _t('运行中 · 登录当前用户时自启') if system == 'darwin' else _t('运行中 · 开机自启'))
+    human_row(_t('配置'), _t('待添加订阅') if pending else _t('已应用'))
+    completion = app / ('cli/completion.zsh' if system == 'darwin' else 'cli/completion.bash')
+    ready = shell_env and completion.is_file()
+    human_row(_t('Tab 补全'), _t('新开的 {0} 终端自动加载', shell) if ready else
+              _t('本次未设置终端接入') if not shell_env else _t('补全文件缺失，请重新安装'))
+    try:
+        policy = domino_shell.read_policy(app)
+        human_row(_t('终端代理'), _t('策略已开启') if policy['enabled'] else _t('策略已关闭'))
+    except (OSError, ValueError):
+        human_row(_t('终端代理'), _t('策略无法读取'))
+    human_row(_t('实际出网'), _t('已检测通过') if health and health.get('healthy') else _t('未检测'))
+    human_row(_t('应用接入'), _t('服务运行不代表浏览器或终端已使用代理；domino status 查看'), wrap=True)
+    if ready:
+        human_row(_t('已有终端'), _t('重新打开一次即可；不需要每次手动加载'), wrap=True)
+    if system == 'darwin':
+        human_row(_t('内网访问'), _t('首次访问局域网时，请在系统弹窗允许 Domino'), wrap=True)
+    human_row(_t('恢复备份'), str(backup.name))
+    human_row(_t('下一步'), 'domino add "名称"' if pending else 'domino status', wrap=True)
+
+
 def install(bundle):
     if os.getuid() == 0:
         raise InstallError(_t('请用普通 SSH 用户部署，脚本只为系统服务步骤调用 sudo。'))
@@ -629,18 +656,8 @@ def install(bundle):
             'shell_enabled': shell_state[0]['enabled'] if shell_state[0] is not None else None,
             'backup': backup.name,
             'proxy_port': proxy_port, 'awaiting_subscription': bool(pending)}))
-    print(_t('服务已运行并启用开机自启；代理端口：') + str(proxy_port))
-    if health is None:
-        print(_t('基础环境已就绪，待添加订阅：domino add "名称"；domino switch "名称"。'))
-    else:
-        print(_t('代理出网校验通过；出口地区：') + (health['exit_country'] or _t('未返回')))
-    if manifest['shell_env']:
-        print(_t('终端代理策略：') + (_t('已开启') if shell_state[0]['enabled'] else _t('已关闭')) + _t('；与系统代理独立，使用 domino shell on/off/status 管理。'))
-        print(_t('已有终端请加载一次：. "$HOME/.config/domino/proxy.env"；Bash 登录配置需已加载 .bashrc。'))
-        print(_t('其他已接入终端下次提示符同步；运行中的 VS Code / Server 不会更新环境。'))
-    print(_t('部署前备份：') + backup.name)
-    if (APP / 'cli').is_dir():
-        print(_t('目标机管理和继续部署：~/.local/bin/domino status；~/.local/bin/domino USER@IP'))
+    installation_summary(APP, HOME, system='linux', shell_env=manifest['shell_env'],
+                         pending=pending, health=health, backup=backup)
 
 
 def select_backup(name=None):

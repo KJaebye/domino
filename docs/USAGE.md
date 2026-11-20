@@ -14,6 +14,8 @@ domino user@192.168.1.10 deploy    # 将翻墙能力复制到指定电脑
 
 先按 [安装步骤](../README.md#1-安装) 创建并激活 venv，再用 `python -m pip install --upgrade domino-proxy` 安装 CLI。Python 包不包含 Mihomo；首次在本机使用代理时，再运行 `domino-install` 联网下载内核并配置后台服务。仅管理远端可跳过本机初始化。下文的 `./install.sh` 用于源码安装。
 
+安装结束统一显示“安装结果”：后台服务、配置、补全、终端代理策略和实际出网分别列出。无订阅时下一步是 `domino add "名称"`；已有配置时使用 `domino status` 检查应用接入。服务已启动不等于浏览器或当前终端已经使用代理。
+
 ## Tab 补全
 
 默认接入 macOS 的 Zsh 和 Ubuntu 的 Bash，不安装额外 shell，不修改登录 shell。两种补全脚本均保留，主动使用其他 shell 时可自行加载。例如输入 `domino sh` 后按 Tab 补成 `shell`，`domino shell ` 后按 Tab 查看 `on/off/status`；`domino test `、`domino switch ` 可补本机配置名，`domino select ` 可补节点和策略组。补全会处理名称中的空格和方括号。

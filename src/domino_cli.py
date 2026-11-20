@@ -2239,10 +2239,6 @@ def initialize(args):
         private_write(manifest_path, json.dumps(manifest))
         # Run the current trusted installer, not an installer script supplied by the archive.
         run([sys.executable, str(REMOTE_SCRIPT), 'install', str(bundle)], stage=_t('本机安装'))
-    if getattr(args, 'base_install', False):
-        print(_t('Domino 已安装。重新打开终端后：domino add "名称"；domino switch "名称"。'))
-    else:
-        print(_t('本机独立代理已配置。管理命令：domino status；domino nodes'))
 
 
 def is_local_target(target):
