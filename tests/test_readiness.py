@@ -41,3 +41,18 @@ class InstallationSummaryTests(unittest.TestCase):
                 self.assertIn('domino status', text)
                 self.assertIn('新开的 Bash 终端自动加载' if enabled else '本次未设置终端接入', text)
                 self.assertFalse((home / '.bashrc').exists())
+
+
+class StatusMeaningTests(unittest.TestCase):
+    def test_unchecked_connectivity_is_not_a_failed_check(self):
+        state = {'installed': True, 'active': True, 'enabled': True, 'healthy': False,
+                 'controller_reachable': True, 'exit_checked': False, 'proxy_port': 17897}
+        text = control.status_text(state)
+        self.assertIn('出网尚未检测', text)
+        self.assertIn('domino status 执行出网检查', text)
+        self.assertNotIn('连通检查未通过', text)
+        state.update(exit_checked=True, exit_checked_at='2026-11-20T06:00:00+00:00')
+        text = control.status_text(state)
+        self.assertIn('连通检查未通过', text)
+        self.assertIn('2026-11-20', text)
+        self.assertIn('未检测；按目标地址', text)

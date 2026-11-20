@@ -873,6 +873,8 @@ def status_text(result, system_proxy=None, *, color=False):
         summary, tone = _t('● 服务运行中 · 系统代理未接通'), '33'
     elif result.get('healthy'):
         summary, tone = _t('● 代理出网正常'), '32'
+    elif not result.get('exit_checked', bool(result.get('healthy'))):
+        summary, tone = _t('● 服务运行中 · 出网尚未检测'), '33'
     else:
         summary, tone = _t('● 服务运行中 · 连通检查未通过'), '31'
     lines = human_header_text(_t('运行状态'),summary,tone,color=color).splitlines()
@@ -900,6 +902,12 @@ def status_text(result, system_proxy=None, *, color=False):
         row(_t('终端代理'), value + _t('  ·  domino shell status 查看当前终端'))
     if result.get('proxy_port'):
         row(_t('代理地址'), f"http://127.0.0.1:{text(result['proxy_port'])}")
+    checked = result.get('exit_checked', bool(result.get('healthy')))
+    connectivity = _t('已检测通过') if result.get('healthy') else _t('检测未通过') if checked else _t('未检测')
+    if checked and result.get('exit_checked_at'):
+        connectivity += '  ·  ' + human_time(result['exit_checked_at'])
+    row(_t('HTTPS 检测'), connectivity)
+    row(_t('内网检测'), _t('未检测；按目标地址使用 domino doctor --url URL'))
     kernel = 'Mihomo ' + text(result.get('version') or _t('版本未知'))
     if result.get('arch'): kernel += '  ·  ' + text(result['arch'])
     row(_t('内核'), kernel)
@@ -909,6 +917,8 @@ def status_text(result, system_proxy=None, *, color=False):
         lines += ['',_t('  下一步：domino add "名称"；domino switch "名称"。')]
     elif not result.get('active'):
         lines += ['',_t('  启动服务：domino start')]
+    elif not checked:
+        lines += ['', _t('  下一步：domino status 执行出网检查。')]
     elif not result.get('healthy'):
         lines += ['',_t('  排查连接：domino logs；domino nodes')]
     elif system_proxy is not None and system_proxy.get('routing') not in ['domino','unsupported']:
@@ -920,7 +930,7 @@ def collect_status(check_exit=True):
     app, service = current_installation()
     result = {'installed': (app / 'data/config.json').is_file(), 'service': service.name,
               'active': systemctl('is-active', service), 'enabled': systemctl('is-enabled', service), 'healthy': False,
-              'controller_reachable':False,'exit_checked':False}
+              'controller_reachable':False,'exit_checked':False,'exit_checked_at':None}
     if result['installed']:
         import domino_shell
         try:
@@ -952,6 +962,7 @@ def collect_status(check_exit=True):
                 result['controller_reachable']=True
                 if not pending and check_exit:
                     result['exit_checked']=True
+                    result['exit_checked_at']=datetime.now().astimezone().isoformat(timespec='seconds')
                     result.update(probe(result['proxy_port'], manifest.get('test_url', DEFAULT_TEST)))
             except (InstallError, OSError, ValueError, KeyError):
                 result['check_error'] = _t('代理控制接口或独立出网检查失败')

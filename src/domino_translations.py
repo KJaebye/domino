@@ -2079,4 +2079,12 @@ ENGLISH = {'语言偏好保存在本机；请使用 domino language zh 或 domin
  '运行中 · 登录当前用户时自启': 'Running; starts at user login',
  '运行环境已安装': 'Runtime installed',
  '重新打开一次即可；不需要每次手动加载': 'Reopen once; no manual loading is needed for each session',
- '首次访问局域网时，请在系统弹窗允许 Domino': 'Allow Domino in the system prompt when first accessing the LAN'}
+ '首次访问局域网时，请在系统弹窗允许 Domino': 'Allow Domino in the system prompt when first accessing the LAN',
+ '● 服务运行中 · 出网尚未检测': 'Service running; connectivity not checked',
+ '检测未通过': 'Check failed',
+ 'HTTPS 检测': 'HTTPS check',
+ '内网检测': 'LAN check',
+ '未检测；按目标地址使用 domino doctor --url URL': 'Not checked; use domino doctor --url URL for a target',
+ '  下一步：domino status 执行出网检查。': '  Next: run domino status to check connectivity.',
+ '接口在线 · 出网未检测': 'API online; connectivity not checked',
+ '配置操作已完成；配置应用不代表出网通过，使用 domino status 检查。': 'Profile operation completed; applying a profile does not verify connectivity. Check with domino status.'}

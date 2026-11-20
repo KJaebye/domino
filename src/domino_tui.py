@@ -53,7 +53,7 @@ def command_banner(data, version, *, columns=100, color=None):
     def style(value, code): return human_style(value,code,color=color)
     mode={'rule':_t('规则'),'global':_t('全局'),'direct':_t('直连')}.get(str(data.get('mode')),_t('模式未知'))
     metadata='localhost  ·  '+text(data.get('subscription') or (_t('未关联配置库') if data.get('installed') else _t('未初始化')))+'  ·  '+mode
-    status=_t('未初始化') if not data.get('installed') else _t('接口在线') if data.get('reachable') else _t('接口离线')
+    status=_t('未初始化') if not data.get('installed') else _t('接口在线 · 出网未检测') if data.get('reachable') else _t('接口离线')
     tone='33' if not data.get('installed') else '32' if data.get('reachable') else '31'
     if data.get('awaiting_subscription') and data.get('reachable'):status,tone=_t('待添加订阅'),'33'
     status_line='● '+status
@@ -419,7 +419,7 @@ class Workspace:
         elif not data.get('reachable'): status,style=_t('接口离线'),'error'
         elif data.get('awaiting_subscription'): status,style=_t('待添加订阅'),'pending'
         elif self.state.last_error: status,style=_t('状态待刷新'),'pending'
-        else: status,style=_t('接口在线'),'success'
+        else: status,style=_t('接口在线 · 出网未检测'),'success'
         status_line = [('class:'+style,'● '),('class:muted',status)]
         if self.header_height() == 2:
             if data.get('proxy_port') and self.app.output.get_size().columns >= 72:

@@ -1005,7 +1005,10 @@ class Manager:
                         failed.append(item['name'])
             if failed:
                 raise self.ctx.InstallError(_t('部分订阅更新失败，保留各自旧配置：') + '、'.join(failed))
-        if render: self.show(args.json)
+        if render:
+            if not args.json and (args.use or args.update or args.update_all):
+                print(_t('配置操作已完成；配置应用不代表出网通过，使用 domino status 检查。'))
+            self.show(args.json)
         return self.listing()
 
 
