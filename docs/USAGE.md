@@ -16,9 +16,9 @@ domino user@192.168.1.10 deploy    # 将翻墙能力复制到指定电脑
 
 ## Tab 补全
 
-支持 zsh（macOS 常用）和 bash（Ubuntu 常用）。例如输入 `domino sh` 后按 Tab 补成 `shell`，`domino shell ` 后按 Tab 查看 `on/off/status`；`domino test `、`domino switch ` 可补本机配置名，`domino select ` 可补节点和策略组。补全会处理名称中的空格和方括号。
+默认接入 macOS 的 Zsh 和 Ubuntu 的 Bash，不安装额外 shell，不修改登录 shell。两种补全脚本均保留，主动使用其他 shell 时可自行加载。例如输入 `domino sh` 后按 Tab 补成 `shell`，`domino shell ` 后按 Tab 查看 `on/off/status`；`domino test `、`domino switch ` 可补本机配置名，`domino select ` 可补节点和策略组。补全会处理名称中的空格和方括号。
 
-**完整安装会自动配置补全，无需每次手动加载。** macOS 和 Ubuntu 上运行 `domino-install`、源码 `./install.sh` 或部署到远端后，安装程序会在目标用户的 `~/.zshrc`、`~/.bashrc` 写入加载区块。之后新开的 Zsh / Bash 终端自动支持 `domino sw` + Tab → `domino switch`；升级、重新安装会保留其他启动配置，不重复添加区块。终端代理策略为 `off` 时，补全同样可用。显式使用 `--no-shell-env` 会跳过此次终端接入设置。Bash 登录终端沿用 Ubuntu 等系统已有的登录配置来加载 `.bashrc`；自定义登录配置仍需保留这一接入。
+**完整安装会自动配置补全，无需每次手动加载。** macOS 和 Ubuntu 上运行 `domino-install`、源码 `./install.sh` 或部署到远端后，安装程序会按平台写入加载区块：macOS 使用 `~/.zshrc`，Ubuntu / Linux 使用 `~/.bashrc`，不新建或改写另一种 shell 的启动文件。旧版已写入另一种 shell 的接入区块保留，避免影响主动使用该 shell 的用户。之后新开的对应终端自动支持 `domino sw` + Tab → `domino switch`；升级、重新安装会保留其他启动配置，不重复添加区块。终端代理策略为 `off` 时，补全同样可用。显式使用 `--no-shell-env` 会跳过此次终端接入设置。Bash 登录终端沿用 Ubuntu 等系统已有的登录配置来加载 `.bashrc`；自定义登录配置仍需保留这一接入。
 
 安装前已经打开的终端不会重新读取启动文件；重新打开终端即可，或仅在这些旧窗口里手动加载一次。`completion=未注册`、`_domino: none` 表示当前 Zsh 尚未加载补全，并不表示安装文件丢失。
 
@@ -318,7 +318,7 @@ domino restart   # 重启并重新接通支持的桌面系统代理
 
 全新 macOS / Linux 安装的终端策略均默认为 `off`，与是否提供订阅无关。已有策略在重装、升级和重新部署时保留；尚无策略的旧安装中，只有完整匹配已识别旧版 Linux 固定导出模板的环境才迁移为 `on`，旧版 macOS 迁移为 `off`。`--no-shell-env` 跳过本次 shell 环境修改并保留此前设置，不会撤销旧代理环境或重置策略。
 
-安装程序通过 `~/.bashrc`、`~/.zshrc` 的受管理区块加载 `~/.config/domino/proxy.env`；Linux 还接入 `~/.vscode-server/server-env-setup`。加载器配置命令 PATH、shell 包装函数和提示符同步，不再无条件导出固定代理。Bash 登录终端需由已有登录配置加载 `.bashrc`，安装程序不改 `.bash_profile`、`.bash_login` 或 `.profile`。已经打开的 Bash / Zsh 终端需先加载一次：
+安装程序按平台通过 macOS 的 `~/.zshrc` 或 Ubuntu / Linux 的 `~/.bashrc` 受管理区块加载 `~/.config/domino/proxy.env`；Linux 还接入 `~/.vscode-server/server-env-setup`。加载器配置命令 PATH、shell 包装函数和提示符同步，不再无条件导出固定代理。Bash 登录终端需由已有登录配置加载 `.bashrc`，安装程序不改 `.bash_profile`、`.bash_login` 或 `.profile`。已经打开的 Bash / Zsh 终端需先加载一次：
 
 ```bash
 . "$HOME/.config/domino/proxy.env"
@@ -822,7 +822,7 @@ HTTP/file providers 会连同缓存资源迁移，并改为目标上的相对路
 | 迁移前自定义加载器备份 | `~/.local/share/domino/shell-env.previous` |
 | 资源源配置 | `~/.config/domino/downloads.json` |
 | Agent 操作记录与去重 | `~/.local/state/domino/operations/` |
-| shell 加载区块 | `~/.bashrc`、`~/.zshrc`；不修改 Bash 登录文件 |
+| shell 加载区块 | macOS：`~/.zshrc`；Ubuntu / Linux：`~/.bashrc`；不修改 Bash 登录文件 |
 | Linux VS Code 环境入口 | `~/.vscode-server/server-env-setup` |
 
 服务名和目录名统一使用 `domino`。服务以 SSH 用户身份运行，只监听目标回环地址；不开放 LAN 代理，不启用 TUN，不修改系统 DNS/默认路由。新增环境排除 localhost 和常见私网范围；已运行的进程需要自行重启才会继承环境。

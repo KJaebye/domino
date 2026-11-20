@@ -12,6 +12,7 @@
 - `domino list` 显示订阅套餐已用/总量和用量分级颜色；`--refresh-usage` 仅刷新套餐缓存，不切换或重载配置。
 - 命令行与交互界面支持中英文；`domino language en/zh` 保存偏好，`--lang` 临时覆盖，`/language` 在交互界面内切换；SSH 沿用发起端语言。
 - 完善资源打包、离线 CLI 同步与 SSH 分段载荷回归，隔离测试中的桌面代理和临时 HOME；补全脚本与配置名称保持原文。
+- 终端默认接入按平台区分：macOS 使用 Zsh，Ubuntu / Linux 使用 Bash；保留另一种 shell 的补全脚本和既有配置，不安装或切换登录 shell。
 
 ## 1.2.3 — 2026-11-17
 

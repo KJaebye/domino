@@ -548,6 +548,11 @@ export NO_PROXY="$no_proxy"
             self.assertIn('Managed by Domino shell integration', loader)
             self.assertNotIn('# Legacy proxy port:', loader)
 
+    def test_default_install_sets_up_zsh_without_creating_bashrc(self):
+        self.perform_install()
+        self.assertIn('proxy.env', (self.home / '.zshrc').read_text())
+        self.assertFalse((self.home / '.bashrc').exists())
+
     def test_first_install_without_shell_env_does_not_create_policy_or_environment(self):
         self.manifest['shell_env'] = False
         self.write_manifest()

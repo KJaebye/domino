@@ -405,7 +405,8 @@ WantedBy=multi-user.target
 
 
 def configure_cli_path(home):
-    for name in ['.bashrc', '.zshrc']:
+    names = ['.bashrc'] if sys.platform == 'linux' else ['.zshrc']
+    for name in names:
         path = home / name
         old = path.read_text() if path.exists() else ''
         mode = path.stat().st_mode & 0o777 if path.exists() else 0o600
@@ -448,7 +449,9 @@ def configure_shell_environment(app, home, *, linux=False, legacy_port=None):
     import domino_shell
     write_private(home / '.config/domino/proxy.env', domino_shell.integration(app, ['/usr/bin/env', 'python3'], legacy_port))
     body = '[ ! -r "$HOME/.config/domino/proxy.env" ] || . "$HOME/.config/domino/proxy.env"'
-    names = ['.bashrc', '.zshrc']
+    # Follow the supported platform default without changing the login shell.
+    # Existing integration in another shell is preserved for previous users.
+    names = ['.bashrc'] if linux else ['.zshrc']
     if linux:
         names.append('.vscode-server/server-env-setup')
     for name in names:

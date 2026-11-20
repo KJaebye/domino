@@ -132,6 +132,27 @@ value = """data, not a docstring"""
             replies = [shlex.split(value)[0] for value in result.stdout.splitlines() if value]
             self.assertEqual(replies, expected)
 
+    def test_install_only_edits_platform_default_rc_and_preserves_other_shell(self):
+        for linux, selected, other in ((True, '.bashrc', '.zshrc'), (False, '.zshrc', '.bashrc')):
+            with self.subTest(linux=linux), tempfile.TemporaryDirectory() as directory:
+                home = Path(directory)
+                app = home / '.local/share/domino'
+                installer.configure_shell_environment(app, home, linux=linux)
+                self.assertIn('proxy.env', (home / selected).read_text())
+                self.assertFalse((home / other).exists())
+                vscode = home / '.vscode-server/server-env-setup'
+                self.assertEqual(vscode.exists(), linux)
+                # An upgrade must not edit a user's non-default shell settings,
+                # including old Domino integration that they may still use.
+                text = '# user shell settings\n' + installer.managed_block('', 'export KEEP=1')
+                (home / other).write_text(text)
+                (home / other).chmod(0o640)
+                before = (home / selected).read_bytes()
+                installer.configure_shell_environment(app, home, linux=linux)
+                self.assertEqual((home / selected).read_bytes(), before)
+                self.assertEqual((home / other).read_text(), text)
+                self.assertEqual((home / other).stat().st_mode & 0o777, 0o640)
+
     def test_new_terminals_complete_switch_after_install_and_reinstall_without_manual_source(self):
         # Use the real installed loader and rc writer. Only the final command is
         # recorded by our fixture CLI, so pressing Enter cannot change a service.
@@ -152,8 +173,7 @@ value = """data, not a docstring"""
         cases = [('macOS-zsh', False, 'zsh', ['-i']),
                  ('macOS-login-zsh', False, 'zsh', ['-il']),
                  ('Ubuntu-bash', True, 'bash', ['-i']),
-                 ('Ubuntu-login-bash', True, 'bash', ['--login', '-i']),
-                 ('Ubuntu-zsh', True, 'zsh', ['-i'])]
+                 ('Ubuntu-login-bash', True, 'bash', ['--login', '-i'])]
         for label, linux, shell, flags in cases:
             if not shutil.which(shell):
                 continue
