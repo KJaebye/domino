@@ -2341,7 +2341,7 @@ def main(argv=None):
     p = sub.add_parser('status')
     p.add_argument('--json', action='store_true')
     p = sub.add_parser('doctor')
-    p.add_argument('--url', required=True)
+    p.add_argument('--url', default=DEFAULT_TEST)
     p.add_argument('--insecure', action='store_true')
     p.add_argument('--json', action='store_true')
     p = sub.add_parser('nodes')
@@ -2470,8 +2470,6 @@ def _run_command(args):
         elif args.action == 'status':
             return status(args.json)
         elif args.action == 'doctor':
-            if sys.platform != 'darwin':
-                raise InstallError(_t('doctor 当前仅支持 macOS。'))
             import domino_doctor
             domino_doctor.doctor(sys.modules[__name__], args.url, insecure=args.insecure, as_json=args.json)
         elif args.action == 'nodes':

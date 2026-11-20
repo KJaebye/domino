@@ -38,10 +38,10 @@ class DoctorTests(unittest.TestCase):
                 elif args[0] == 'route': output = 'interface: en0'
                 elif args[0].endswith('/mihomo'): output = 'Mihomo test\n'
                 return SimpleNamespace(returncode=code, stdout=output, stderr='PRIVATE-ERROR')
-            with patch.object(mac.subprocess,'run',side_effect=run) as commands, \
+            with patch.object(mac.sys,'platform','darwin'), patch.object(mac.subprocess,'run',side_effect=run) as commands, \
                     patch.object(mac,'launch',return_value=SimpleNamespace(returncode=0,stdout='pid = 123' + ('\nprogram = ' + str(launcher) if native_launcher else ''))), \
                     patch.object(mac,'system_proxy_overview',return_value={'routing':'domino','ports':[17897]}), \
-                    patch.object(mac.socket,'getaddrinfo',return_value=[(2,1,6,'',('10.0.0.2',443))]), \
+                    patch.object(mac,'resolve_system',return_value=['10.0.0.2']), patch.object(mac,'system_hosts',return_value=[]), \
                     patch.object(mac.socket,'socket'), redirect_stdout(io.StringIO()) as output:
                 result = mac.doctor(ctx,'https://internal.example/',insecure=insecure,as_json=True)
                 calls = commands.call_args_list
@@ -91,3 +91,52 @@ class DoctorTests(unittest.TestCase):
 
 
 if __name__ == '__main__': unittest.main()
+
+
+class CrossPlatformDoctorTests(unittest.TestCase):
+    def test_http_error_is_reachable_but_not_a_successful_business_response(self):
+        value = mac.probe_result(SimpleNamespace(returncode=0, stdout='503'))
+        self.assertTrue(value['reachable'])
+        self.assertFalse(value['ok'])
+        self.assertEqual(value['failure_stage'], 'http')
+        self.assertEqual(mac.probe_result(SimpleNamespace(returncode=6, stdout='000'))['failure_stage'], 'dns')
+
+    def test_linux_detects_hosts_mismatch_without_mac_commands_or_mutations(self):
+        import domino_linux
+        with tempfile.TemporaryDirectory() as directory:
+            app=Path(directory); (app/'data').mkdir()
+            path=app/'data/config.json'; path.write_text(json.dumps({'mixed-port':17897,'dns':{'enable':False}}))
+            (app/'mihomo').write_bytes(b'fixture')
+            before=path.read_bytes()
+            ctx=SimpleNamespace(current_installation=lambda:(app,Path('domino.service')),
+                InstallError=common.InstallError,show=common.show,
+                api_json=lambda *args,**kwargs:{'Answer':[]})
+            def run(args, **kwargs):
+                if args[0]=='curl':
+                    proxy=args[args.index('--proxy')+1]
+                    return SimpleNamespace(returncode=35 if proxy else 0,stdout='000' if proxy else '302')
+                if args[0]=='ip':return SimpleNamespace(returncode=0,stdout='[{"dev":"tun0"}]')
+                return SimpleNamespace(returncode=0,stdout='Mihomo fixture')
+            with patch.object(mac.sys,'platform','linux'),patch.object(mac.subprocess,'run',side_effect=run) as calls, \
+                 patch.object(mac,'launch',side_effect=AssertionError('macOS service command on Linux')), \
+                 patch.object(domino_linux,'system_proxy_overview',return_value={'routing':'unsupported','ports':[]}), \
+                 patch.object(mac,'resolve_system',return_value=['10.0.0.5']), \
+                 patch.object(mac,'system_hosts',return_value=['10.0.0.5']),patch.object(mac.socket,'socket'), \
+                 redirect_stdout(io.StringIO()):
+                result=mac.doctor(ctx,'https://internal.example/',as_json=True)
+            self.assertEqual(path.read_bytes(),before)
+            self.assertEqual(result['dns_routes'][0]['interface'],'tun0')
+            self.assertTrue(any('系统 hosts' in value for value in result['hints']))
+            self.assertTrue(all(c.args[0][0] not in ('launchctl','otool','networksetup','sudo') for c in calls.call_args_list))
+
+    def test_tui_diagnostic_rejects_private_urls_before_recording_input(self):
+        import domino_tui as ui
+        from unittest.mock import Mock
+        workspace=object.__new__(ui.Workspace);workspace.state=ui.State('localhost');workspace.queue=Mock()
+        workspace.dispatch('/doctor https://internal.example/?token=PRIVATE')
+        workspace.queue.assert_not_called()
+        self.assertNotIn('PRIVATE',str(workspace.state.events))
+        workspace.dispatch('/doctor https://internal.example/')
+        self.assertEqual(workspace.queue.call_args.args[1:],('doctor','--url','https://internal.example/'))
+        workspace.dispatch('/doctor')
+        self.assertEqual(workspace.queue.call_args.args[1:],('doctor',))

@@ -19,6 +19,7 @@ COMMANDS = [
     ('/language', '切换中英文界面'),
     ('/nodes', '当前配置、代理链路和节点'), ('/select', '按名称或关键词选择节点'),
     ('/catch', '选择配置或捕获全部'), ('/mode', '规则 / 全局 / 直连模式'),
+    ('/doctor', '诊断系统直连与代理，支持指定 HTTPS 地址'),
     ('/status', '检查服务和真实 HTTPS 出网'), ('/test', '选择全部配置、单个配置或节点检测'),
     ('/scan', '扫描当前目标的配置和代理入口出网'),
     ('/traffic', '选择内嵌或全屏动态流量面板'), ('/connections', '查看或选择关闭连接'),
@@ -886,6 +887,12 @@ class Workspace:
             if name == '/clear': self.state.events.clear(); self.state.scroll=0; return
             if name in ['/status','/logs','/start','/stop','/restart','/help'] and args:
                 raise ValueError(name + _t(' 不需要额外参数。'))
+            if name == '/doctor':
+                if len(args) > 1:
+                    raise ValueError(_t('用法：/doctor，或 /doctor https://example.com/。'))
+                if args:
+                    from domino_doctor import validate_url
+                    validate_url(args[0])
             if name in ['/configs','/catch']:
                 visible, hide_next = [], False
                 for value in args:
@@ -979,6 +986,7 @@ class Workspace:
                                  (len(args)==1 and args[0].startswith('--source=') and args[0]!='--source=')):
                     raise ValueError(_t('用法：/scan，或 /scan --source "配置路径"。'))
                 self.queue(_t('扫描配置与代理出网'),'scan',*args)
+            elif name == '/doctor': self.queue(_t('连接诊断'), 'doctor', *(['--url', args[0]] if args else []))
             elif name == '/status': self.queue(_t('运行状态'),'status')
             elif name == '/traffic':
                 if not args:

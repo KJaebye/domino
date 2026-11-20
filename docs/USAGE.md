@@ -39,6 +39,10 @@ eval "$(domino completion bash)"
 
 保留源配置的规则模式或全局模式，以及可获取的当前节点选择。源客户端处于 `direct` 模式时停止迁移，避免将直连误当作已开启的代理。
 
+## 连接诊断
+
+macOS 与 Ubuntu 均可运行 `domino doctor`，默认比较系统直连与代理到公网测试地址的 HTTPS；指定问题地址使用 `domino doctor --url https://example.com/`，机器结果添加 `--json`。TUI 中使用 `/doctor`，或 `/doctor https://example.com/`。检查会显示时间、解析地址、路由接口及失败阶段，不修改 DNS、规则、VPN 或权限；HTTP 4xx/5xx 与网络无法连通分开解释，登录重定向可正常返回。诊断地址不能包含凭据或查询参数。
+
 ## OpenVPN 与公司内网
 
 Domino 的 DIRECT 请求仍遵循系统路由，可以与 OpenVPN 同时运行。公司域名若由目标机 `/etc/hosts` 提供，独立内核必须读取**目标机**的系统 hosts；不复制源电脑的 hosts 文件。1.3.0 开发版启用 Mihomo 内部解析与 `use-system-hosts`，使用 `system` 上游、`redir-host` 模式和空 DNS 监听地址，不接管系统 DNS，不创建 DNS 服务端口，也不开启 TUN。既有缓存配置在下次切换时自动使用新设置。
