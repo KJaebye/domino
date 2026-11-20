@@ -19,6 +19,13 @@ _KINDS = {'file', 'verge-profile', 'verge-runtime', 'subscription', 'runtime-sna
 _CERT_KEYS = {'certificate', 'private-key'}
 
 
+def independent_dns(profile):
+    """Internal resolution only: target system hosts/DNS, no DNS listener or hijack."""
+    return {'enable': True, 'listen': '', 'enhanced-mode': 'redir-host',
+            'use-hosts': True, 'use-system-hosts': True,
+            'ipv6': profile.get('ipv6') is True, 'nameserver': ['system']}
+
+
 def _fail():
     raise DomainError(_t(_ERROR), code='INVALID_SOURCE_SNAPSHOT', exit_code=2) from None
 

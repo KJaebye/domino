@@ -78,6 +78,22 @@ class SubscriptionTests(unittest.TestCase):
         self.assertEqual(self.manager().listing()['configs'][0]['usage']['status'], 'critical')
         self.assertNotIn('HEADER-PRIVATE', self.manager().index.read_text())
 
+    def test_switching_legacy_cached_profile_upgrades_dns_without_changing_immutable_cache(self):
+        self.add()
+        self.execute('--update', '机场一')
+        manager = self.manager()
+        cached = manager.cached(manager.find('机场一')) / 'config.json'
+        old = json.loads(cached.read_text())
+        old['dns'] = {'enable': False}
+        cached.write_text(json.dumps(old))
+        before = cached.read_bytes()
+        self.execute('--use', '机场一')
+        config = json.loads((self.app / 'data/config.json').read_text())
+        self.assertTrue(config['dns']['use-system-hosts'])
+        self.assertTrue(config['dns']['enable'])
+        self.assertEqual(config['dns']['listen'], '')
+        self.assertEqual(cached.read_bytes(), before)
+
     def test_usage_refresh_only_changes_account_cache_and_deduplicates_addresses(self):
         self.add()
         self.add('机场二')

@@ -110,12 +110,30 @@ class SourceTests(unittest.TestCase):
         self.assertEqual(raw, before)
         self.assertFalse(result['allow-lan'])
         self.assertFalse(result['tun']['enable'])
-        self.assertFalse(result['dns']['enable'])
+        self.assertTrue(result['dns']['enable'])
+        self.assertTrue(result['dns']['use-system-hosts'])
+        self.assertEqual(result['dns']['listen'], '')
         self.assertNotIn('external-controller-unix', result)
         self.assertNotIn('interface-name', result['proxies'][0])
         self.assertEqual(result['proxies'][0]['password'], 'TEST-NODE-PASSWORD')
         self.assertEqual(result['proxy-groups'][0]['proxies'][0], 'DIRECT')
         self.assertNotEqual(result['secret'], 'TEST-OLD-SECRET')
+
+    def test_internal_dns_uses_target_hosts_without_copying_source_dns_or_opening_a_listener(self):
+        raw = self.profile()
+        raw['dns'].update({'listen': '0.0.0.0:53', 'enhanced-mode': 'fake-ip',
+                           'nameserver': ['127.0.0.1:5553'], 'use-system-hosts': False})
+        for ipv6 in (False, True):
+            raw['ipv6'] = ipv6
+            result = tool.sanitize_profile(raw, {}, 17890, 19091)
+            self.assertEqual(result['dns']['nameserver'], ['system'])
+            self.assertEqual(result['dns']['enhanced-mode'], 'redir-host')
+            self.assertTrue(result['dns']['use-hosts'])
+            self.assertTrue(result['dns']['use-system-hosts'])
+            self.assertEqual(result['dns']['listen'], '')
+            self.assertEqual(result['dns']['ipv6'], ipv6)
+            self.assertFalse(result['tun']['enable'])
+        self.assertEqual(raw['dns']['listen'], '0.0.0.0:53')
 
     def test_global_mode_is_preserved_and_disabled_source_is_refused(self):
         raw = self.profile()

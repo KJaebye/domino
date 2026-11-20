@@ -2002,6 +2002,8 @@ def prepare_custom_rules(data):
     path = data / 'config.json'
     config = json.loads(path.read_text())
     candidate = compose_custom_rules(config)
+    from domino_sources import independent_dns
+    candidate['dns'] = independent_dns(candidate)
     write_private(data / 'rules-base.json', json.dumps(config.get('rules', []), ensure_ascii=False))
     write_private(path, json.dumps(candidate, ensure_ascii=False, indent=2))
 

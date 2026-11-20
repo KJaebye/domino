@@ -893,7 +893,9 @@ def sanitize_profile(raw, selections, proxy_port, api_port):
                     'bind-address': '127.0.0.1', 'mode': mode, 'log-level': 'warning',
                     'find-process-mode': 'off', 'external-controller': f'127.0.0.1:{api_port}',
                     'secret': secrets.token_urlsafe(32), 'tun': {'enable': False},
-                    'dns': {'enable': False}, 'profile': {'store-selected': True}})
+                    'profile': {'store-selected': True}})
+    from domino_sources import independent_dns
+    profile['dns'] = independent_dns(profile)
     for item in profile.get('proxies', []) + profile.get('proxy-groups', []):
         item.pop('interface-name', None)
         item.pop('routing-mark', None)

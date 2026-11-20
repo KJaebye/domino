@@ -37,6 +37,14 @@ eval "$(domino completion bash)"
 
 保留源配置的规则模式或全局模式，以及可获取的当前节点选择。源客户端处于 `direct` 模式时停止迁移，避免将直连误当作已开启的代理。
 
+## OpenVPN 与公司内网
+
+Domino 的 DIRECT 请求仍遵循系统路由，可以与 OpenVPN 同时运行。公司域名若由目标机 `/etc/hosts` 提供，独立内核必须读取**目标机**的系统 hosts；不复制源电脑的 hosts 文件。1.3.0 开发版启用 Mihomo 内部解析与 `use-system-hosts`，使用 `system` 上游、`redir-host` 模式和空 DNS 监听地址，不接管系统 DNS，不创建 DNS 服务端口，也不开启 TUN。既有缓存配置在下次切换时自动使用新设置。
+
+排查时先比较系统直连与经过 Domino 的相同 HTTPS 地址，再检查 DIRECT 规则及 VPN 路由。若原生解析正常、内核日志显示 `dns resolve failed`，还应检查目标 hosts 与内核解析配置，不能直接归因于本地网络权限或 VPN 路由。仅配置 DIRECT 不会自动解决域名解析。
+
+本轮已在 macOS + OpenVPN + 目标 hosts 环境完成对照。VPN 仅提供分流 DNS、没有 hosts 映射的其他环境仍需单独验证；Mihomo 的 `system` 上游不等同 macOS 完整的系统解析服务。
+
 ## 界面语言 / Interface language
 
 默认中文。使用 `domino language en` 保存英文偏好，`domino language zh` 切回中文；`domino language` 查看当前语言。交互界面可用 `/language` 选择，也支持 `/language en` 和 `/language zh` 即时切换。

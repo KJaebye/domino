@@ -55,6 +55,17 @@ class RuleTests(unittest.TestCase):
         with redirect_stdout(io.StringIO()):
             control.edit_rule(value,remove=remove)
 
+    def test_installing_an_old_offline_bundle_enables_target_system_hosts_without_dns_listener(self):
+        original = dict(self.original, dns={'enable': False})
+        self.path.write_text(json.dumps(original))
+        control.prepare_custom_rules(self.data)
+        updated = json.loads(self.path.read_text())
+        self.assertTrue(updated['dns']['enable'])
+        self.assertTrue(updated['dns']['use-system-hosts'])
+        self.assertEqual(updated['dns']['listen'], '')
+        self.assertEqual({k: v for k, v in updated.items() if k != 'dns'},
+                         {k: v for k, v in original.items() if k != 'dns'})
+
     def test_prepend_is_persistent_idempotent_and_preserves_runtime_settings(self):
         self.mode='global'
         self.edit()

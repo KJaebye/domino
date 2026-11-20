@@ -420,7 +420,9 @@ class ConfigDelayTests(unittest.TestCase):
             self.assertEqual(profile['mixed-port'], 0)
             self.assertEqual(profile['rules'], ['MATCH,DIRECT'])
             self.assertFalse(profile['tun']['enable'])
-            self.assertFalse(profile['dns']['enable'])
+            self.assertTrue(profile['dns']['enable'])
+            self.assertTrue(profile['dns']['use-system-hosts'])
+            self.assertEqual(profile['dns']['listen'], '')
             self.assertNotEqual(profile['external-controller'], '127.0.0.1:19091')
             return process
         from unittest.mock import MagicMock

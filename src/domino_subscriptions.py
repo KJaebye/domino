@@ -742,6 +742,8 @@ class Manager:
         candidate = json.loads((cached / 'config.json').read_text())
         base = list(candidate.get('rules', []))
         candidate = self.ctx.compose_custom_rules(candidate)
+        from domino_sources import independent_dns
+        candidate['dns'] = independent_dns(candidate)
         for key in ['mixed-port', 'external-controller', 'secret']:
             candidate[key] = current[key]
         candidate['mode'] = runtime.get('mode', current.get('mode', 'rule'))
