@@ -56,3 +56,32 @@ class StatusMeaningTests(unittest.TestCase):
         self.assertIn('连通检查未通过', text)
         self.assertIn('2026-11-20', text)
         self.assertIn('未检测；按目标地址', text)
+
+
+class BuildIdentityTests(unittest.TestCase):
+    def test_same_version_changes_identity_when_source_changes_and_does_not_run_git(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            entry = root / 'domino_cli.py'
+            entry.write_text("VERSION='1.3.0'\nBUILD_CHANNEL='development'\nCLI_MODULES=('domino_cli.py','domino_model.py')\n")
+            model = root / 'domino_model.py';model.write_text('value=1\n')
+            with patch.object(control.subprocess,'run',side_effect=AssertionError('metadata must be local and read-only')):
+                first = control.cli_build_info(root)
+                model.write_text('value=2\n')
+                second = control.cli_build_info(root)
+            self.assertTrue(first['complete'])
+            self.assertEqual(first['version'],second['version'])
+            self.assertNotEqual(first['build_id'],second['build_id'])
+            model.unlink()
+            self.assertFalse(control.cli_build_info(root)['complete'])
+
+    def test_manifest_cannot_read_arbitrary_files_or_follow_resource_symlinks(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            entry = root/'domino_cli.py'
+            entry.write_text("VERSION='1.3.0'\nCLI_MODULES=('../other',)\n")
+            self.assertFalse(control.cli_build_info(root)['complete'])
+            entry.write_text("VERSION='1.3.0'\nCLI_MODULES=('domino_cli.py','domino_model.py')\n")
+            (root/'domino_model.py').symlink_to(entry)
+            self.assertFalse(control.cli_build_info(root)['complete'])

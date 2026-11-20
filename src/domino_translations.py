@@ -2110,4 +2110,13 @@ ENGLISH = {'语言偏好保存在本机；请使用 domino language zh 或 domin
  '连接诊断': 'Connection diagnosis',
  '诊断系统直连与代理，支持指定 HTTPS 地址': 'Diagnose native and proxy connectivity, optionally for a specific HTTPS URL',
  '内部 DNS 查询': 'Internal DNS query',
- '无 DNS 记录；系统 hosts 提供映射': 'No DNS record; system hosts supplies the mapping'}
+ '无 DNS 记录；系统 hosts 提供映射': 'No DNS record; system hosts supplies the mapping',
+ ' · 套餐已到期': ' · Plan expired',
+ '套餐到期': 'Plan expires',
+ '套餐剩余': 'Plan remaining',
+ '开发构建，尚未发布': 'Development build, unpublished',
+ '本次也会删除恢复备份；需要保留时，请先复制到运行目录之外': 'Recovery backups will also be deleted; copy them outside the runtime directories first if needed',
+ '管理 CLI': 'Managing CLI',
+ '运行时快照': 'Runtime snapshot',
+ '；在目标电脑恢复服务、配置和环境：{0}': '; restore service, configuration and environment on the target: {0}',
+ '建议下一步': 'Suggested next step'}

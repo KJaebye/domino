@@ -1100,3 +1100,32 @@ class SubscriptionTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class QuotaFreshnessTests(unittest.TestCase):
+    def test_quota_expiry_and_age_are_independent_of_percentage_and_read_only(self):
+        from datetime import datetime, timezone, timedelta
+        now = datetime.now(timezone.utc)
+        item = {'usage': {'upload': 1, 'download': 9, 'total': 100, 'expire': int((now-timedelta(days=1)).timestamp())},
+                'usage_checked_at': (now-timedelta(hours=7)).isoformat()}
+        original = copy.deepcopy(item)
+        value = subscriptions.usage_summary(item)
+        self.assertEqual(value['status'], 'normal')
+        self.assertEqual(value['remaining_bytes'], 90)
+        self.assertTrue(value['expired'])
+        self.assertTrue(value['stale'])
+        text, color = subscriptions.usage_cell(control, {'usage': value})
+        self.assertIn('套餐已到期', text)
+        self.assertEqual(color, '31')
+        self.assertEqual(item, original)
+        item['usage']['download'] = 200
+        self.assertEqual(subscriptions.usage_cell(control, {'usage': subscriptions.usage_summary(item)})[1], '2')
+
+    def test_unknown_and_invalid_expiry_are_not_claimed_to_be_unlimited_or_expired(self):
+        for expiry in (None, 0, True, 2**64-1):
+            with self.subTest(expiry=expiry):
+                value = subscriptions.usage_summary({'usage': {'upload': 0, 'download': 0, 'total': 0, 'expire': expiry}})
+                self.assertIsNone(value['expires_at'])
+                self.assertFalse(value['expired'])
+                self.assertIsNone(value['remaining_bytes'])
+                self.assertEqual(value['freshness'], 'unknown')

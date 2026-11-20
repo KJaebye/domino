@@ -61,7 +61,9 @@ def command_banner(data, version, *, columns=100, color=None):
     if data.get('proxy_port'):status_line+=f"  ·  :{data['proxy_port']}"
     if data.get('node_count') is not None:
         status_line+=_t('  ·  {0} 节点 / {1} 组', data['node_count'], data['group_count'])
-    rows=[('Domino  v'+text(version),'1'),(metadata,'2'),(status_line,tone)]
+    build=data.get('cli_build') or {}
+    build_label=(' · '+text(build['build_id'])) if build.get('build_id') else ''
+    rows=[('Domino  v'+text(version)+build_label,'1'),(metadata,'2'),(status_line,tone)]
     def render(index, width):
         value=clip(rows[index][0],width)
         if index==0: return style(value[:6],'1')+style(value[6:],'2')
@@ -1125,7 +1127,10 @@ class Workspace:
         def row(v):
             name=clean(v['name'])
             while human_width(name)>width:name=name[:-1]
-            return name+' '*max(2,width-human_width(name)+2)+(_t('在线订阅') if v['kind']=='subscription' else _t('配置快照'))+'  '+str(v.get('node_count') if v.get('node_count') is not None else '—')+_t(' 节点  ')+(_t('已缓存') if v.get('cached') else _t('未缓存'))+'  '+(human_time(v['updated_at']) if v.get('updated_at') else _t('尚未更新'))
+            from domino_subscriptions import usage_cell
+            import install_domino
+            quota = usage_cell(install_domino, v)[0] if v.get('usage') else _t('未获取')
+            return name+' '*max(2,width-human_width(name)+2)+(_t('在线订阅') if v['kind']=='subscription' else _t('配置快照'))+'  '+str(v.get('node_count') if v.get('node_count') is not None else '—')+_t(' 节点  ')+(_t('已缓存') if v.get('cached') else _t('未缓存'))+'  '+(human_time(v['updated_at']) if v.get('updated_at') else _t('尚未更新'))+'  '+quota
         self.panel(_t('配置管理 · ')+str(len(result['configs']))+_t(' 个配置 · 当前：')+str(result.get('active') or result.get('current_source') or _t('未关联配置库')),
             [{'label':row(v),'search':v['name'],'value':v,'current':v['active']} for v in result['configs']],lambda _:None,'configs')
         panel=self.state.panel

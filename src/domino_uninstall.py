@@ -117,6 +117,7 @@ def uninstall(ctx, *, yes=False, non_interactive=False, dry_run=False):
     for path, *_ in initial['edits']:
         ctx.human_row(_t('清理接入'), str(path), wrap=True)
     ctx.human_row(_t('保留'), _t('项目源码、外部客户端及包管理器安装的 CLI'), wrap=True)
+    ctx.human_row(_t('恢复备份'), _t('本次也会删除恢复备份；需要保留时，请先复制到运行目录之外'), wrap=True)
     if dry_run:
         return
     if not yes:

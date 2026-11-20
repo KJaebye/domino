@@ -6,6 +6,9 @@ from __future__ import annotations
 from domino_i18n import tr as _t
 
 import argparse
+import ast
+import hashlib
+import shlex
 from contextlib import ExitStack, contextmanager, nullcontext, redirect_stdout
 from datetime import datetime
 import json
@@ -512,6 +515,66 @@ def owned_cli(path):
         return False
 
 
+def cli_build_info(root=None):
+    """Hash only the declared public CLI files; never run git or inspect credentials."""
+    if root is None and isinstance(globals().get('__domino_build__'), dict):
+        return dict(globals()['__domino_build__'])
+    root = Path(root) if root is not None else Path(__file__).parent
+    unknown = {'version': None, 'build_id': None, 'channel': 'unknown', 'complete': False}
+    try:
+        if root.is_symlink():
+            return unknown
+        entry = root / 'domino_cli.py'
+        if entry.is_symlink() or entry.stat().st_size > 4 * 1024 * 1024:
+            return unknown
+        declarations = {}
+        for node in ast.parse(entry.read_text()).body:
+            if isinstance(node, ast.Assign):
+                for target in node.targets:
+                    if isinstance(target, ast.Name) and target.id in ('VERSION', 'BUILD_CHANNEL', 'CLI_MODULES', 'CLI_RESOURCES'):
+                        declarations[target.id] = ast.literal_eval(node.value)
+        version = declarations.get('VERSION')
+        if not isinstance(version, str) or not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', version):
+            return unknown
+        names = (*declarations['CLI_MODULES'], *declarations.get('CLI_RESOURCES', ()))
+        if not 1 <= len(names) <= 64 or any(not isinstance(name, str) or not (
+                re.fullmatch(r'domino_[a-z][a-z0-9_]*\.py|install_domino\.py', name)
+                or name in ('domino_assets/__init__.py', 'domino_assets/Domino.icns')) for name in names):
+            return unknown
+        digest = hashlib.sha256()
+        for name in names:
+            path = root / name
+            if path.is_symlink() or path.parent.is_symlink() or path.stat().st_size > 4 * 1024 * 1024:
+                return unknown
+            digest.update(name.encode() + b'\0' + path.read_bytes())
+        channel = declarations.get('BUILD_CHANNEL')
+        return {'version': version, 'build_id': digest.hexdigest()[:12],
+                'channel': channel if channel in ('development', 'release') else 'unknown', 'complete': True}
+    except (OSError, ValueError, TypeError, KeyError, SyntaxError):
+        return unknown
+
+
+def recommended_action(state):
+    if not state.get('installed'):
+        return 'domino-install'
+    if state.get('awaiting_subscription'):
+        return 'domino add "名称"'
+    reachable = state.get('reachable', state.get('controller_reachable', state.get('active', False)))
+    if not reachable:
+        return 'domino start'
+    routing = (state.get('system_proxy') or {}).get('routing')
+    if routing in ('off', 'other', 'mixed', 'pac'):
+        return 'domino start'
+    if routing == 'unsupported' and not (state.get('shell_proxy') or {}).get('enabled'):
+        return 'domino shell on'
+    return 'domino status'
+
+
+def recovery_guidance(backup):
+    command = 'domino rollback --backup ' + shlex.quote(Path(backup).name)
+    return _t('；在目标电脑恢复服务、配置和环境：{0}', command)
+
+
 def installation_summary(app, home, *, system, shell_env, pending, health, backup):
     """One completion view; installing a service does not imply application access."""
     import domino_shell
@@ -535,7 +598,7 @@ def installation_summary(app, home, *, system, shell_env, pending, health, backu
         human_row(_t('已有终端'), _t('重新打开一次即可；不需要每次手动加载'), wrap=True)
     if system == 'darwin':
         human_row(_t('内网访问'), _t('首次访问局域网时，请在系统弹窗允许 Domino'), wrap=True)
-    human_row(_t('恢复备份'), str(backup.name))
+    human_row(_t('恢复备份'), str(backup.name) + recovery_guidance(backup))
     human_row(_t('下一步'), 'domino add "名称"' if pending else 'domino status', wrap=True)
 
 
@@ -641,7 +704,7 @@ def install(bundle):
         try:
             restore(backup)
         except BaseException:
-            raise InstallError(_t('自动恢复未完成。保留的完整备份：') + str(backup),code='RECOVERY_INCOMPLETE',effect='unknown') from None
+            raise InstallError(_t('自动恢复未完成。保留的完整备份：') + str(backup) + recovery_guidance(backup),code='RECOVERY_INCOMPLETE',effect='unknown') from None
         if isinstance(failure,KeyboardInterrupt):
             failure.domino_effect='rolled_back'
             raise
@@ -908,6 +971,15 @@ def status_text(result, system_proxy=None, *, color=False):
         connectivity += '  ·  ' + human_time(result['exit_checked_at'])
     row(_t('HTTPS 检测'), connectivity)
     row(_t('内网检测'), _t('未检测；按目标地址使用 domino doctor --url URL'))
+    build = result.get('cli_build') or {}
+    if build.get('version'):
+        identity = build['version'] + (' · ' + build['build_id'] if build.get('build_id') else '')
+        if build.get('channel') == 'development':
+            identity += ' · ' + _t('开发构建，尚未发布')
+        row(_t('管理 CLI'), text(identity))
+    runtime_build = result.get('runtime_cli_build') or {}
+    if runtime_build.get('build_id') and build.get('build_id') and runtime_build['build_id'] != build['build_id']:
+        row(_t('运行时快照'), text(runtime_build.get('version')) + ' · ' + runtime_build['build_id'])
     kernel = 'Mihomo ' + text(result.get('version') or _t('版本未知'))
     if result.get('arch'): kernel += '  ·  ' + text(result['arch'])
     row(_t('内核'), kernel)
@@ -930,7 +1002,7 @@ def collect_status(check_exit=True):
     app, service = current_installation()
     result = {'installed': (app / 'data/config.json').is_file(), 'service': service.name,
               'active': systemctl('is-active', service), 'enabled': systemctl('is-enabled', service), 'healthy': False,
-              'controller_reachable':False,'exit_checked':False,'exit_checked_at':None}
+              'controller_reachable':False,'exit_checked':False,'exit_checked_at':None, 'cli_build':cli_build_info()}
     if result['installed']:
         import domino_shell
         try:
@@ -940,6 +1012,7 @@ def collect_status(check_exit=True):
         config = json.loads((app / 'data/config.json').read_text())
         pending = subscription_pending(app, config)
         result['awaiting_subscription'] = pending
+        result['runtime_cli_build'] = cli_build_info(app / 'cli')
         if pending:
             result['note'] = _t('待添加并切换订阅。')
         manifest = json.loads((app / 'manifest.json').read_text()) if (app / 'manifest.json').is_file() else {}
@@ -2272,7 +2345,7 @@ def overview():
     path = app / 'data/config.json'
     result = {'installed': path.is_file(), 'active': False, 'reachable': False, 'groups': [],
               'node_count': None, 'connections': 0, 'upload_total': 0, 'download_total': 0,
-              'stats_available': False, 'client': 'Domino', 'service': service.name}
+              'stats_available': False, 'client': 'Domino', 'service': service.name, 'cli_build':cli_build_info()}
     if not path.is_file():
         result['error'] = _t('尚未安装运行环境，请先运行安装程序。')
         show(result, True)

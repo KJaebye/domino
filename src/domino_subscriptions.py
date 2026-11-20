@@ -48,18 +48,40 @@ def subscription_usage(value):
     return fields if all(key in fields for key in ('upload', 'download', 'total')) else None
 
 
+USAGE_MAX_AGE_SECONDS = 6 * 60 * 60
+
+
 def usage_summary(item):
     usage = item.get('usage')
     if not isinstance(usage, dict) or any(type(usage.get(key)) is not int or not 0 <= usage[key] <= 2**64 - 1
                                           for key in ('upload', 'download', 'total')):
         return None
+    now = datetime.now(timezone.utc)
     used, total = usage['upload'] + usage['download'], usage['total']
     status = ('exceeded' if used > total else 'critical' if used * 100 >= total * 90 else
               'warning' if used * 100 >= total * 70 else 'normal') if total else 'unknown'
+    expires_at, expired = None, False
+    expiry = usage.get('expire')
+    if type(expiry) is int and expiry > 0:
+        try:
+            expiry_time = datetime.fromtimestamp(expiry, timezone.utc)
+            expires_at, expired = expiry_time.isoformat(timespec='seconds'), expiry_time <= now
+        except (ValueError, OverflowError, OSError):
+            pass
+    age = None
+    try:
+        checked = datetime.fromisoformat(str(item.get('usage_checked_at')).replace('Z', '+00:00'))
+        if checked.tzinfo is not None:
+            age = max(0, int((now - checked).total_seconds()))
+    except (ValueError, TypeError, OverflowError):
+        pass
+    stale = item.get('usage_error') == 'request_failed' or age is not None and age >= USAGE_MAX_AGE_SECONDS
     return {'upload_bytes': usage['upload'], 'download_bytes': usage['download'], 'used_bytes': used,
-            'total_bytes': total, 'percent_used': used * 100 / total if total else None,
-            'status': status, 'checked_at': item.get('usage_checked_at'),
-            'stale': item.get('usage_error') == 'request_failed'}
+            'total_bytes': total, 'remaining_bytes': max(0, total - used) if total else None,
+            'percent_used': used * 100 / total if total else None, 'status': status,
+            'checked_at': item.get('usage_checked_at'), 'age_seconds': age,
+            'stale': stale, 'freshness': 'stale' if stale else 'fresh' if age is not None else 'unknown',
+            'expires_at': expires_at, 'expired': expired}
 
 
 def usage_cell(ctx, item):
@@ -75,9 +97,12 @@ def usage_cell(ctx, item):
         text += f' ({percentage // 10}.{percentage % 10}%)'
     if usage['status'] == 'exceeded':
         text += _t(' 已超额')
+    if usage.get('expired'):
+        text += _t(' · 套餐已到期')
     if usage['stale']:
         text += _t(' · 缓存')
-    return text, {'normal': '32', 'warning': '33', 'critical': '31', 'exceeded': '2', 'unknown': '2'}[usage['status']]
+    tone = '31' if usage.get('expired') and usage['status'] != 'exceeded' else None
+    return text, tone or {'normal': '32', 'warning': '33', 'critical': '31', 'exceeded': '2', 'unknown': '2'}[usage['status']]
 
 
 def _invalid():
@@ -468,6 +493,10 @@ class Manager:
         active = next((item for item in result['configs'] if item['active']), None)
         if active:
             self.ctx.human_row(_t('套餐流量'), usage_cell(self.ctx, active))
+            usage = active.get('usage')
+            if usage:
+                self.ctx.human_row(_t('套餐剩余'), self.ctx.human_size(usage['remaining_bytes']) if usage['remaining_bytes'] is not None else _t('未知总量'))
+                self.ctx.human_row(_t('套餐到期'), self.ctx.human_time(usage['expires_at']) if usage['expires_at'] else _t('未提供'))
             if active.get('usage_checked_at'):
                 self.ctx.human_row(_t('流量更新'), self.ctx.human_time(active['usage_checked_at']))
         if not result['configs']:
@@ -478,8 +507,8 @@ class Manager:
         for item in result['configs']:
             name = ('● ' if item['active'] else '  ') + item['name']
             rows.append([(name,'32' if item['active'] else None),_t('在线订阅') if item['kind'] == 'subscription' else _t('配置快照'),
-                         item['node_count'],usage_cell(self.ctx, item),self.ctx.human_time(item['updated_at']) if item['updated_at'] else _t('尚未下载'),item['host'] or _t('本地')])
-        self.ctx.human_table([_t('配置名称'),_t('类型'),_t('节点'),_t('套餐已用 / 总量'),_t('更新时间'),_t('来源')],rows)
+                         item['node_count'],usage_cell(self.ctx, item),self.ctx.human_time(item['usage_checked_at']) if item['usage_checked_at'] else _t('尚未更新'),item['host'] or _t('本地')])
+        self.ctx.human_table([_t('配置名称'),_t('类型'),_t('节点'),_t('套餐已用 / 总量'),_t('流量更新'),_t('来源')],rows)
         print(_t('\n  套餐数据来自订阅服务；domino list --refresh-usage 仅刷新流量，不切换或重载配置。'))
 
     def register_current(self, url, name=None):

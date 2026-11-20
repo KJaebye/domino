@@ -33,6 +33,7 @@ from urllib.request import getproxies
 from domino_model import DomainError
 
 VERSION = '1.3.0'
+BUILD_CHANNEL = 'development'
 PACKAGE_MANAGED = False
 DESCRIPTION = '捕获本机代理，并一键部署到指定 IP 的设备上，让翻墙像 domino 一样简单。'
 SUBSCRIPTION_USER_AGENT = 'clash.meta'
@@ -1278,6 +1279,7 @@ class SSH:
         code = ('import sys,types;from pathlib import Path\n'
                 '__domino_sources='+json.dumps(modules,ensure_ascii=False,separators=(',',':'))+'\n__domino_backend='+json.dumps(backend,ensure_ascii=False)+'\n'
                 'import os;os.environ["DOMINO_LANG"]='+repr(__import__('domino_i18n').get_language())+'\n'
+                '__domino_build__='+repr(__import__('install_domino').cli_build_info())+'\n'
                 'for name,source in __domino_sources.items():\n'
                 ' m=types.ModuleType(name);m.__file__=str(Path.home()/".local/share/domino/cli"/(name+".py"));sys.modules[name]=m;exec(compile(source,m.__file__,"exec"),m.__dict__)\n'
                 'if "domino_cli" in sys.modules: sys.modules["domino_cli"].SOURCE_MODULES={**{name+".py":source for name,source in __domino_sources.items()},"install_domino.py":__domino_backend}\n'
@@ -1834,7 +1836,7 @@ def command_overview_snapshot():
     import install_domino as output
     app,_=output.current_installation()
     path=app/'data/config.json'
-    result={'installed':path.is_file(),'reachable':False,'node_count':None,'group_count':None}
+    result={'installed':path.is_file(),'reachable':False,'node_count':None,'group_count':None,'cli_build':output.cli_build_info()}
     if not result['installed']: return result
     try:
         config=json.loads(path.read_text())
@@ -1892,9 +1894,11 @@ def common_operations():
             ('domino shell status', _t('查看终端代理状态')),
             ('domino traffic', _t('查看内嵌动态流量面板'))])]
     width = max(len(command) for _, rows in groups for command, _ in rows)
+    snapshot = command_overview_snapshot()
     with output.human_output():
-        print(domino_tui.command_banner(command_overview_snapshot(),VERSION,
+        print(domino_tui.command_banner(snapshot,VERSION,
                                       columns=shutil.get_terminal_size((100,24)).columns))
+        output.human_row(_t('建议下一步'), command_text(output.recommended_action(snapshot)), wrap=True)
         output.human_header(_t('命令概览'), _t(DESCRIPTION), tone='2')
         print('  ' + output.human_style('usage:', '1') + ' ' + command_text('domino [USER@IP] COMMAND [ARGS] [options]'))
         print(_t('  本机省略 USER@IP；远端将目标放在命令前。'))

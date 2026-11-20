@@ -256,7 +256,7 @@ def _apply_install(ctx, bundle, manifest, ports, pending, shell_state, preserve_
         try:
             restore(ctx, backup)
         except BaseException:
-            raise ctx.InstallError(_t('安装失败且恢复未完成；备份：') + str(backup),code='RECOVERY_INCOMPLETE',effect='unknown') from None
+            raise ctx.InstallError(_t('安装失败且恢复未完成；备份：') + str(backup) + ctx.recovery_guidance(backup),code='RECOVERY_INCOMPLETE',effect='unknown') from None
         if isinstance(failure, KeyboardInterrupt):
             failure.domino_effect = 'rolled_back'
             raise
