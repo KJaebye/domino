@@ -39,7 +39,7 @@ python3 -m venv .venv
 .venv/bin/python scripts/build_distribution.py
 ```
 
-同版本不重复构建。已有发行产物时，构建下一版或用同一源码的全新 `--output` 路径进行独立验收，不能覆盖既有包。源码包通过 `MANIFEST.in` 纳入构建脚本与工作流。
+不覆盖或重建已发布版本。当前未发布的 1.3.0 开发变更按 [仓库约定](../AGENTS.md) 累计，使用全新 `--output` 目录区分源码快照；正式发布后的代码变更使用新版本号。同源码独立验收也可使用全新输出目录，不能覆盖既有包。源码包通过 `MANIFEST.in` 纳入构建脚本与工作流。
 
 主发行仍平铺在 `dist/release/`；补充分发材料在 `dist/distribution-0.17.0/`：
 
