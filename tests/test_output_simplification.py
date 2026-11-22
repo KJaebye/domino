@@ -91,8 +91,26 @@ class ProductOutputTests(unittest.TestCase):
                 self.assertIn('Current terminal',detailed)
                 self.assertIn('当前终端',off)
                 self.assertIn('使用原有代理设置',off)
+                self.assertIn('当前代理',off)
+                self.assertIn('未设置',off)
                 self.assertTrue(json.loads(encoded)['enabled'])
                 self.assertFalse(encoded.startswith('\n'))
+
+    def test_shell_off_reports_restored_endpoints_from_the_parent_without_credentials(self):
+        for name in ('bash','zsh'):
+            with self.subTest(shell=name):
+                script='export http_proxy=http://user:PRIVATE@baseline:7890\n'
+                script+='export HTTP_PROXY=http://user:UPPER_PRIVATE@upper:7891\n'
+                script+='export https_proxy=http://user:PRIVATE@baseline:7890\nexport HTTPS_PROXY="$https_proxy"\n'
+                script+='export all_proxy=socks5h://backup:1080\nexport ALL_PROXY="$all_proxy"\n'
+                script+='. '+shlex.quote(str(self.fixture.loader))+'\n'
+                script+='domino shell on >/dev/null\ndomino shell off\n'
+                text=self.fixture.terminal(name,script,color=False).replace('\r\n','\n')
+                self.fixture.assert_frame(text)
+                for expected in ['http_proxy','HTTP_PROXY','http://baseline:7890','http://upper:7891','socks5h://backup:1080']:
+                    self.assertIn(expected,text)
+                self.assertNotIn('PRIVATE',text)
+                self.assertNotIn('127.0.0.1:19876',text)
 
     def test_verbose_shell_json_is_identical_and_machine_only(self):
         plain=self.run_cli('shell','status','--json')

@@ -119,6 +119,25 @@ def display_value(name: str, value: Optional[str]) -> str:
         return _t('已设置（值已隐藏）')
 
 
+def current_proxy_rows(environment):
+    """Describe exported proxy variables after parent-shell synchronization."""
+    names = ('http_proxy', 'https_proxy', 'all_proxy')
+    if not any(environment.get(name) for lower in names for name in (lower, lower.upper())):
+        return [(_t('当前代理'), _t('未设置'))]
+    rows = []
+    for lower, label in zip(names, ('HTTP', 'HTTPS', 'ALL_PROXY')):
+        upper = lower.upper()
+        value = environment.get(lower)
+        if value == environment.get(upper):
+            if rows and lower == 'https_proxy' and environment.get('http_proxy') == value == environment.get('HTTP_PROXY'):
+                rows[-1] = ('HTTP / HTTPS', rows[-1][1])
+            else:
+                rows.append((label, display_value(lower, value)))
+        else:
+            rows.extend((name, display_value(name, environment.get(name))) for name in (lower, upper))
+    return rows
+
+
 def _desired(port: int) -> dict:
     return {name: (NO_PROXY if name.lower() == 'no_proxy' else
                    f'{"socks5h" if name.lower() == "all_proxy" else "http"}://127.0.0.1:{port}')
@@ -447,20 +466,27 @@ def main(argv=None) -> int:
         if len(raw) > MAX_INPUT:
             raise ValueError('Parent shell state too large')
         if args.command=='summary':
+            import os
             mode,summary,tail=raw.decode('utf-8','replace').split('\0')
             if tail:raise ValueError('Invalid parent summary')
             # Isolated startup must remain stdlib-only. Presentation can use
             # the owned sibling modules when the complete CLI is installed.
             summary=(_t('手动模式，已暂停策略同步') if mode=='manual' else
                      _t('无法确认') if summary in ('','unavailable') else summary)
+            rows = [(_t('当前终端'), summary)]
+            if args.verbose or summary != _t('Domino 已接管终端代理'):
+                rows.extend(current_proxy_rows(os.environ))
             try:
                 from install_domino import human_output,human_row,shell_label_width
             except ModuleNotFoundError:
-                print('  '+_t('当前终端')+'  '+summary+'\n')
+                for label,value in rows:
+                    print('  '+label+'  '+value)
+                print()
             else:
                 width=shell_label_width(args.verbose)
                 with human_output(leading=False,label_width=width):
-                    human_row(_t('当前终端'),summary,wrap=True)
+                    for label,value in rows:
+                        human_row(label,value,wrap=True)
             return 0
         current, options = _read_parent(raw)
         code = sync_state(args.app, current, legacy_port=args.legacy_port, **options)
