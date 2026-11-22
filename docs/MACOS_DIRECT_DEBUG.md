@@ -2,7 +2,24 @@
 
 **已在真实公司网络验证修复路径：由可被 macOS 识别且获得本地网络授权的原生应用启动器启动原来的 Mihomo，HTTPS 恢复为 200；内核字节无需修改。** 原裸内核 LaunchAgent 仍报 `no route to host`，补 UUID 的裸内核也失败。故障位于 macOS 对后台负责程序的身份识别与本地网络授权环节，不能归因于 DIRECT 规则、DNS 或 UUID 单一因素。
 
-修复已写入工作区源码。当前 Mac 已安装本地源码快照，正式 `17897` 服务已迁移为原生启动器；用户已单独允许「Domino」访问本地网络。当前已离开公司，公网原生与代理 HTTPS 均为 200，重启也已验证。**回公司后仍需对正式应用重新完成内网 DIRECT 验证，不能用此前测试应用的成功替代。** 家庭网络为什么没有触发同样现象，尚未单独解释。所有变更保持未发布。
+修复已写入工作区源码。当前 Mac 已安装本地源码快照，正式 `17897` 服务已迁移为原生启动器；用户已单独允许「Domino」访问本地网络。**2026-11-22 已在公司对正式应用完成 DIRECT 与重启技术验收；浏览器页面仍待用户确认，Ubuntu 真机仍单独待验收。** 此次使用正式应用身份，不能与此前测试应用的结果混淆。家庭网络为什么没有触发同样现象，尚未单独解释。所有变更保持未发布。
+
+## 2026-11-22 正式应用公司现场技术验收
+
+使用已安装的 1.3.0 开发构建 `4354eab5fa6b`，管理 CLI、运行时快照与源码一致；目标均经公司 `en0` 路由。正常校验证书，不使用 `--insecure`，不跟随登录跳转，不读取浏览器登录凭据。
+
+| 目标 | 重启前系统 / Domino | 重启后系统 / Domino，各三轮 |
+| --- | --- | --- |
+| GitLab | 302 / 302 | 均为 302 / 302 |
+| data-eval | 200 / 200 | 均为 200 / 200 |
+
+正式服务成功重启一次，公网代理重启前后均为 HTTPS 200。通过保持 TLS 连接并按客户端端口读取 Mihomo 连接元数据，确认重启前后两个目标实际命中 `IPCIDR / 10.42.30.0/24 / DIRECT`。两条公司规则均已加载；IP-CIDR 在域名后缀规则之前，因此本次不能声称命中了 `DomainSuffix`。
+
+重启后的代理监听进程是正式原生启动器的 Mihomo 子进程。应用签名、UUID 和启动器未变，原内核 SHA-256 仍为 `a55a9073f9b7b1fa596a82c034d2dae3407ec34732102b6e42c5513ce3033f34`；配置、终端策略、加载脚本、配置库、LaunchAgent 文件、手动节点选择和系统代理设置均未变化。
+
+另行启用真实 LAN 专项回归：使用正式 `Domino.app` 身份和原内核的独立副本，系统直连、普通子进程与临时 LaunchAgent 对同一目标均通过（1 项）。临时任务及内核副本已清理，未注册新的测试应用，正式服务 PID 不受该专项回归影响。
+
+本机证据在 `dist/company-acceptance-20261122-200504/`，包括重启前后诊断、实际规则、独立回归和文件摘要对照。技术验收通过不等同于浏览器页面及登录功能已验证；浏览器确认待用户回复。此次未重新运行全量回归、未安装或发布新版本。
 
 ## 当前收敛状态与回公司验证
 
@@ -14,7 +31,7 @@
 - Ubuntu 先前已完成 749 项回归，0 失败、0 错误、4 项 macOS 专属跳过；公司规则已应用并验证三次 200。此后增加了本轮 macOS 身份、图标和重启修复，Ubuntu 报告仍对应此前快照，不视为最新源码已在 Ubuntu 重跑。
 - 不发布 PyPI、APT 或 Homebrew，不再变更正式内核或规则。Debian/Homebrew 收录工作保持暂停。
 
-回公司并确认已连接公司网络后执行：
+后续已连接公司网络时，可按以下命令复查：
 
 ```sh
 cd /Users/kyhuang/ws/domino
@@ -22,7 +39,7 @@ domino doctor --url https://data-eval.seene-infra.com/ --json
 domino doctor --url https://gitlab.seene-infra.com/ --json
 ```
 
-预期 data-eval 的 `native.http_status` 和 `configured_proxy.http_status` 均为 200，且 `responsible_app.agent_uses_launcher` 为 true。GitLab 可能返回正常登录重定向 302。结合连接元数据确认 data-eval 命中 `DomainSuffix / seene-infra.com / DIRECT`；然后在浏览器确认页面和登录功能。最后执行 `domino restart`，再次检查 data-eval，以验证授权持续生效。若原生请求失败，应先恢复公司网络，不能据此归因于 Domino。
+预期 data-eval 的 `native.http_status` 和 `configured_proxy.http_status` 均为 200，且 `responsible_app.agent_uses_launcher` 为 true。GitLab 可能返回正常登录重定向 302。结合连接元数据确认命中公司 `DIRECT` 规则，以实际匹配类型为准；然后在浏览器确认页面和登录功能。执行 `domino restart` 后再次检查 data-eval，以验证授权持续生效。若原生请求失败，应先恢复公司网络，不能据此归因于 Domino。
 
 如需恢复图标迁移前的服务：`domino rollback --backup 20261118-135313-3f4bcf3e`。该备份仍是迁移前原生启动器；更早的裸核心备份请按备份记录选择。
 
