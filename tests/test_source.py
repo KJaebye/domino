@@ -5,6 +5,7 @@ import io
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import tempfile
 import unittest
@@ -803,7 +804,7 @@ items:
                 tool.main(['scan'])
             text = output.getvalue()
             self.assertIn('外部配置 2 个 · Domino 管理 0 个', text)
-            self.assertEqual(text.count('来源      '), 2)
+            self.assertEqual(len(re.findall(r'(?m)^  来源 +',text)), 2)
             self.assertIn('Clash Verge · xlink', text)
             self.assertIn('Clash Verge · feiniao', text)
             self.assertNotIn('Clash Verge · 运行配置', text)
@@ -811,7 +812,7 @@ items:
             self.assertIn('原始配置', text)
             self.assertIn('未关联运行入口', text)
             self.assertIn('出网结果属于运行入口', text)
-            self.assertEqual(text.count('入口出网  可用'), 1)
+            self.assertEqual(len(re.findall(r'(?m)^  入口出网 +可用$',text)), 1)
             json_output = io.StringIO()
             with redirect_stdout(json_output):
                 tool.main(['scan', '--json'])

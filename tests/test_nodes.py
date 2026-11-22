@@ -74,7 +74,7 @@ class NodeTests(unittest.TestCase):
                     patch.object(remote,'proxy_state',return_value=({'mode':'rule'},self.live)), redirect_stdout(io.StringIO()) as output:
                 remote.nodes()
         text=output.getvalue()
-        self.assertIn('当前配置  xlink',text)
+        self.assertRegex(text,r'当前配置 +xlink')
         self.assertNotIn('old name',text)
         self.assertNotIn('手动选择',text)
         self.assertNotRegex(text,r'(?m)^  策略组\s+当前选择\s+类型$')

@@ -808,9 +808,16 @@ def human_header(title, summary=None, tone='32'):
 
 
 class _HumanOutput:
-    def __init__(self, stream, color=None):
-        self.stream,self.started,self.trailing=stream,False,0
+    def __init__(self, stream, color=None, *, leading=True, label_width=None):
+        self.stream,self.started=stream,False
         self.color=color
+        self.leading=leading
+        self.label_width=label_width
+        self.pending=[]
+        self.pending_size=0
+        self.line=''
+        self.line_open=False
+        self.separator=False
 
     def __getattr__(self, name):
         return getattr(self.stream,name)
@@ -819,32 +826,67 @@ class _HumanOutput:
         return self.color if self.color is not None else self.stream.isatty()
 
     def write(self, value):
-        parts=[]
-        for char in value:
-            if char == '\n':
-                if self.trailing < (2 if self.started else 1):
-                    parts.append(char)
-                    self.trailing += 1
-            else:
-                if not self.started and self.trailing == 0: parts.append('\n')
-                self.started=True
-                self.trailing=0
-                parts.append(char)
-        self.stream.write(''.join(parts))
+        self.pending.append(value)
+        self.pending_size+=len(value)
+        if self.pending_size>=65536:self.flush()
         return len(value)
 
+    def row(self, label, value, wrap, columns):
+        self.pending.append((label,value,wrap,columns))
+
+    def _emit(self, line, *, complete=True):
+        # ANSI-only and whitespace-only lines are blank too. Defer separators
+        # until the next visible line, so nested commands cannot double them.
+        visible=re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)', '', line).strip()
+        if not visible and not self.line_open:
+            if self.started:self.separator=True
+            return
+        if not self.started:
+            if self.leading:self.stream.write('\n')
+            self.started=True
+        elif self.separator and not self.line_open:
+            self.stream.write('\n')
+        self.separator=False
+        self.stream.write(line+('\n' if complete else ''))
+        self.line_open=not complete
+
+    def flush(self):
+        pending,self.pending=self.pending,[]
+        self.pending_size=0
+        width=max([self.label_width or HUMAN_LABEL_WIDTH,
+                   *(human_width(item[0])+2 for item in pending if isinstance(item,tuple))])
+        for item in pending:
+            value=_human_row_text(*item,label_width=width) if isinstance(item,tuple) else item
+            self.line+=value
+            while '\n' in self.line:
+                line,self.line=self.line.split('\n',1)
+                self._emit(line.rstrip('\r'))
+        if self.line:
+            self._emit(self.line,complete=False)
+            self.line=''
+        self.stream.flush()
+
     def finish(self):
+        self.flush()
         if self.started:
-            self.stream.write('\n' * max(0,2-self.trailing))
+            self.stream.write('\n\n' if self.line_open else '\n')
             self.stream.flush()
 
 
 @contextmanager
-def human_output(enabled=True, *, color=None):
+def human_output(enabled=True, *, color=None, leading=True, label_width=None):
     if not enabled:
         yield
         return
-    stream=_HumanOutput(sys.stdout,color=color)
+    if isinstance(sys.stdout,_HumanOutput):
+        stream=sys.stdout
+        stream.write('\n\n')
+        try:yield
+        finally:
+            stream.write('\n\n')
+            stream.flush()
+        return
+    stream=_HumanOutput(sys.stdout,color=color,leading=leading,label_width=label_width)
     with redirect_stdout(stream):
         try:
             yield
@@ -852,14 +894,34 @@ def human_output(enabled=True, *, color=None):
             stream.finish()
 
 
+def human_error(message):
+    """Keep terminal errors in the same frame while retaining stderr routing."""
+    stream=sys.stdout
+    if not isinstance(stream,_HumanOutput):
+        print(message,file=sys.stderr)
+        return
+    stream.finish()
+    leading=not stream.started
+    stream.started=stream.line_open=stream.separator=False
+    with redirect_stdout(sys.stderr),human_output(leading=leading):
+        print(message)
+
+
 # Shared value column for common human-facing fields (display cells, not len).
 HUMAN_LABEL_WIDTH = 16
 
 
 def human_row(label, value, *, wrap=False, columns=None):
+    if isinstance(sys.stdout,_HumanOutput):
+        sys.stdout.row(label,value,wrap,columns)
+    else:
+        print(_human_row_text(label,value,wrap,columns,label_width=HUMAN_LABEL_WIDTH),end='')
+
+
+def _human_row_text(label,value,wrap,columns,*,label_width):
     if wrap:
         text,code = (human_text(value[0]),value[1]) if isinstance(value,tuple) else (human_text(value),None)
-        padding = ' ' * max(2,HUMAN_LABEL_WIDTH-human_width(label))
+        padding = ' ' * max(2,label_width-human_width(label))
         prefix = '  ' + human_style(label,'2') + padding
         indent = ' ' * (2+human_width(label)+len(padding))
         width = max(1,(columns or shutil.get_terminal_size((100,24)).columns)-len(indent))
@@ -870,16 +932,15 @@ def human_row(label, value, *, wrap=False, columns=None):
                 if human_width(text[:index])>width: break
                 end=index
             end=max(1,end)
-            boundary=text.rfind('/',0,end)
+            boundary=max(text.rfind(' ',0,end),text.rfind(',',0,end))
+            if boundary<=0:boundary=text.rfind('/',0,end)
             if boundary>0: end=boundary+1
             lines.append(text[:end])
             text=text[end:]
         lines.append(text)
-        for index,line in enumerate(lines):
-            print((prefix if index==0 else indent)+human_style(line,code))
-        return
+        return ''.join((prefix if index==0 else indent)+human_style(line.rstrip(),code)+'\n' for index,line in enumerate(lines))
     rendered = human_style(*value) if isinstance(value,tuple) else human_text(value)
-    print('  ' + human_style(label,'2') + ' ' * max(2,HUMAN_LABEL_WIDTH-human_width(label)) + rendered)
+    return '  ' + human_style(label,'2') + ' ' * max(2,label_width-human_width(label)) + rendered+'\n'
 
 
 def human_width(value):
@@ -952,7 +1013,7 @@ def status_text(result, system_proxy=None, *, color=False):
     country = result.get('exit_country') or (_t('未知') if result.get('healthy') else _t('未检测'))
     lines += [_t('  订阅 ') + styled(subscription,'1') + '  ·  ' + mode + _t('  ·  出口 ') + styled(country,'1')]
     def row(label, value):
-        lines.append('  ' + styled(label,'2') + ' '*max(2,HUMAN_LABEL_WIDTH-human_width(label)) + value)
+        lines.append((label,value))
     startup = (_t('登录时自启') if result.get('autostart_scope') == 'user-login' else _t('开机自启')) if result.get('enabled') else _t('未启用自启动')
     row(_t('服务'), (_t('运行中') if result.get('active') else _t('已停止')) + '  ·  ' + startup)
     if system_proxy is not None:
@@ -999,7 +1060,9 @@ def status_text(result, system_proxy=None, *, color=False):
         lines += ['',_t('  排查连接：domino logs；domino nodes')]
     elif system_proxy is not None and system_proxy.get('routing') not in ['domino','unsupported']:
         lines += ['',_t('  接通系统代理：domino start')]
-    return '\n'.join([*lines,''])
+    width=max([HUMAN_LABEL_WIDTH,*(human_width(line[0])+2 for line in lines if isinstance(line,tuple))])
+    return '\n'.join([*(('  '+styled(line[0],'2')+' '*(width-human_width(line[0]))+line[1])
+                       if isinstance(line,tuple) else line for line in lines),''])
 
 
 def collect_status(check_exit=True):
@@ -1183,7 +1246,7 @@ def nodes(group=None, as_json=False):
     if not result['current_proxy_paths']:
         human_row(_t('当前代理'), _t('无法确定（未发现可用策略组）'))
     if result['mode'] == 'rule' and not group:
-        print(_t('  按规则分流；以上为手动策略组（无手动组时为自动策略组）的当前选择。'))
+        print('\n'+_t('  按规则分流；以上为手动策略组（无手动组时为自动策略组）的当前选择。'))
     if group:
         print()
         for choice in groups[0]['choices']:
@@ -2316,7 +2379,7 @@ def shell_proxy(action=None, as_json=False, *, render=True):
             human_header(_t('终端代理'), _t('● 策略已开启') if enabled else _t('● 策略已关闭'),
                          '32' if enabled else '31')
             human_row(_t('作用'), _t('让终端（Terminal）中支持代理环境变量的程序使用代理'), wrap=True)
-            human_row(_t('操作'), _t('使用 Domino 代理') if enabled else _t('恢复原代理设置，保留手动修改'))
+            human_row(_t('操作'), _t('使用 Domino 代理') if enabled else _t('恢复原代理设置，保留手动修改'), wrap=True)
             try:
                 number = domino_shell.proxy_port(app)
             except ValueError:
@@ -2508,6 +2571,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
     formatted = args.action in ['doctor','install','status','nodes','select','rollback','mode','log-level','delay','connections',
                                'traffic','rules','providers','proxy','shell','configs','start','stop','restart','scan','uninstall']
+    formatted=formatted or args.action=='logs' and not args.follow
     live_traffic = getattr(args,'dashboard',False) or getattr(args,'compact',False)
     with human_output(formatted and not getattr(args,'json',False) and not live_traffic,color=True if args.color else None):
         return _run_command(args)
@@ -2619,10 +2683,10 @@ def _run_command(args):
         return 0
     except (InstallError, RuntimeError, OSError, ValueError, KeyError) as exc:
         message = str(exc) if isinstance(exc, (InstallError, RuntimeError)) else type(exc).__name__
-        print(_t('失败：') + message, file=sys.stderr)
+        human_error(_t('失败：') + message)
         return 1
     except KeyboardInterrupt:
-        print(_t('已取消。'), file=sys.stderr)
+        human_error(_t('已取消。'))
         return 130
 
 

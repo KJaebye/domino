@@ -2156,4 +2156,6 @@ ENGLISH = {'语言偏好保存在本机；请使用 domino language zh 或 domin
  '请在浏览器登录，或确认账号有访问权限。': 'Sign in using a browser or check account access permissions.',
  '请确认网址路径是否正确。': 'Check that the URL path is correct.',
  '路由接口': 'Route interface',
- '连接或响应超时': 'Connection or response timed out'}
+ '连接或响应超时': 'Connection or response timed out',
+ '当前终端': 'Current terminal',
+ '手动模式，已暂停策略同步': 'Manual mode; policy synchronization paused'}

@@ -287,6 +287,7 @@ def integration(app: Path, python: str, legacy_port: Optional[int] = None) -> st
     helper = app / 'cli/domino_shell.py'
     executable = shlex.join(python if isinstance(python, (list, tuple)) else [python])
     command = f'{executable} -I {shlex.quote(str(helper))} sync --app {shlex.quote(str(app))}'
+    summary_command=f'{executable} -I {shlex.quote(str(helper))} summary --app {shlex.quote(str(app))}'
     if legacy_port is not None:
         if type(legacy_port) is not int or not 1024 <= legacy_port <= 65535:
             raise ValueError('Invalid legacy proxy port')
@@ -368,11 +369,7 @@ case $- in
       fi
       _domino_shell_sync "$_domino_intent"
       if [ "$_domino_rc" -eq 0 ] && [ -n "$_domino_show_status" ]; then
-        if [ "${DOMINO_SHELL_MODE-auto}" = manual ]; then
-          printf '%s\\n' 'Current shell: manual mode (policy sync paused).'
-        else
-          printf 'Current shell: %s\\n' "${_DOMINO_SHELL_SUMMARY-unavailable}"
-        fi
+        printf '%s\\0%s\\0' "${DOMINO_SHELL_MODE-auto}" "${_DOMINO_SHELL_SUMMARY-}" | ''' + summary_command + '''
       fi
       return "$_domino_rc"
     }
@@ -382,7 +379,7 @@ case $- in
       return "$_domino_prompt_rc"
     }
     if [ -n "${ZSH_VERSION-}" ]; then
-      eval 'if (( ! ${precmd_functions[(Ie)_domino_shell_prompt]} )); then
+      eval 'if (( ! ${precmd_functions[(Ie)_domino_shell_prompt]:-0} )); then
         precmd_functions+=(_domino_shell_prompt)
       fi'
     elif [ -n "${BASH_VERSION-}" ]; then
@@ -426,14 +423,31 @@ def _read_parent(raw: bytes) -> tuple:
 def main(argv=None) -> int:
     import argparse
     parser = argparse.ArgumentParser(description='Private Domino parent-shell synchronizer')
-    parser.add_argument('command', choices=['sync'])
+    parser.add_argument('command', choices=['sync','summary'])
     parser.add_argument('--app', required=True, type=Path)
     parser.add_argument('--legacy-port', type=int)
     args = parser.parse_args(argv)
     try:
+        sys.path.insert(0,str(Path(__file__).resolve().parent))
         raw = sys.stdin.buffer.read(MAX_INPUT + 1)
         if len(raw) > MAX_INPUT:
             raise ValueError('Parent shell state too large')
+        if args.command=='summary':
+            mode,summary,tail=raw.decode('utf-8','replace').split('\0')
+            if tail:raise ValueError('Invalid parent summary')
+            # Isolated startup must remain stdlib-only. Presentation can use
+            # the owned sibling modules when the complete CLI is installed.
+            summary=(_t('手动模式，已暂停策略同步') if mode=='manual' else
+                     _t('无法确认') if summary in ('','unavailable') else summary)
+            try:
+                from install_domino import human_output,human_row,human_width
+            except ModuleNotFoundError:
+                print('  '+_t('当前终端')+'  '+summary+'\n')
+            else:
+                width=max(human_width(name+' / '+name.upper())+2 for name in ('http_proxy','https_proxy','all_proxy','no_proxy'))
+                with human_output(leading=False,label_width=width):
+                    human_row(_t('当前终端'),summary,wrap=True)
+            return 0
         current, options = _read_parent(raw)
         code = sync_state(args.app, current, legacy_port=args.legacy_port, **options)
         sys.stdout.buffer.write(code.encode('utf-8', 'surrogateescape'))

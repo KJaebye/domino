@@ -8,7 +8,7 @@ from domino_i18n import tr as _t
 import argparse
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import contextmanager, nullcontext, redirect_stdout
+from contextlib import contextmanager, nullcontext, redirect_stderr, redirect_stdout
 import copy
 import gzip
 import hashlib
@@ -27,6 +27,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import threading
 import time
 from urllib.parse import urlsplit
 from urllib.request import getproxies
@@ -58,10 +59,46 @@ class ReportedCommandError(ToolError):
         super().__init__(_t('本机管理失败（退出码 {0}）。', returncode))
 
 
+def _run_process(args, **kwargs):
+    # Inherited file descriptors bypass redirect_stdout. Relay finite human
+    # output through the same frame, including remote commands and installers.
+    # stdin/stderr remain attached for authentication and interactive prompts.
+    from install_domino import _HumanOutput
+    stream=sys.stdout
+    if not isinstance(stream,_HumanOutput) or kwargs.get('capture_output') or 'stdout' in kwargs:
+        return subprocess.run(args,check=True,**kwargs)
+    stream.flush()
+    kwargs['env']={**(os.environ if kwargs.get('env') is None else kwargs['env']),
+                   'COLUMNS':str(shutil.get_terminal_size((100,24)).columns)}
+    read_fd,write_fd=os.pipe()
+    errors=[]
+    def relay():
+        try:
+            import codecs
+            decoder=codecs.getincrementaldecoder('utf-8')(errors='replace')
+            with os.fdopen(read_fd,'rb',buffering=0) as output:
+                while True:
+                    chunk=output.read(8192)
+                    if not chunk:break
+                    stream.write(decoder.decode(chunk).replace('\r\n','\n'))
+                    stream.flush()
+                stream.write(decoder.decode(b'',final=True))
+        except BaseException as error:
+            errors.append(error)
+    reader=threading.Thread(target=relay,daemon=True)
+    reader.start()
+    try:
+        return subprocess.run(args,check=True,stdout=write_fd,**kwargs)
+    finally:
+        os.close(write_fd)
+        reader.join()
+        if errors:raise errors[0]
+
+
 def run(args, *, stage=None, **kwargs):
     stage = stage or _t('命令')
     try:
-        return subprocess.run(args, check=True, **kwargs)
+        return _run_process(args, **kwargs)
     except subprocess.CalledProcessError as exc:
         if stage==_t('下载') and args[0]=='curl' and exc.returncode in [16,92,95] and '--http1.1' not in args:
             return run([args[0],'--http1.1',*args[1:]],stage=stage,**kwargs)
@@ -1466,7 +1503,9 @@ class DominoParser(argparse.ArgumentParser):
     def error(self, message):
         if getattr(self,'machine_mode',False):
             raise DomainError(_t('参数不符合命令定义，请通过 capabilities 查看参数。'),code='INVALID_ARGUMENT',exit_code=2)
-        super().error(message)
+        from install_domino import human_output
+        with redirect_stdout(sys.stderr),human_output(),redirect_stderr(sys.stdout):
+            super().error(message)
 
     def parse_args(self, args=None, namespace=None):
         arguments = list(sys.argv[1:] if args is None else args)
@@ -1968,7 +2007,7 @@ def select_deployment_source(args):
 
 def capture_input(label, hint):
     import install_domino as output
-    prompt = '  ' + output.human_style(label, '2') + ' ' * max(2, 10-output.human_width(label)) + hint
+    prompt = '  ' + output.human_style(label, '2') + ' ' * max(2, output.HUMAN_LABEL_WIDTH-output.human_width(label)) + hint
     try:
         return input(prompt).strip()
     except EOFError:
@@ -2542,6 +2581,8 @@ def manage(args, ssh=None, capture=False):
         raise ToolError(_t('--full 需要交互终端，不能用于 JSON、重定向或捕获输出。'))
     if dashboard:
         options += ['--dashboard' if args.full else '--compact']
+    elif not capture and not getattr(args,'json',False) and args.command not in ['env','logs'] and sys.stdout.isatty() and 'NO_COLOR' not in os.environ and os.environ.get('TERM')!='dumb':
+        options += ['--color']
     if args.command == 'test' and not args.json and not capture and sys.stderr.isatty():
         # SSH uses no remote PTY; carry the caller's terminal preference explicitly.
         options += ['--progress']
@@ -2656,10 +2697,14 @@ def main(argv=None, *, installing=False):
             if len(arguments) > 2:
                 raise ValueError('Usage: domino language [zh|en] / 用法：domino language [zh|en]')
             selected = set_language(arguments[1]) if len(arguments) == 2 else get_language()
-            print(_t('界面语言：{0}', 'English (en)' if selected == 'en' else '简体中文 (zh)'))
+            from install_domino import human_output
+            with human_output():
+                print(_t('界面语言：{0}', 'English (en)' if selected == 'en' else '简体中文 (zh)'))
             return 0
     except (OSError, ValueError) as error:
-        print(str(error), file=sys.stderr)
+        from install_domino import human_output
+        with redirect_stdout(sys.stderr),human_output():
+            print(str(error))
         return 2
     if not installing and arguments[:1] == ['completion']:
         from domino_completion import main as complete
@@ -2685,7 +2730,12 @@ def main(argv=None, *, installing=False):
         args = installer.parse_args(arguments)
         args.command = 'init'
     else:
-        args = parser.parse_args(arguments)
+        if '-h' in arguments or '--help' in arguments:
+            from install_domino import human_output
+            with human_output():
+                args = parser.parse_args(arguments)
+        else:
+            args = parser.parse_args(arguments)
     if installing:
         args.installing = True
         args.port_overrides = {kind for kind, flag in [('proxy','--proxy-port'),('api','--api-port')]
@@ -2693,6 +2743,15 @@ def main(argv=None, *, installing=False):
         args.base_install = not (args.source or args.subscription or args.bundle) and not any(
             (Path.home() / name / 'data/config.json').is_file()
             for name in ['.local/share/domino', '.local/share/robot-clash'])
+    from install_domino import human_output
+    live=(args.command=='ui' or args.command=='logs' and getattr(args,'follow',False) or
+          args.command=='traffic' and sys.stdout.isatty() and sys.stdin.isatty() and os.environ.get('TERM')!='dumb')
+    formatted=not (getattr(args,'json',False) or args.command in ['env','plan','overview','catch-options'] or live)
+    with human_output(formatted):
+        return _dispatch(args,installing=installing)
+
+
+def _dispatch(args, *, installing=False):
     try:
         normalize_command(args)
         if args.command in ('language', 'lang'):
@@ -2783,14 +2842,16 @@ def main(argv=None, *, installing=False):
         return exc.returncode
     except (DomainError, OSError, ValueError, KeyError, tarfile.TarError) as exc:
         message = str(exc) if isinstance(exc, DomainError) else type(exc).__name__
-        print(_t('失败：') + message, file=sys.stderr)
+        from install_domino import human_error
+        human_error(_t('失败：') + message)
         return 1
     except KeyboardInterrupt as error:
         if getattr(error, 'domino_capture_prompt', False):
             with redirect_stdout(sys.stderr):
                 capture_cancelled()
         else:
-            print(_t('\n已取消。'), file=sys.stderr)
+            from install_domino import human_error
+            human_error(_t('已取消。'))
         return 130
 
 

@@ -509,7 +509,8 @@ printf '{{broken' > {shlex.quote(str(self.app / 'shell-policy.json'))}
 domino shell status
 printf 'KEPT=%s\\n' "$http_proxy"
 ''')
-                self.assertIn('Current shell: unavailable', result.stdout)
+                self.assertIn('当前终端', result.stdout)
+                self.assertIn('无法确认', result.stdout)
                 self.assertIn('KEPT=http://127.0.0.1:19876', result.stdout)
                 self.assertNotIn('Domino 已接管终端代理', result.stdout)
 
