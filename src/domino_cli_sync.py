@@ -240,6 +240,7 @@ def _deploy(stage, sender_version, *, home, verbose):
     manifest_path.write_text(json.dumps(manifest))
     installer_python = package['python'] if owner == 'package' else sys.executable
     command = [installer_python, str(stage / 'install_domino.py'), 'install', str(stage)]
+    if verbose:command+=['--verbose']
     install_log = ''
     if verbose:
         checked_run(command, stage=_t('目标运行环境部署'), capture=False, timeout=600)

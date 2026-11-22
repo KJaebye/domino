@@ -407,10 +407,11 @@ class SourceListingTests(unittest.TestCase):
         with redirect_stdout(output):
             self.assertEqual(tool.main(['scan']), 0)
         text = output.getvalue()
-        for expected in ['外部配置 1 个', 'Domino 管理 0 个', 'Clash Verge', 'clash-verge.yaml',
+        for expected in ['外部配置 1 个', 'Domino 管理 0 个', 'Clash Verge',
                          '代理入口', '入口出网', 'http://127.0.0.1:7897', '检查未通过']:
             self.assertIn(expected, text)
         self.assertNotIn('PRIVATE', text)
+        self.assertNotIn('clash-verge.yaml',text)
 
     def managed_registry(self):
         items = [dict(id=f'{i+1:032x}', name=name, kind='snapshot', revision=f'{i+10:032x}',
@@ -785,7 +786,7 @@ items:
         with redirect_stdout(output):
             self.assertEqual(tool.main(['scan']), 0)
         text = output.getvalue()
-        for expected in ['运行配置', 'Saved subscription', 'Backup', '默认导入来源',
+        for expected in ['Saved subscription', 'Backup', '默认导入来源',
                          '客户端当前启用', '非当前', '未检查（保存配置）', '扫描提示']:
             self.assertIn(expected, text)
         self.assertNotIn('PRIVATE', text)
@@ -801,7 +802,7 @@ items:
         with patch.object(tool, 'collect_sources', return_value=collected):
             output = io.StringIO()
             with redirect_stdout(output):
-                tool.main(['scan'])
+                tool.main(['scan','--verbose'])
             text = output.getvalue()
             self.assertIn('外部配置 2 个 · Domino 管理 0 个', text)
             self.assertEqual(len(re.findall(r'(?m)^  来源 +',text)), 2)
@@ -856,7 +857,7 @@ items:
         self.assertIn('外部配置 1 个 · Domino 管理 0 个', text)
         self.assertIn('检查未通过', text)
         self.assertNotIn('未检查（保存配置）', text)
-        self.assertIn('原始配置', text)
+        self.assertNotIn('原始配置', text)
 
     def test_invalid_items_are_skipped_without_hiding_valid_profile(self):
         path = self.saved()

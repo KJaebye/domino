@@ -70,7 +70,7 @@ class ShellPolicyTests(unittest.TestCase):
                         patch.dict(os.environ, {'TERM': 'xterm-256color'}):
                     with patch.dict(os.environ):
                         os.environ.pop('NO_COLOR', None)
-                        control.shell_proxy()
+                        control.shell_proxy(verbose=True)
                 text = output.getvalue()
                 if enabled:
                     self.assertIn('\033[32m● 策略已开启\033[0m', text)
@@ -100,7 +100,7 @@ class ShellPolicyTests(unittest.TestCase):
         with patch.object(control, 'current_installation', return_value=(self.app, None)), \
                 patch.object(control, 'HOME', self.app), \
                 patch.dict(os.environ, variables), redirect_stdout(output):
-            control.shell_proxy()
+            control.shell_proxy(verbose=True)
         text = output.getvalue()
         self.assertIn('http://127.0.0.1:7897', text)
         self.assertIn('http://[::1]:19876', text)

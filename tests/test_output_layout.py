@@ -214,10 +214,10 @@ class OutputLayoutTests(unittest.TestCase):
                         self.assertNotIn('Current shell:',status)
                         values=[]
                         for line in status.splitlines():
-                            match=re.search(r'http://127.0.0.1:19876|socks5h://127.0.0.1:19876|使用原有代理设置|Using original proxy settings',line)
+                            match=re.search(r'使用原有代理设置|Using previous proxy settings',line)
                             if match:values.append(output.human_width(line[:match.start()]))
                         self.assertTrue(values)
-                        self.assertEqual(set(values),{29})
+                        self.assertEqual(set(values),{18 if language=='zh' else 20})
                         encoded=encoded.split('END-JSON\n')[0]
                         self.assertFalse(encoded.startswith('\n'))
                         self.assertFalse(encoded.endswith('\n\n'))

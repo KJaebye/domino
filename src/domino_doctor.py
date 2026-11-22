@@ -248,9 +248,10 @@ def doctor(ctx, url=None, *, insecure=False, as_json=False, verbose=False):
         for label, value in ((_t('系统直连'), native), (_t('经过 Domino'), proxied)):
             tone = '32' if value['ok'] and not insecure else '33' if value['reachable'] or value.get('failure_stage') == 'not_installed' else '31'
             ctx.human_row(label, (connection_message(value), tone))
-        ctx.human_row(_t('检查时间'), ctx.human_time(result['checked_at']))
-        print()
-        ctx.human_row(_t('下一步'), conclusion['next_step'], wrap=True)
+        if verbose:ctx.human_row(_t('检查时间'), ctx.human_time(result['checked_at']))
+        if verbose or insecure or conclusion['state']!='connected' or any(300 <= (v.get('http_status') or 0) < 500 for v in (native,proxied)):
+            print()
+            ctx.human_row(_t('下一步'), conclusion['next_step'], wrap=True)
         if verbose:
             print()
             ctx.human_row(_t('详细信息'), _t('仅检查，不修改网络设置'))

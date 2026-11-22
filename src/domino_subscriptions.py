@@ -100,7 +100,7 @@ def usage_cell(ctx, item):
     if usage.get('expired'):
         text += _t(' · 套餐已到期')
     if usage['stale']:
-        text += _t(' · 缓存')
+        text += _t(' · 刷新失败，沿用缓存') if item.get('usage_error')=='request_failed' else _t(' · 缓存待刷新')
     tone = '31' if usage.get('expired') and usage['status'] != 'exceeded' else None
     return text, tone or {'normal': '32', 'warning': '33', 'critical': '31', 'exceeded': '2', 'unknown': '2'}[usage['status']]
 
@@ -489,15 +489,17 @@ class Manager:
         pending = not (self.data/'config.json').is_file() or self.ctx.subscription_pending(self.app)
         current = result['active'] or (_t('待添加订阅') if pending else _t('独立配置（未绑定订阅）'))
         self.ctx.human_header(_t('配置'),_t('{0} 个配置 · 在线订阅 / 快照', len(result['configs'])))
+        verbose=getattr(self.ctx,'OUTPUT_VERBOSE',False)
         self.ctx.human_row(_t('当前配置'),(current,'1'))
         active = next((item for item in result['configs'] if item['active']), None)
         if active:
-            self.ctx.human_row(_t('套餐流量'), usage_cell(self.ctx, active))
+            if verbose:self.ctx.human_row(_t('套餐流量'), usage_cell(self.ctx, active))
             usage = active.get('usage')
             if usage:
-                self.ctx.human_row(_t('套餐剩余'), self.ctx.human_size(usage['remaining_bytes']) if usage['remaining_bytes'] is not None else _t('未知总量'))
-                self.ctx.human_row(_t('套餐到期'), self.ctx.human_time(usage['expires_at']) if usage['expires_at'] else _t('未提供'))
-            if active.get('usage_checked_at'):
+                if verbose:self.ctx.human_row(_t('套餐剩余'), self.ctx.human_size(usage['remaining_bytes']) if usage['remaining_bytes'] is not None else _t('未知总量'))
+                if verbose or usage['expires_at']:
+                    self.ctx.human_row(_t('套餐到期'), self.ctx.human_time(usage['expires_at']) if usage['expires_at'] else _t('未提供'))
+            if verbose and active.get('usage_checked_at'):
                 self.ctx.human_row(_t('流量更新'), self.ctx.human_time(active['usage_checked_at']))
         if not result['configs']:
             print(_t('\n  添加订阅：domino add "名称"'))
@@ -508,8 +510,9 @@ class Manager:
             name = ('● ' if item['active'] else '  ') + item['name']
             rows.append([(name,'32' if item['active'] else None),_t('在线订阅') if item['kind'] == 'subscription' else _t('配置快照'),
                          item['node_count'],usage_cell(self.ctx, item),self.ctx.human_time(item['usage_checked_at']) if item['usage_checked_at'] else _t('尚未更新'),item['host'] or _t('本地')])
-        self.ctx.human_table([_t('配置名称'),_t('类型'),_t('节点'),_t('套餐已用 / 总量'),_t('流量更新'),_t('来源')],rows)
-        print(_t('\n  套餐数据来自订阅服务；domino list --refresh-usage 仅刷新流量，不切换或重载配置。'))
+        headers=[_t('配置名称'),_t('类型'),_t('节点'),_t('套餐已用 / 总量'),_t('流量更新'),_t('来源')]
+        self.ctx.human_table(headers if verbose else headers[:4],rows if verbose else [r[:4] for r in rows])
+        if verbose:print(_t('\n  套餐数据来自订阅服务；domino list --refresh-usage 仅刷新流量，不切换或重载配置。'))
 
     def register_current(self, url, name=None):
         url = self.url(url)
@@ -1023,8 +1026,10 @@ class Manager:
             self.update(self.find(args.update))
         elif args.update_all:
             failed = []
+            attempted=0
             for item in list(self.registry['items']):
                 if item.get('url'):
+                    attempted+=1
                     try:
                         self.update(item)
                     except RecoveryError:
@@ -1033,11 +1038,19 @@ class Manager:
                         self.registry = json.loads(self.index.read_text())
                         failed.append(item['name'])
             if failed:
-                raise self.ctx.InstallError(_t('部分订阅更新失败，保留各自旧配置：') + '、'.join(failed))
+                raise self.ctx.InstallError(_t('已更新 {0} 个，失败 {1} 个；失败项保留旧配置：{2}',attempted-len(failed),len(failed),'、'.join(failed)))
         if render:
-            if not args.json and (args.use or args.update or args.update_all):
-                print(_t('配置操作已完成；配置应用不代表出网通过，使用 domino status 检查。'))
-            self.show(args.json)
+            changes=[('add',_t('已添加：{0}')),('use',_t('已切换：{0}')),('update',_t('已更新：{0}')),
+                     ('remove',_t('已删除：{0}')),('set_url',_t('已修改订阅地址：{0}')),('import_current',_t('已保存快照：{0}'))]
+            changed=any(getattr(args,key,None) for key,_ in changes) or args.rename or args.update_all
+            if args.json or not changed:self.show(args.json)
+            else:
+                if args.rename:summary=_t('已重命名：{0} → {1}',args.rename,args.new_name)
+                elif args.update_all:summary=_t('已更新 {0} 个订阅',attempted)
+                else:summary=next(message.format(getattr(args,key)) for key,message in changes if getattr(args,key,None))
+                self.ctx.human_header(_t('配置'),summary)
+                if args.use or args.update or args.update_all:self.ctx.human_row(_t('出网检测'),_t('未检测'))
+                if getattr(self.ctx,'OUTPUT_VERBOSE',False):self.show(False)
         return self.listing()
 
 

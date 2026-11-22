@@ -1122,15 +1122,16 @@ class Workspace:
         keep=self.config_keep or (previous['value'].get('id',previous['value']['name']) if previous else None)
         query=self.state.panel.query if self.config_open() else ''
         self.config_view=result
-        from install_domino import human_time,human_width
+        from install_domino import human_width
         width=min(28,max([8]+[human_width(v['name']) for v in result['configs']]))
         def row(v):
             name=clean(v['name'])
             while human_width(name)>width:name=name[:-1]
             from domino_subscriptions import usage_cell
             import install_domino
-            quota = usage_cell(install_domino, v)[0] if v.get('usage') else _t('未获取')
-            return name+' '*max(2,width-human_width(name)+2)+(_t('在线订阅') if v['kind']=='subscription' else _t('配置快照'))+'  '+str(v.get('node_count') if v.get('node_count') is not None else '—')+_t(' 节点  ')+(_t('已缓存') if v.get('cached') else _t('未缓存'))+'  '+(human_time(v['updated_at']) if v.get('updated_at') else _t('尚未更新'))+'  '+quota
+            quota = usage_cell(install_domino, v)[0]
+            cache='' if v.get('cached') else '  '+_t('未缓存')
+            return name+' '*max(2,width-human_width(name)+2)+(_t('在线订阅') if v['kind']=='subscription' else _t('配置快照'))+'  '+str(v.get('node_count') if v.get('node_count') is not None else '—')+_t(' 节点  ')+quota+cache
         self.panel(_t('配置管理 · ')+str(len(result['configs']))+_t(' 个配置 · 当前：')+str(result.get('active') or result.get('current_source') or _t('未关联配置库')),
             [{'label':row(v),'search':v['name'],'value':v,'current':v['active']} for v in result['configs']],lambda _:None,'configs')
         panel=self.state.panel

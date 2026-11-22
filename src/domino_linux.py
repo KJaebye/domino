@@ -284,7 +284,8 @@ def show(ctx, result, as_json, render):
         if as_json: ctx.show(result,True)
         else:
             ctx.human_header(_t('系统代理'),_t('● 已指向 Domino') if result['routing']=='domino' else _t('● 未接通桌面系统代理'), '32' if result['routing']=='domino' else '33')
-            ctx.human_row(_t('桌面'),result['service'])
-            for kind,value in result['proxies'].items():
-                ctx.human_row(kind.upper(),f"{value['server']}:{value['port']}" if value['enabled'] else _t('未开启'))
+            verbose=getattr(ctx,'OUTPUT_VERBOSE',False)
+            if verbose or not result.get('supported',True):ctx.human_row(_t('桌面'),result['service'])
+            from install_domino import human_proxy_rows
+            human_proxy_rows(result['proxies'],[(key,key.upper()) for key in result['proxies']],row=ctx.human_row,verbose=verbose)
     return result

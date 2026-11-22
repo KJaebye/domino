@@ -45,6 +45,16 @@ LEGACY_END = '# END robot-clash proxy'
 LEGACY_ENV_FILES = ENV_FILES[:-1] + ['.config/robot-clash/proxy.env']
 DEFAULT_TEST = 'https://www.cloudflare.com/cdn-cgi/trace'
 CLI_MARKER = '# Managed by Domino CLI'
+OUTPUT_VERBOSE = False
+
+
+@contextmanager
+def output_details(enabled=False):
+    global OUTPUT_VERBOSE
+    previous=OUTPUT_VERBOSE
+    OUTPUT_VERBOSE=bool(enabled)
+    try:yield
+    finally:OUTPUT_VERBOSE=previous
 
 
 try:
@@ -580,7 +590,7 @@ def installation_summary(app, home, *, system, shell_env, pending, health, backu
     import domino_shell
     shell = 'Zsh' if system == 'darwin' else 'Bash'
     human_header(_t('安装结果'), _t('基础环境已安装 · 待添加订阅') if pending else _t('运行环境已安装'))
-    human_row('CLI / Mihomo', _t('已交付'))
+    if OUTPUT_VERBOSE:human_row('CLI / Mihomo', _t('已交付'))
     human_row(_t('后台服务'), _t('运行中 · 登录当前用户时自启') if system == 'darwin' else _t('运行中 · 开机自启'))
     human_row(_t('配置'), _t('待添加订阅') if pending else _t('已应用'))
     completion = app / ('cli/completion.zsh' if system == 'darwin' else 'cli/completion.bash')
@@ -593,12 +603,13 @@ def installation_summary(app, home, *, system, shell_env, pending, health, backu
     except (OSError, ValueError):
         human_row(_t('终端代理'), _t('策略无法读取'))
     human_row(_t('实际出网'), _t('已检测通过') if health and health.get('healthy') else _t('未检测'))
-    human_row(_t('应用接入'), _t('服务运行不代表浏览器或终端已使用代理；domino status 查看'), wrap=True)
+    if OUTPUT_VERBOSE:human_row(_t('应用接入'), _t('服务运行不代表浏览器或终端已使用代理；domino status 查看'), wrap=True)
     if ready:
         human_row(_t('已有终端'), _t('重新打开一次即可；不需要每次手动加载'), wrap=True)
     if system == 'darwin':
         human_row(_t('内网访问'), _t('首次访问局域网时，请在系统弹窗允许 Domino'), wrap=True)
-    human_row(_t('恢复备份'), str(backup.name) + recovery_guidance(backup))
+    human_row(_t('恢复备份'), str(backup.name) + (recovery_guidance(backup) if OUTPUT_VERBOSE else ''))
+    print()
     human_row(_t('下一步'), 'domino add "名称"' if pending else 'domino status', wrap=True)
 
 
@@ -911,6 +922,11 @@ def human_error(message):
 HUMAN_LABEL_WIDTH = 16
 
 
+def shell_label_width(verbose=False):
+    labels=['http_proxy / HTTP_PROXY','https_proxy / HTTPS_PROXY','all_proxy / ALL_PROXY','no_proxy / NO_PROXY'] if verbose else [_t('当前终端')]
+    return max([HUMAN_LABEL_WIDTH,*(human_width(label)+2 for label in labels)])
+
+
 def human_row(label, value, *, wrap=False, columns=None):
     if isinstance(sys.stdout,_HumanOutput):
         sys.stdout.row(label,value,wrap,columns)
@@ -965,6 +981,19 @@ def human_table(headers, rows):
     for row in cells: print(line(row))
 
 
+def human_proxy_rows(proxies, labels, *, row=human_row, verbose=False):
+    entries=[]
+    for key,label in labels:
+        value=proxies.get(key,{})
+        endpoint=f"{value.get('server')}:{value.get('port')}" if value.get('enabled') else _t('未开启')
+        if value.get('enabled') and value.get('authenticated'):endpoint+=_t('  ·  需要认证')
+        entries.append((label,endpoint))
+    if not verbose and entries and len({value for _,value in entries})==1:
+        row(' / '.join(label for label,_ in entries),entries[0][1])
+    else:
+        for label,value in entries:row(label,value)
+
+
 def human_size(value, rate=False):
     if value is None: return '—'
     number = max(0,float(value))
@@ -986,7 +1015,8 @@ def human_time(value):
         return human_text(value)
 
 
-def status_text(result, system_proxy=None, *, color=False):
+def status_text(result, system_proxy=None, *, color=False, verbose=None):
+    verbose=OUTPUT_VERBOSE if verbose is None else verbose
     system_proxy = system_proxy if system_proxy is not None else result.get('system_proxy')
     text = human_text
     def styled(value, code):
@@ -1027,29 +1057,32 @@ def status_text(result, system_proxy=None, *, color=False):
     if 'shell_proxy' in result:
         shell = result['shell_proxy']
         value = (_t('策略已开启') if shell.get('enabled') else _t('策略已关闭')) if 'enabled' in shell else _t('策略无法读取')
-        row(_t('终端代理'), value + _t('  ·  domino shell status 查看当前终端'))
+        row(_t('终端代理'), value + (_t('  ·  domino shell status 查看当前终端') if verbose else ''))
     if result.get('proxy_port'):
         row(_t('代理地址'), f"http://127.0.0.1:{text(result['proxy_port'])}")
     checked = result.get('exit_checked', bool(result.get('healthy')))
     connectivity = _t('已检测通过') if result.get('healthy') else _t('检测未通过') if checked else _t('未检测')
     if checked and result.get('exit_checked_at'):
         connectivity += '  ·  ' + human_time(result['exit_checked_at'])
-    row(_t('HTTPS 检测'), connectivity)
-    row(_t('内网检测'), _t('未检测；按目标地址使用 domino doctor --url URL'))
+    if verbose:
+        row(_t('HTTPS 检测'), connectivity)
+        row(_t('内网检测'), _t('未检测；按目标地址使用 domino doctor --url URL'))
     build = result.get('cli_build') or {}
     if build.get('version'):
         identity = build['version'] + (' · ' + build['build_id'] if build.get('build_id') else '')
         if build.get('channel') == 'development':
-            identity += ' · ' + _t('开发构建，尚未发布')
+            identity += ' · ' + (_t('开发构建，尚未发布') if verbose else _t('开发版'))
         row(_t('管理 CLI'), text(identity))
     runtime_build = result.get('runtime_cli_build') or {}
     if runtime_build.get('build_id') and build.get('build_id') and runtime_build['build_id'] != build['build_id']:
         row(_t('运行时快照'), text(runtime_build.get('version')) + ' · ' + runtime_build['build_id'])
     kernel = 'Mihomo ' + text(result.get('version') or _t('版本未知'))
-    if result.get('arch'): kernel += '  ·  ' + text(result['arch'])
+    if verbose and result.get('arch'): kernel += '  ·  ' + text(result['arch'])
     row(_t('内核'), kernel)
     if result.get('requires_source_online'):
         row(_t('上游依赖'), styled(_t('需要源电脑保持在线'),'33'))
+    if verbose and result.get('deployment_method'):
+        row(_t('部署方式'),text(result['deployment_method']))
     if result.get('awaiting_subscription'):
         lines += ['',_t('  下一步：domino add "名称"；domino switch "名称"。')]
     elif not result.get('active'):
@@ -1245,7 +1278,7 @@ def nodes(group=None, as_json=False):
         human_row((_t('组内当前选择') if group else _t('当前代理')) if index == 0 else '', (path, '1;32'))
     if not result['current_proxy_paths']:
         human_row(_t('当前代理'), _t('无法确定（未发现可用策略组）'))
-    if result['mode'] == 'rule' and not group:
+    if OUTPUT_VERBOSE and result['mode'] == 'rule' and not group:
         print('\n'+_t('  按规则分流；以上为手动策略组（无手动组时为自动策略组）的当前选择。'))
     if group:
         print()
@@ -1264,9 +1297,11 @@ def nodes(group=None, as_json=False):
             name = ('* ' + item['name'], '32') if selectors else '  ' + item['name']
             rows.append([name, item['type'], '、'.join(selectors) if selectors else '—'])
         print()
-        human_table([_t('节点名称'),_t('协议'),_t('当前选中该节点的策略组')], rows)
-        print(_t('\n  * 表示被策略组当前选中，不代表所有请求都走该节点。'))
-    if not group:
+        if OUTPUT_VERBOSE:
+            human_table([_t('节点名称'),_t('协议'),_t('当前选中该节点的策略组')], rows)
+            print(_t('\n  * 表示被策略组当前选中，不代表所有请求都走该节点。'))
+        else:human_table([_t('节点名称'),_t('协议')],[row[:2] for row in rows])
+    if OUTPUT_VERBOSE and not group:
         print(_t('\n  查看组内节点：domino nodes --group "策略组名称"'))
 
 
@@ -1296,7 +1331,7 @@ def select_node(group, node, *, render=True):
     human_header(_t('节点选择'),_t('● 已切换'))
     human_row(_t('策略组'),group)
     human_row(_t('当前节点'),node)
-    print(_t('\n  新连接将使用该选择；已有长连接可能需要重新连接。'))
+    if OUTPUT_VERBOSE:print(_t('\n  新连接将使用该选择；已有长连接可能需要重新连接。'))
     return {'group':group,'node':node,'changed':True}
 
 
@@ -1328,9 +1363,9 @@ def service_action(action, non_interactive=False, lines=100, follow=False):
             except DomainError as error:
                 raise InstallError(_t('服务已启动，但系统代理未接通：')+str(error),code=error.code,exit_code=error.exit_code,effect='unknown') from None
         human_header(_t('运行状态'),{'start':_t('● 已开启'),'stop':_t('● 已关闭'),'restart':_t('● 已重启')}[action], '31' if action == 'stop' else '32')
-        human_row(_t('管理服务'),service.name)
+        if OUTPUT_VERBOSE:human_row(_t('管理服务'),service.name)
         if proxy and proxy.get('supported'):
-            human_row(_t('系统代理'),_t('已开启（HTTP / HTTPS / SOCKS）'))
+            if OUTPUT_VERBOSE:human_row(_t('系统代理'),_t('已开启（HTTP / HTTPS / SOCKS）'))
             human_row(_t('代理目标'),f"127.0.0.1:{proxy['proxies']['http']['port']}（Domino）")
         elif action != 'stop':
             human_row(_t('系统代理'),_t('无 GNOME 桌面会话；代理入口已就绪'))
@@ -1406,6 +1441,9 @@ def show_option(key, value, persisted=False):
              'warning':_t('警告'),'error':_t('错误'),'silent':_t('静默')}
     options = ('rule', 'global', 'direct') if key == 'mode' else ('debug', 'info', 'warning', 'error', 'silent')
     human_header(_t('代理模式') if key == 'mode' else _t('日志级别'))
+    if persisted and not OUTPUT_VERBOSE:
+        human_row(_t('当前模式') if key=='mode' else _t('当前级别'),names.get(value,human_text(value)))
+        return
     human_table([_t('模式') if key == 'mode' else _t('级别'), _t('值')], [
         [(('● ' if option == value else '  ') + names[option], '32' if option == value else '0'), option]
         for option in options])
@@ -1694,12 +1732,14 @@ def delay_summary(url='https://www.gstatic.com/generate_204', timeout_ms=5000, a
     if as_json:
         show(results, True)
     elif results:
-        human_table([_t('配置名称'), _t('节点总数'), _t('可用'), _t('超时/不可用'), _t('检测状态')], [
+        rows=[
             [('● ' if item['active'] else '') + item['name'], item['total'] if item['total'] is not None else '—',
              (str(item['available']), '32') if item['available'] is not None else '—',
              (str(item['unavailable']), '31' if item['unavailable'] else '2') if item['unavailable'] is not None else '—',
-             _t('已检测') if item['status']=='tested' else item['message']] for item in results])
-        human_row(_t('查看明细'), _t('domino test "配置名"；可用表示该节点本次 HTTPS 请求成功。'), wrap=True)
+             _t('已检测') if item['status']=='tested' else item['message']] for item in results]
+        columns=5 if OUTPUT_VERBOSE or any(item['status']!='tested' for item in results) else 4
+        human_table([_t('配置名称'),_t('节点总数'),_t('可用'),_t('超时/不可用'),_t('检测状态')][:columns],[row[:columns] for row in rows])
+        if OUTPUT_VERBOSE:human_row(_t('查看明细'), _t('domino test "配置名"；可用表示该节点本次 HTTPS 请求成功。'), wrap=True)
     else:
         human_row(_t('配置库为空'), _t('请先用 domino catch 捕获配置，或用 domino add 添加订阅。'), wrap=True)
     return results
@@ -1816,7 +1856,7 @@ def delay(node=None, group=None, url='https://www.gstatic.com/generate_204', tim
         config_label = ('● ' if usage['active'] is True else '') + _label if _label else None
         human_header(_t('节点测速'), (_t('配置 ') + config_label + '  ·  ' if config_label else '') + _t('{0} 节点  ·  {1} 可用  ·  {2} 超时/不可用', len(results), available, len(results) - available),
                      '32' if results and available == len(results) else '33')
-        if _label:
+        if _label and (OUTPUT_VERBOSE or usage['active'] is not True):
             human_row(_t('配置状态'), (_t('● 当前使用中'), '1;32') if usage['active'] is True else
                       _t('未启用 · 当前使用 ') + (usage['current'] or _t('未关联配置库的配置')) if usage['active'] is False else _t('当前使用状态无法确认'))
         if usage['active']:
@@ -1824,11 +1864,13 @@ def delay(node=None, group=None, url='https://www.gstatic.com/generate_204', tim
                 human_row(_t('当前代理') if index == 0 else '', (path, '1;32'))
             if not usage['known']:
                 human_row(_t('当前节点'), _t('读取失败，本次不标记正在使用的节点'))
-        human_table([_t('节点名称'),_t('延迟'),_t('使用状态')],[
+        rows=[
             [(('● ' + item['name'], '1;32') if item['name'] in usage['nodes'] else item['name']),
              (str(item['delay_ms'])+' ms','32') if item['ok'] else (_t('超时/不可用'),'31'),
-             (_t('当前选中'),'32') if item['name'] in usage['nodes'] else '—'] for item in results])
-        print(_t('\n  ● 表示当前配置或策略组当前选中的节点；实际请求按代理模式和规则分流。'))
+             (_t('当前选中'),'32') if item['name'] in usage['nodes'] else '—'] for item in results]
+        human_table([_t('节点名称'),_t('延迟'),_t('使用状态')] if OUTPUT_VERBOSE else [_t('节点名称'),_t('延迟')],
+                    rows if OUTPUT_VERBOSE else [row[:2] for row in rows])
+        if OUTPUT_VERBOSE:print(_t('\n  ● 表示当前配置或策略组当前选中的节点；实际请求按代理模式和规则分流。'))
     return results
 
 
@@ -2267,8 +2309,8 @@ def edit_rule(value, remove=False, as_json=False, *, render=True, validate_only=
             human_row(_t('规则'),value)
             if result['mode'] != 'rule':
                 human_row(_t('生效条件'),_t('切换规则模式：domino mode --set rule'))
-            human_row(_t('保存'),_t('已持久保存，后续新连接使用当前配置'))
-            human_row(_t('备份'),backup)
+            if OUTPUT_VERBOSE:human_row(_t('保存'),_t('已持久保存，后续新连接使用当前配置'))
+            human_row(_t('备份'),backup if OUTPUT_VERBOSE else backup.name)
         return result
     finally:
         pending.unlink(missing_ok=True)
@@ -2325,10 +2367,13 @@ def providers(kind='proxy', update=None, as_json=False):
     result=collect_providers(kind,update)
     if as_json: show(result,True)
     else:
-        human_header(_t('节点集合') if kind == 'proxy' else _t('规则集合'),_t('{0} 个集合', len(result)) + (_t('  ·  已更新 ')+human_text(update) if update else ''))
-        if result:
+        human_header(_t('节点集合') if kind == 'proxy' else _t('规则集合'),
+                     _t('已更新：{0}',human_text(update)) if update and not OUTPUT_VERBOSE else
+                     _t('{0} 个集合', len(result)) + (_t('  ·  已更新 ')+human_text(update) if update else ''))
+        visible=result if not update or OUTPUT_VERBOSE else [item for item in result if item['name']==update]
+        if visible:
             origins={'HTTP':_t('在线'),'File':_t('本地文件'),'Compatible':_t('内置'),'Inline':_t('内嵌')}
-            human_table([_t('名称'),_t('数量'),_t('来源'),_t('更新时间')],[[item['name'],item['count'],origins.get(item['vehicleType'],item['vehicleType']),human_time(item['updatedAt'])] for item in result])
+            human_table([_t('名称'),_t('数量'),_t('来源'),_t('更新时间')],[[item['name'],item['count'],origins.get(item['vehicleType'],item['vehicleType']),human_time(item['updatedAt'])] for item in visible])
         else: print(_t('  暂无集合。'))
     return result
 
@@ -2353,7 +2398,8 @@ def shell_environment(unset=False):
         print(f'export {name}=localhost,127.0.0.1,::1,.local,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16')
 
 
-def shell_proxy(action=None, as_json=False, *, render=True):
+def shell_proxy(action=None, as_json=False, *, render=True, verbose=None):
+    verbose=OUTPUT_VERBOSE if verbose is None else verbose
     import domino_shell
     app, _ = current_installation()
     if action not in (None, 'on', 'off'):
@@ -2378,13 +2424,17 @@ def shell_proxy(action=None, as_json=False, *, render=True):
             enabled = result['enabled']
             human_header(_t('终端代理'), _t('● 策略已开启') if enabled else _t('● 策略已关闭'),
                          '32' if enabled else '31')
-            human_row(_t('作用'), _t('让终端（Terminal）中支持代理环境变量的程序使用代理'), wrap=True)
-            human_row(_t('操作'), _t('使用 Domino 代理') if enabled else _t('恢复原代理设置，保留手动修改'), wrap=True)
             try:
                 number = domino_shell.proxy_port(app)
             except ValueError:
                 number = None
-            human_row(_t('代理端口'), str(number) if number else _t('未配置'))
+            if enabled or verbose:
+                human_row(_t('代理地址'),f'http://127.0.0.1:{number}' if number else _t('未配置'))
+            if not result['integration_available']:
+                human_row(_t('终端接入'), _t('未检测到完整集成；安装后加载 ~/.config/domino/proxy.env'), wrap=True)
+            if not verbose:return result
+            human_row(_t('作用'), _t('让终端（Terminal）中支持代理环境变量的程序使用代理'), wrap=True)
+            human_row(_t('操作'), _t('使用 Domino 代理') if enabled else _t('恢复原代理设置，保留手动修改'), wrap=True)
             print()
             human_row(_t('开启目标'), _t('以下为开启 Domino 终端代理时设置的变量'), wrap=True)
             desired = domino_shell._desired(number) if number else {}
@@ -2401,8 +2451,6 @@ def shell_proxy(action=None, as_json=False, *, render=True):
                         human_row(label, domino_shell.display_value(name, os.environ.get(name)), wrap=True)
             print()
             human_row(_t('生效'), _t('已接入终端返回命令行后同步；on/off 后用 domino shell status 查看'), wrap=True)
-            if not result['integration_available']:
-                human_row(_t('终端接入'), _t('未检测到完整集成；安装后加载 ~/.config/domino/proxy.env'), wrap=True)
     return result
 
 
@@ -2568,12 +2616,15 @@ def main(argv=None):
     sub.add_parser('restart-vscode')
     for child in sub.choices.values():
         child.add_argument('--color',action='store_true',help=argparse.SUPPRESS)
+        if '--verbose' not in child._option_string_actions:
+            child.add_argument('--verbose',action='store_true',help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     formatted = args.action in ['doctor','install','status','nodes','select','rollback','mode','log-level','delay','connections',
                                'traffic','rules','providers','proxy','shell','configs','start','stop','restart','scan','uninstall']
     formatted=formatted or args.action=='logs' and not args.follow
     live_traffic = getattr(args,'dashboard',False) or getattr(args,'compact',False)
-    with human_output(formatted and not getattr(args,'json',False) and not live_traffic,color=True if args.color else None):
+    with output_details(args.verbose),human_output(formatted and not getattr(args,'json',False) and not live_traffic,
+            color=True if args.color else None,label_width=shell_label_width(args.verbose) if args.action=='shell' else None):
         return _run_command(args)
 
 

@@ -54,8 +54,11 @@ class StatusMeaningTests(unittest.TestCase):
         state.update(exit_checked=True, exit_checked_at='2026-11-20T06:00:00+00:00')
         text = control.status_text(state)
         self.assertIn('连通检查未通过', text)
-        self.assertIn('2026-11-20', text)
-        self.assertIn('未检测；按目标地址', text)
+        self.assertNotIn('2026-11-20', text)
+        self.assertNotIn('未检测；按目标地址', text)
+        detailed=control.status_text(state,verbose=True)
+        self.assertIn('2026-11-20',detailed)
+        self.assertIn('未检测；按目标地址',detailed)
 
 
 class BuildIdentityTests(unittest.TestCase):

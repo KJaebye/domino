@@ -431,7 +431,7 @@ class SubscriptionTests(unittest.TestCase):
                 raise tool.ToolError('下载失败')
             return original_download(url, path, proxy, user_agent=user_agent)
         self.download.side_effect = download
-        with self.assertRaisesRegex(control.InstallError, '部分订阅更新失败'):
+        with self.assertRaisesRegex(control.InstallError, '已更新 1 个，失败 1 个'):
             self.execute('--update-all')
         self.assertFalse(self.manager().find('机场一').get('revision'))
         self.assertTrue(self.manager().find('机场二').get('revision'))

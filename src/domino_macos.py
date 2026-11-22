@@ -189,9 +189,9 @@ def service_action(ctx, action, lines=100, follow=False, *, batch=False):
         system_proxy(ctx, 'off',batch=batch,render=False)
         stop(ctx.HOME)
         ctx.human_header(_t('运行状态'),_t('● 已关闭'),'31')
-        ctx.human_row(_t('服务'),_t('已停止'))
-        ctx.human_row(_t('系统代理'),_t('已解除 Domino 接管（恢复原设置，保留其他程序的修改）'))
-        print(_t('  开启 Domino：domino start'))
+        if getattr(ctx,'OUTPUT_VERBOSE',False):ctx.human_row(_t('服务'),_t('已停止'))
+        ctx.human_row(_t('系统代理'),_t('已解除 Domino 接管（恢复原设置，保留其他程序的修改）') if getattr(ctx,'OUTPUT_VERBOSE',False) else _t('已解除 Domino 接管'))
+        if getattr(ctx,'OUTPUT_VERBOSE',False):print(_t('  开启 Domino：domino start'))
     else:
         if action == 'restart':
             stop(ctx.HOME)
@@ -213,9 +213,9 @@ def service_action(ctx, action, lines=100, follow=False, *, batch=False):
             raise ctx.InstallError(_t('服务已启动，但系统代理未接通；请运行 domino status 检查。'),
                                    effect='unknown') from None
         ctx.human_header(_t('运行状态'),_t('● 已重启 · 系统代理已接通') if action == 'restart' else _t('● 已开启 · 系统代理已接通'))
-        ctx.human_row(_t('服务'),_t('运行中'))
+        if getattr(ctx,'OUTPUT_VERBOSE',False):ctx.human_row(_t('服务'),_t('运行中'))
         number = proxy_result['proxies']['web']['port']
-        ctx.human_row(_t('系统代理'),_t('已开启（HTTP / HTTPS / SOCKS）'))
+        if getattr(ctx,'OUTPUT_VERBOSE',False):ctx.human_row(_t('系统代理'),_t('已开启（HTTP / HTTPS / SOCKS）'))
         ctx.human_row(_t('代理目标'),f'127.0.0.1:{number}（Domino）')
 
 
@@ -367,13 +367,13 @@ def show_system_proxy(ctx, service, current, previous, as_json=False, message=No
     directed = bool(enabled) and matching == len(enabled) and not automatic
     summary = _t('● 使用 PAC / 自动代理配置') if automatic else _t('● 已指向 Domino') if directed else _t('● 未指向 Domino')
     ctx.human_header(_t('系统代理'), summary, '32' if directed else '33' if automatic else '31')
-    ctx.human_row(_t('网络服务'),service)
-    for kind,label in [('web','HTTP'),('secureweb','HTTPS'),('socksfirewall','SOCKS')]:
-        value=current.get(kind,{})
-        endpoint = f"{value.get('server')}:{value.get('port')}" if value.get('enabled') else _t('未开启')
-        ctx.human_row(label,endpoint + (_t('  ·  需要认证') if value.get('authenticated') else ''))
-    ctx.human_row(_t('恢复记录'),_t('可用 domino proxy off 恢复仍由 Domino 管理的项目') if available else _t('历史记录已失效，现有设置保持不变') if previous else _t('无'))
-    if message: ctx.human_row(_t('操作'),message)
+    verbose=getattr(ctx,'OUTPUT_VERBOSE',False)
+    if verbose:ctx.human_row(_t('网络服务'),service)
+    from install_domino import human_proxy_rows
+    human_proxy_rows(current,[('web','HTTP'),('secureweb','HTTPS'),('socksfirewall','SOCKS')],row=ctx.human_row,verbose=verbose)
+    if verbose or previous and not available:
+        ctx.human_row(_t('恢复记录'),_t('可用 domino proxy off 恢复仍由 Domino 管理的项目') if available else _t('历史记录已失效，现有设置保持不变') if previous else _t('无'))
+    if message and (verbose or not directed):ctx.human_row(_t('操作'),message)
     return result
 
 

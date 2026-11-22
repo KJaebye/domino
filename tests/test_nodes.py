@@ -103,7 +103,7 @@ class NodeTests(unittest.TestCase):
         self.live['Unused'] = {'type': 'Trojan'}
         output = io.StringIO()
         with patch.object(remote, 'proxy_state', return_value=({'mode': 'rule'}, self.live)), \
-                patch.object(remote, 'proxy_inventory', side_effect=lambda live: live), redirect_stdout(output):
+                patch.object(remote, 'proxy_inventory', side_effect=lambda live: live), redirect_stdout(output),remote.output_details(True):
             remote.nodes()
         text = output.getvalue()
         us = next(line for line in text.splitlines() if '* US A' in line)
@@ -121,7 +121,7 @@ class NodeTests(unittest.TestCase):
             with self.subTest(mode=mode):
                 output = io.StringIO()
                 with patch.object(remote, 'proxy_state', return_value=({'mode': mode}, self.live)), \
-                        patch.object(remote, 'proxy_inventory', side_effect=lambda live: live), redirect_stdout(output):
+                        patch.object(remote, 'proxy_inventory', side_effect=lambda live: live), redirect_stdout(output),remote.output_details(True):
                     remote.nodes()
                 row = next(line for line in output.getvalue().splitlines() if '* US A' in line)
                 self.assertIn('🚀 节点选择（手动）', row)

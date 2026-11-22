@@ -313,7 +313,7 @@ _domino_shell_collect() {
 ''' + _collect_source() + '''
 }
 _domino_shell_sync() {
-  _domino_sync_code=$(_domino_shell_collect "${1-auto}" | ''' + command + ''' 2>/dev/null) || {
+  _domino_sync_code=$(_domino_shell_collect "${1-auto}" | DOMINO_LANG="${2-${DOMINO_LANG-}}" ''' + command + ''' 2>/dev/null) || {
     _DOMINO_SHELL_SUMMARY=unavailable
     unset _domino_sync_code
     return 0
@@ -332,8 +332,16 @@ case $- in
     domino() {
       local _domino_rc _domino_intent=auto _domino_show_status=
       local _domino_action=status _domino_safe=1 _domino_json= _domino_target= _domino_argument
+      local _domino_details= _domino_action_seen= _domino_language=${DOMINO_LANG-}
       command domino "$@"
       _domino_rc=$?
+      while [ "$#" -gt 0 ]; do
+        case "$1" in
+          --lang) _domino_language=${2-}; shift; [ "$#" -eq 0 ] || shift;;
+          --lang=*) _domino_language=${1#--lang=}; shift;;
+          *) break;;
+        esac
+      done
       _domino_argument=${1-}
       while [ "${_domino_argument%.}" != "$_domino_argument" ]; do
         _domino_argument=${_domino_argument%.}
@@ -344,7 +352,6 @@ case $- in
       esac
       if [ "$_domino_rc" -eq 0 ] && [ "${1-}" = shell ]; then
         shift
-        case "${1-}" in on|off|status) _domino_action=$1; shift;; esac
         while [ "$#" -gt 0 ]; do
           _domino_argument=$1
           while [ "${_domino_argument%.}" != "$_domino_argument" ]; do
@@ -353,6 +360,12 @@ case $- in
           case "$_domino_argument" in
             --json) _domino_json=1;;
             --batch) ;;
+            --verbose) _domino_details=--verbose;;
+            --lang) shift; _domino_language=${1-};;
+            --lang=*) _domino_language=${1#--lang=};;
+            on|off|status)
+              if [ -n "$_domino_action_seen" ]; then _domino_safe=; fi
+              _domino_action=$_domino_argument; _domino_action_seen=1;;
             [lL][oO][cC][aA][lL][hH][oO][sS][tT]|127.0.0.1|::1|'[::1]')
               if [ -n "$_domino_target" ]; then _domino_safe=; fi
               _domino_target=1;;
@@ -363,13 +376,13 @@ case $- in
         if [ -n "$_domino_safe" ]; then
           case "$_domino_action" in
             on|off) _domino_intent=$_domino_action;;
-            status) [ -n "$_domino_json" ] || _domino_show_status=1;;
           esac
+          [ -n "$_domino_json" ] || _domino_show_status=1
         fi
       fi
-      _domino_shell_sync "$_domino_intent"
+      _domino_shell_sync "$_domino_intent" "$_domino_language"
       if [ "$_domino_rc" -eq 0 ] && [ -n "$_domino_show_status" ]; then
-        printf '%s\\0%s\\0' "${DOMINO_SHELL_MODE-auto}" "${_DOMINO_SHELL_SUMMARY-}" | ''' + summary_command + '''
+        printf '%s\\0%s\\0' "${DOMINO_SHELL_MODE-auto}" "${_DOMINO_SHELL_SUMMARY-}" | DOMINO_LANG="$_domino_language" ''' + summary_command + ''' ${_domino_details:+--verbose}
       fi
       return "$_domino_rc"
     }
@@ -426,6 +439,7 @@ def main(argv=None) -> int:
     parser.add_argument('command', choices=['sync','summary'])
     parser.add_argument('--app', required=True, type=Path)
     parser.add_argument('--legacy-port', type=int)
+    parser.add_argument('--verbose',action='store_true')
     args = parser.parse_args(argv)
     try:
         sys.path.insert(0,str(Path(__file__).resolve().parent))
@@ -440,11 +454,11 @@ def main(argv=None) -> int:
             summary=(_t('手动模式，已暂停策略同步') if mode=='manual' else
                      _t('无法确认') if summary in ('','unavailable') else summary)
             try:
-                from install_domino import human_output,human_row,human_width
+                from install_domino import human_output,human_row,shell_label_width
             except ModuleNotFoundError:
                 print('  '+_t('当前终端')+'  '+summary+'\n')
             else:
-                width=max(human_width(name+' / '+name.upper())+2 for name in ('http_proxy','https_proxy','all_proxy','no_proxy'))
+                width=shell_label_width(args.verbose)
                 with human_output(leading=False,label_width=width):
                     human_row(_t('当前终端'),summary,wrap=True)
             return 0

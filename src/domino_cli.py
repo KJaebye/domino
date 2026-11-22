@@ -692,19 +692,36 @@ def list_sources(args):
             if external:
                 for index, item in enumerate(external):
                     if index: print()
-                    display_scan_source(item, row)
+                    if getattr(args,'verbose',False):
+                        display_scan_source(item, row)
+                    else:
+                        row(_t('来源'),(item['name']+(_t(' · 默认导入来源') if item['default'] else ''),'1'))
+                        profile=item.get('display_profile') or item
+                        if profile.get('source_kind')=='profile':row(_t('配置选择'),profile_status(profile))
+                        row(_t('配置状态'),_t('兼容') if item['compatible_config_found'] else _t('不可用'))
+                        if item.get('proxy'):row(_t('代理入口'),item['proxy'])
+                        state=(_t('已连通') if item['healthy'] else _t('检查未通过') if item['exit_checked'] else
+                               _t('未检查（保存配置）') if item.get('source_kind')=='profile' else _t('未检测'))
+                        row(_t('入口出网'),(state,'32' if item['healthy'] else '31' if item['exit_checked'] else '2'))
+                        if item.get('check_note') and item['name'].startswith('v2rayN'):row(_t('捕获范围'),(item['check_note'],'33'))
+                        for key,label in [('config_error',_t('配置检查')),('check_error',_t('出网检查')),('check_hint',_t('排查建议'))]:
+                            if item.get(key):row(label,(item[key],'33'))
             else:
                 row(_t('配置'), _t('未发现外部配置。'))
             print()
             section(_t('Domino 管理'), _t('配置库无法读取') if registry_error else _t('{0} 个配置', len(configs)))
             if configs:
-                output.human_table([_t('配置名称'), _t('类型'), _t('节点'), _t('缓存'), _t('更新时间')], [
+                rows=[
                     [('● ' if item['active'] else '  ') + item['name'],
                      _t('在线订阅') if item['kind'] == 'subscription' else _t('配置快照'),
                      item['node_count'] if item.get('node_count') is not None else '—',
                      _t('已缓存') if item['cached'] else _t('未缓存'),
                      output.human_time(item['updated_at']) if item.get('updated_at') else _t('尚未更新')]
-                    for item in configs])
+                    for item in configs]
+                detailed=getattr(args,'verbose',False)
+                width=5 if detailed else 4 if any(not item['cached'] for item in configs) else 3
+                output.human_table([_t('配置名称'),_t('类型'),_t('节点'),_t('缓存'),_t('更新时间')][:width],
+                                   [r[:width] for r in rows])
             elif not registry_error:
                 row(_t('配置库'), _t('尚未登记配置；可用 domino catch 捕获或 domino add 添加。'))
             if registry_error:
@@ -754,12 +771,15 @@ def inspect_source(args):
             if result.get('source_kind') == 'profile':
                 output.human_row(_t('配置选择'), profile_status(result))
                 output.human_row(_t('入口出网'), _t('未检查（保存配置）'))
-                output.human_row(_t('检查范围'), result['check_note'], wrap=True, columns=getattr(args,'columns',None))
+                if getattr(args,'verbose',False):output.human_row(_t('检查范围'), result['check_note'], wrap=True, columns=getattr(args,'columns',None))
             if result.get('source_kind') == 'import-snapshot':
                 output.human_row(_t('入口出网'), _t('未检查（导入源快照）'))
-                output.human_row(_t('检查范围'), result['check_note'], wrap=True, columns=getattr(args,'columns',None))
-            if result['config']: output.human_row(_t('运行配置') if result.get('import_source') else _t('配置文件'),result['config'])
-            display_import_source(result, lambda label, value: output.human_row(label, value, wrap=True, columns=getattr(args, 'columns', None)))
+                if getattr(args,'verbose',False):output.human_row(_t('检查范围'), result['check_note'], wrap=True, columns=getattr(args,'columns',None))
+            if getattr(args,'verbose',False):
+                if result['config']:output.human_row(_t('运行配置') if result.get('import_source') else _t('配置文件'),result['config'])
+                display_import_source(result, lambda label, value: output.human_row(label, value, wrap=True, columns=getattr(args, 'columns', None)))
+            elif (result.get('import_source') or {}).get('status')=='invalid':
+                output.human_row(_t('导入来源'),(_t('源快照不可用'),'33'))
             if result['proxy']:
                 output.human_row(_t('代理入口'),result['proxy'])
                 output.human_row(_t('入口出网'),(_t('可用'),'32') if result['healthy'] else (_t('检查未通过'),'31'))
@@ -771,7 +791,7 @@ def inspect_source(args):
                 output.human_row(_t('出网检查'),(result['check_error'],'33'),wrap=True,columns=columns)
                 if result.get('check_hint'):
                     output.human_row(_t('排查建议'),(result['check_hint'],'2'),wrap=True,columns=columns)
-            print(_t('\n  此处检查可迁移的配置和对应代理入口；运行及系统代理状态请用 domino status 查看。'))
+            if getattr(args,'verbose',False):print(_t('\n  此处检查可迁移的配置和对应代理入口；运行及系统代理状态请用 domino status 查看。'))
     return 0 if result['healthy'] else 3
 
 
@@ -1419,7 +1439,8 @@ def deployment_summary(target, result):
         output.human_row(_t('代理出网'), proxy)
         if result.get('system_proxy_supported') is not None:
             output.human_row(_t('系统代理'), _t('已接通') if result.get('system_proxy_enabled') else _t('无 GNOME 桌面会话'))
-        output.human_row(_t('CLI 版本'), version)
+        if getattr(output,'OUTPUT_VERBOSE',False) or result.get('kept_newer') or before and before!=after:
+            output.human_row(_t('CLI 版本'), version)
         enabled = result.get('shell_enabled')
         if type(enabled) is bool:
             output.human_row(_t('终端代理'), _t('已开启') if enabled else _t('已关闭；开启：') + command + ' shell on', wrap=True)
@@ -1537,7 +1558,9 @@ class DominoParser(argparse.ArgumentParser):
                     label = _t('系统代理') if arguments[start] == 'proxy' else _t('终端代理')
                     group = arguments[start]
                     self.error(_t('未知{0}动作：{1}。可用动作：status、on、off；关闭请用 domino {2} off；查询远程主机请用 domino HOST {3} status。', label, action, group, group))
-            if len(arguments) == start+1 or arguments[start+1] not in actions | {'-h', '--help'}:
+            action_index=start+1
+            while action_index<len(arguments) and arguments[action_index]=='--verbose':action_index+=1
+            if action_index==len(arguments) or arguments[action_index] not in actions | {'-h', '--help'}:
                 arguments.insert(start+1, default)
         result = super().parse_args(arguments, namespace)
         if root:
@@ -1822,6 +1845,15 @@ def build_parser(*, advanced_delay_help=False, installing=False, machine_mode=Fa
     sub._choices_actions = [a for a in sub._choices_actions if a.dest not in ['configs', 'proxy']]
     for command in ['catch', 'scan', 'export', 'init']:
         target_options(parent=sub.choices[command], include_target=False)
+    detailed_commands={'catch','deploy','status','scan','nodes','select','mode','log','test','configs','proxy','shell','init','start','stop','restart',
+                       'rules','providers',*CONFIG_COMMANDS}
+    def detail_option(child):
+        if '--verbose' not in child._option_string_actions:
+            child.add_argument('--verbose',action='store_true',default=argparse.SUPPRESS,help=_t('显示路径、诊断信息和操作说明'))
+        for action in child._actions:
+            if isinstance(action,argparse._SubParsersAction):
+                for nested in {id(p):p for p in action.choices.values()}.values():detail_option(nested)
+    for command in detailed_commands:detail_option(sub.choices[command])
     sub.metavar = 'COMMAND'
     if machine_mode:
         sub.add_parser('capabilities',parents=[manage_parent])
@@ -1938,10 +1970,10 @@ def common_operations():
     with output.human_output():
         print(domino_tui.command_banner(snapshot,VERSION,
                                       columns=shutil.get_terminal_size((100,24)).columns))
-        output.human_row(_t('建议下一步'), command_text(output.recommended_action(snapshot)), wrap=True)
-        output.human_header(_t('命令概览'), _t(DESCRIPTION), tone='2')
+        if not snapshot.get('reachable') or snapshot.get('awaiting_subscription'):
+            output.human_row(_t('建议下一步'), command_text(output.recommended_action(snapshot)), wrap=True)
+        output.human_header(_t('命令概览'))
         print('  ' + output.human_style('usage:', '1') + ' ' + command_text('domino [USER@IP] COMMAND [ARGS] [options]'))
-        print(_t('  本机省略 USER@IP；远端将目标放在命令前。'))
         for title, rows in groups:
             print('\n  ' + output.human_style(title, '1;36'))
             for command, description in rows:
@@ -2223,10 +2255,10 @@ def _install_capture(args):
         return 0
     prepared.command = 'init'
     initialize(prepared)
-    with output.human_output():
-        output.human_header(_t('初始化完成'), _t('独立代理已就绪'))
-        output.human_row(_t('查看状态'), 'domino status')
-        output.human_row(_t('下一步'), _t('捕获完成后自动开启 Domino 并接通系统代理'))
+    if getattr(args,'verbose',False):
+        with output.human_output():
+            output.human_header(_t('初始化完成'), _t('独立代理已就绪'))
+            output.human_row(_t('查看状态'), 'domino status')
     return 0
 
 
@@ -2282,7 +2314,7 @@ def initialize(args):
         manifest['package_managed_cli'] = PACKAGE_MANAGED
         private_write(manifest_path, json.dumps(manifest))
         # Run the current trusted installer, not an installer script supplied by the archive.
-        run([sys.executable, str(REMOTE_SCRIPT), 'install', str(bundle)], stage=_t('本机安装'))
+        run([sys.executable, str(REMOTE_SCRIPT), 'install', str(bundle),*(['--verbose'] if getattr(args,'verbose',False) else [])], stage=_t('本机安装'))
 
 
 def is_local_target(target):
@@ -2356,6 +2388,7 @@ def normalize_command(args):
 def management_options(args):
     normalize_command(args)
     options = []
+    if args.command!='doctor' and getattr(args,'verbose',False):options+=['--verbose']
     if args.command == 'doctor':
         options += ['--url', args.url]
         if args.insecure: options += ['--insecure']
@@ -2468,8 +2501,9 @@ def select_menu(title, entries, *, group=None, nodes=False):
             else:
                 output.human_table([_t('编号'), _t('策略组'), _t('当前选择')], [
                     [str(i), entry['name'], entry.get('current') or _t('未选择')] for i, entry in enumerate(entries, 1)])
-            output.human_row(_t('选择方式'), _t('输入编号或名称；关键词可继续筛选；回车取消。'), wrap=True)
-        prompt = '  ' + output.human_style(_t('选择'), '2') + ' ' * 6 + _t('编号 / 名称（回车取消）：')
+            if output.OUTPUT_VERBOSE:output.human_row(_t('选择方式'), _t('输入编号或名称；关键词可继续筛选；回车取消。'), wrap=True)
+        label=_t('选择')
+        prompt = '  ' + output.human_style(label, '2') + ' ' * max(2,output.HUMAN_LABEL_WIDTH-output.human_width(label)) + _t('编号 / 名称（回车取消）：')
         try:
             value = input(prompt).strip()
         except EOFError:
@@ -2743,11 +2777,11 @@ def main(argv=None, *, installing=False):
         args.base_install = not (args.source or args.subscription or args.bundle) and not any(
             (Path.home() / name / 'data/config.json').is_file()
             for name in ['.local/share/domino', '.local/share/robot-clash'])
-    from install_domino import human_output
+    from install_domino import human_output,output_details
     live=(args.command=='ui' or args.command=='logs' and getattr(args,'follow',False) or
           args.command=='traffic' and sys.stdout.isatty() and sys.stdin.isatty() and os.environ.get('TERM')!='dumb')
     formatted=not (getattr(args,'json',False) or args.command in ['env','plan','overview','catch-options'] or live)
-    with human_output(formatted):
+    with output_details(getattr(args,'verbose',False)),human_output(formatted):
         return _dispatch(args,installing=installing)
 
 
