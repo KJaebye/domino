@@ -2,6 +2,8 @@
 # Copyright (C) 2026 KJaebye
 """English catalog keyed by explicit source messages; user data is never translated."""
 ENGLISH = {'语言偏好保存在本机；请使用 domino language zh 或 domino language en。': 'Language preferences are local; use domino language zh or domino language en.','该操作尚未接入机器协议。': 'This operation is not available through the machine protocol.',
+ '运行 domino catch 按编号选择；指定文件用 domino catch --source PATH。': 'Run domino catch to select by number; use domino catch --source PATH to select a file.',
+ '不带参数时按编号选择；指定文件用 --source PATH；catch all 捕获全部。\n配置名称不是命令参数。捕获成功后自动开启 Domino；已有安装保留当前配置和节点选择。': 'Run without arguments to select by number; use --source PATH to select a file, or catch all to capture all profiles.\nProfile names are not command arguments. Domino starts after capture; existing installations keep the current profile and node selections.',
  '机器接口参数无效。': 'Invalid machine interface arguments.',
  '目标没有返回有效的机器协议结果。': 'The target did not return a valid machine protocol result.',
  '目标结果版本或结构无效。': 'Invalid target result version or structure.',

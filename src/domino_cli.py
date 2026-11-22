@@ -706,6 +706,9 @@ def list_sources(args):
                         if item.get('check_note') and item['name'].startswith('v2rayN'):row(_t('捕获范围'),(item['check_note'],'33'))
                         for key,label in [('config_error',_t('配置检查')),('check_error',_t('出网检查')),('check_hint',_t('排查建议'))]:
                             if item.get(key):row(label,(item[key],'33'))
+                if any(item['compatible_config_found'] for item in external):
+                    print()
+                    row(_t('选择方式'), _t('运行 domino catch 按编号选择；指定文件用 domino catch --source PATH。'))
             else:
                 row(_t('配置'), _t('未发现外部配置。'))
             print()
@@ -1628,7 +1631,7 @@ def build_parser(*, advanced_delay_help=False, installing=False, machine_mode=Fa
     source_group.add_argument('--source', help=_t('当前生效的 Clash/Mihomo YAML 或 JSON 配置'))
     source_group.add_argument('--subscription', help=_t('返回完整 Clash/Mihomo 配置的 HTTPS 订阅链接'))
     p = sub.add_parser('catch', parents=[source_options], help=_t('选择并捕获外部代理配置'),
-                       description=_t('选择本机 Clash/Mihomo 运行配置或保存配置；catch all 捕获全部。\n捕获成功后自动开启 Domino；已有安装保留当前配置和节点选择。'))
+                       description=_t('不带参数时按编号选择；指定文件用 --source PATH；catch all 捕获全部。\n配置名称不是命令参数。捕获成功后自动开启 Domino；已有安装保留当前配置和节点选择。'))
     p.add_argument('capture_scope', nargs='?', choices=['all'], help=_t('捕获所有兼容配置，并跳过重复项'))
     p.add_argument('--source', help=_t('明确选择本地 Clash/Mihomo 配置文件'))
     p.add_argument('--yes', action='store_true', help=_t('接受捕获影响，跳过最终确认；多个来源仍需选择或指定 all'))

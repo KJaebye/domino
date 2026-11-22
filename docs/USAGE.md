@@ -90,6 +90,8 @@ domino catch --source '/path/config.yaml'    # 明确选择配置来源
 
 `domino catch` 列出本机可捕获的 Clash/Mihomo 运行配置和 Clash Verge 保存配置，配置名称与文件路径分行展示，路径用 `~` 缩写并按终端宽度换行；保存配置标注客户端当前项。输入编号捕获一个，输入 `all` 捕获全部，回车取消。也可直接运行 `domino catch all`，或用 `domino catch --source PATH` 指定文件。Domino 和旧版 robot-clash 自有配置不列为外部来源；辅助 merge/script 配置不作为独立来源。这里的“可捕获”表示配置兼容，不保证节点实际出网可用。
 
+`scan` 的来源名称是展示标签，不是 `catch` 的位置参数；例如 `domino catch 'Clash Verge · 旗舰Pro'` 不受支持。请运行 `domino catch` 后按菜单编号选择，不要把扫描顺序当作捕获菜单编号。需要保留 Clash Verge 合并、脚本生成的当前运行配置时，选择 `clash-verge.yaml` 对应项，或用 `domino catch --source "$HOME/Library/Application Support/io.github.clash-verge-rev.clash-verge-rev/clash-verge.yaml"` 明确指定；选择 `profiles/` 下的原始文件则捕获该保存配置，两者可能不同。路径包含空格时必须使用引号，命令中的 `$HOME` 会在双引号内展开。
+
 捕获成功后会**自动开启 Domino**，无需再运行 `domino start`：调用与 `domino start` 相同的流程，启动服务并接通 macOS / Ubuntu GNOME 系统代理。已有安装保留当前配置和节点选择，不自动切换到新捕获项；需要切换时使用 `domino switch "配置名"`。重复配置会跳过登记，但仍自动开启。终端代理策略保持独立，无 GNOME 桌面时仅启动服务并提示使用 `domino shell on`。捕获保存文件默认节点，不查询来源客户端的运行选择或执行客户端脚本；外部客户端配置保持原样。
 
 导入时统一解析文件依赖：相对路径先按配置文件目录查找，再查已识别的 Clash Verge 共享目录；provider 内的相对证书/私钥优先按该 provider 的原目录解析，再回退配置与共享目录。Geo 数据库还可复用 Domino 已有数据库。自定义客户端工作目录可用 `--resource-dir PATH` 显式补充，可重复指定；绝对路径按原引用读取，不按文件名递归搜索其他目录。
