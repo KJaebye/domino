@@ -33,6 +33,11 @@ class LanguageTests(unittest.TestCase):
         self.assertEqual(result.returncode, expected, result.stderr)
         return result
 
+    def test_default_language_is_english_without_writing_preferences(self):
+        self.assertIn('Interface language: English', self.run_cli('language').stdout)
+        self.assertFalse((self.home / '.config/domino/preferences.json').exists())
+        self.assertIn('Profiles', self.run_cli('list').stdout)
+
     def test_preference_persists_across_processes_and_temporary_override_does_not_change_it(self):
         self.assertIn('Interface language: English', self.run_cli('language', 'en').stdout)
         preference = self.home / '.config/domino/preferences.json'

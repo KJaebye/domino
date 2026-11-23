@@ -27,9 +27,9 @@ def preference_path():
 def _read_preference(path, modified, size):
     try:
         value = json.loads(Path(path).read_text())
-        return normalize(value['language']) if isinstance(value, dict) else 'zh'
+        return normalize(value['language']) if isinstance(value, dict) else 'en'
     except (OSError, ValueError, KeyError, TypeError):
-        return 'zh'
+        return 'en'
 
 
 def get_language():
@@ -41,13 +41,13 @@ def get_language():
     path = preference_path()
     try:
         if any(p.is_symlink() for p in [path, path.parent, path.parent.parent]):
-            return 'zh'
+            return 'en'
         info = path.stat()
         if info.st_size > 65536:
-            return 'zh'
+            return 'en'
         return _read_preference(str(path), info.st_mtime_ns, info.st_size)
     except OSError:
-        return 'zh'
+        return 'en'
 
 
 def tr(message, *values):
