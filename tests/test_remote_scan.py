@@ -62,6 +62,7 @@ class RemoteScanTests(unittest.TestCase):
         # Also suppress macOS urllib's fallback to the real desktop proxy.
         env['no_proxy'] = '*'
         env['HOME'] = str(self.home)
+        env['DOMINO_LANG'] = 'zh'  # Human-output assertions below exercise Chinese explicitly.
         before = self.snapshot()
         result = subprocess.run(argv, cwd=self.home, env=env, text=True,
                                 capture_output=True, timeout=15)
