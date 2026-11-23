@@ -15,6 +15,10 @@ import domino_cli as tool
 import domino_agent
 from domino_service import OPERATIONS, validate
 
+from tests.locale_fixture import chinese_ui
+
+setUpModule, tearDownModule = chinese_ui()
+
 
 def assert_result_schema(case, value, schema):
     # Request validation lacks result-only nullable unions and array item traversal.

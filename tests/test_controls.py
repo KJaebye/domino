@@ -9,6 +9,10 @@ from unittest.mock import patch
 import install_domino as control
 import domino_cli as tool
 
+from tests.locale_fixture import chinese_ui
+
+setUpModule, tearDownModule = chinese_ui()
+
 
 class ControlTests(unittest.TestCase):
     def test_status_does_not_claim_system_is_connected_when_only_proxy_endpoint_is_healthy(self):

@@ -15,6 +15,10 @@ import zipfile
 import domino_cli as cli
 import domino_cli_sync as sync
 
+from tests.locale_fixture import chinese_ui
+
+setUpModule, tearDownModule = chinese_ui()
+
 
 INSTALLER = b'''import shutil, sys
 from pathlib import Path

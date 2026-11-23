@@ -13,6 +13,10 @@ import domino_cli as cli
 import install_domino as control
 from tests import test_output_layout as layout
 
+from tests.locale_fixture import chinese_ui
+
+setUpModule, tearDownModule = chinese_ui()
+
 
 class ProductOutputTests(unittest.TestCase):
     def setUp(self):

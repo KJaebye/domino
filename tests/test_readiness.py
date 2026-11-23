@@ -6,6 +6,10 @@ import tempfile
 import unittest
 import install_domino as control
 
+from tests.locale_fixture import chinese_ui
+
+setUpModule, tearDownModule = chinese_ui()
+
 
 class InstallationSummaryTests(unittest.TestCase):
     def test_pending_install_has_one_next_step_and_does_not_claim_connectivity(self):

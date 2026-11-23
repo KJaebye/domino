@@ -11,6 +11,10 @@ import domino_cli as cli
 import domino_tui as ui
 import install_domino as control
 
+from tests.locale_fixture import chinese_ui
+
+setUpModule, tearDownModule = chinese_ui()
+
 
 class OverviewBannerTests(unittest.TestCase):
     def test_snapshot_uses_runtime_mode_and_registry_name_without_probing_or_writing(self):

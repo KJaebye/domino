@@ -11,6 +11,10 @@ from unittest.mock import patch
 import install_domino as remote
 import domino_cli as tool
 
+from tests.locale_fixture import chinese_ui
+
+setUpModule, tearDownModule = chinese_ui()
+
 
 class NodeTests(unittest.TestCase):
     def setUp(self):

@@ -15,6 +15,10 @@ import domino_cli as cli
 import install_domino as control
 from domino_model import DomainError
 
+from tests.locale_fixture import chinese_ui
+
+setUpModule, tearDownModule = chinese_ui()
+
 
 def baseline():
     values={'mode':"'none'",'same':'true','auth':'false'}

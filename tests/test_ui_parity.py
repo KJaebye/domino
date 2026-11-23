@@ -17,6 +17,10 @@ import domino_cli as cli
 from tests.remote_transport import local_action_argv
 import domino_tui as ui
 
+from tests.locale_fixture import chinese_ui
+
+setUpModule, tearDownModule = chinese_ui()
+
 
 class UiParityTests(unittest.TestCase):
     def test_capture_options_are_read_only_and_exclude_config_contents(self):

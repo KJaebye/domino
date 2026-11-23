@@ -15,6 +15,10 @@ import domino_cli as cli
 import domino_subscriptions as subs
 import install_domino as control
 
+from tests.locale_fixture import chinese_ui
+
+setUpModule, tearDownModule = chinese_ui()
+
 CORE = Path(os.environ.get('DOMINO_TEST_CORE', str(Path.home() / '.local/share/domino/mihomo')))
 REAL_POPEN = subprocess.Popen
 

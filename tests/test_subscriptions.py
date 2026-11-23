@@ -17,6 +17,10 @@ import domino_subscriptions as subscriptions
 import install_domino as control
 import domino_cli as tool
 
+from tests.locale_fixture import chinese_ui
+
+setUpModule, tearDownModule = chinese_ui()
+
 REAL_API_JSON = control.api_json
 REAL_RUN = control.run
 TEST_CORE = Path(os.environ.get("DOMINO_TEST_CORE", str(Path.home() / ".local/share/domino/mihomo")))

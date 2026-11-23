@@ -19,6 +19,10 @@ import domino_cli as tool
 import domino_shell as shell
 import domino_subscriptions as subscriptions
 
+from tests.locale_fixture import chinese_ui
+
+setUpModule, tearDownModule = chinese_ui()
+
 
 KINDS = ['web', 'secureweb', 'socksfirewall']
 

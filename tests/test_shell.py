@@ -16,6 +16,10 @@ from unittest.mock import patch
 import domino_shell as shell
 import install_domino as control
 
+from tests.locale_fixture import chinese_ui
+
+setUpModule, tearDownModule = chinese_ui()
+
 
 class ShellPolicyTests(unittest.TestCase):
     def setUp(self):

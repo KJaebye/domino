@@ -14,6 +14,10 @@ from unittest.mock import patch
 import domino_cli as cli
 import install_domino as control
 
+from tests.locale_fixture import chinese_ui
+
+setUpModule, tearDownModule = chinese_ui()
+
 REAL_RUN = control.run
 REAL_API = control.api_json
 

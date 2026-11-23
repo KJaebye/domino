@@ -15,6 +15,10 @@ import domino_client_sources as clients
 import domino_sources as sources
 from domino_model import DomainError
 
+from tests.locale_fixture import chinese_ui
+
+setUpModule, tearDownModule = chinese_ui()
+
 UUID = '123e4567-e89b-12d3-a456-426614174000'
 PASSWORD = 'FIXTURE-PRIVATE-PASSWORD'
 

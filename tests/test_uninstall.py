@@ -18,6 +18,10 @@ import domino_uninstall as uninstall
 import domino_tui as ui
 import install_domino as ctx
 
+from tests.locale_fixture import chinese_ui
+
+setUpModule, tearDownModule = chinese_ui()
+
 
 class UninstallTests(unittest.TestCase):
     def setUp(self):

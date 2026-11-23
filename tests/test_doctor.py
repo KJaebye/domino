@@ -13,6 +13,10 @@ import domino_doctor as mac
 import install_domino as common
 import domino_macos_app as native
 
+from tests.locale_fixture import chinese_ui
+
+setUpModule, tearDownModule = chinese_ui()
+
 
 class DoctorTests(unittest.TestCase):
     def run_doctor(self, *, proxy_exit=35, uuid_output='', insecure=False, native_launcher=False,

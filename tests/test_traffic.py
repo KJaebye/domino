@@ -11,6 +11,10 @@ import domino_agent
 import domino_cli as cli
 import install_domino as control
 
+from tests.locale_fixture import chinese_ui
+
+setUpModule, tearDownModule = chinese_ui()
+
 
 class TrafficTests(unittest.TestCase):
     def test_first_sample_and_counter_reset_do_not_claim_zero_rates(self):

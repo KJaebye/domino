@@ -12,6 +12,10 @@ from unittest.mock import patch
 
 import domino_cli as tool
 
+from tests.locale_fixture import chinese_ui
+
+setUpModule, tearDownModule = chinese_ui()
+
 
 class FakeSSH:
     target = 'alice@192.0.2.10'

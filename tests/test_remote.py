@@ -16,6 +16,10 @@ import domino_cli as tool
 import domino_shell as shell
 import domino_subscriptions as subscriptions
 
+from tests.locale_fixture import chinese_ui
+
+setUpModule, tearDownModule = chinese_ui()
+
 
 class EnvironmentTests(unittest.TestCase):
     def test_managed_block_preserves_shebang_and_is_idempotent(self):

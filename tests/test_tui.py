@@ -6,6 +6,10 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import domino_tui as ui
 
+from tests.locale_fixture import chinese_ui
+
+setUpModule, tearDownModule = chinese_ui()
+
 
 class TuiModelTests(unittest.TestCase):
     def test_captured_command_colors_and_emphasis_reach_transcript_fragments(self):
