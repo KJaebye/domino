@@ -8,4 +8,8 @@ from unittest.mock import patch
 
 def chinese_ui():
     environment = patch.dict(os.environ, DOMINO_LANG='zh')
-    return environment.start, environment.stop
+    # Some legacy cases call patch.stopall() during per-test cleanup. A module
+    # fixture must outlive those patches, so enter it as a context manager.
+    def restore():
+        environment.__exit__(None, None, None)
+    return environment.__enter__, restore
