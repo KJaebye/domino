@@ -62,7 +62,6 @@ class RemoteScanTests(unittest.TestCase):
         # Also suppress macOS urllib's fallback to the real desktop proxy.
         env['no_proxy'] = '*'
         env['HOME'] = str(self.home)
-        env['DOMINO_LANG'] = 'zh'  # Human-output assertions below exercise Chinese explicitly.
         before = self.snapshot()
         result = subprocess.run(argv, cwd=self.home, env=env, text=True,
                                 capture_output=True, timeout=15)
@@ -73,7 +72,7 @@ class RemoteScanTests(unittest.TestCase):
         return result.stdout
 
     def test_human_scan_without_runtime_does_not_import_backend_from_disk(self):
-        self.assertIn('配置扫描', self.run_scan())
+        self.assertIn('Profile scan', self.run_scan())
 
     def test_json_scan_reads_target_configuration_using_embedded_backend(self):
         self.seed()
@@ -109,7 +108,7 @@ class RemoteScanTests(unittest.TestCase):
         self.assertEqual(len(result['sources']), 1)
         self.assertEqual(result['sources'][0]['profile_name'], 'Linux subscription')
         self.assertTrue(result['sources'][0]['client_current'])
-        self.assertIn('外部配置 1 个 · Domino 管理 0 个', self.run_scan())
+        self.assertIn('External profiles: 1 · Domino-managed: 0', self.run_scan())
 
     def test_remote_scan_transmits_v2rayn_database_adapter(self):
         import sqlite3
@@ -121,6 +120,6 @@ class RemoteScanTests(unittest.TestCase):
                 ('a', 6, 'Fixture node', 'fixture.example.test', 443, 'TEST-NODE-CREDENTIAL'))
         result = json.loads(self.run_scan('--json'))
         self.assertEqual(len(result['sources']), 1)
-        self.assertEqual(result['sources'][0]['name'], 'v2rayN · 节点快照')
+        self.assertEqual(result['sources'][0]['name'], 'v2rayN · Node snapshot')
         self.assertTrue(result['sources'][0]['compatible_config_found'])
         self.assertIsNone(result['sources'][0]['proxy'])
