@@ -187,8 +187,6 @@ def prepare(work, source, candidate=None):
     release = work / 'release'
     candidate_review = None
     if candidate is not None:
-        if plan['existing_release']:
-            raise ValueError('Use original published assets without --candidate for an existing release')
         try:
             from scripts import candidate_release
         except ModuleNotFoundError:
@@ -197,6 +195,24 @@ def prepare(work, source, candidate=None):
         if not candidate_review['eligible_for_release_preparation']:
             raise ValueError('; '.join(candidate_review['blockers']))
         original = candidate / 'output/dist/release'
+        if plan['existing_release']:
+            # Channel recovery always takes the official bytes as its source of
+            # truth. The same reviewed candidate may corroborate them; it can
+            # never replace them or introduce a different same-version build.
+            recovered = prepare(work, source)
+            for path in original.iterdir():
+                published = release / path.name
+                if not published.is_file() or hashlib.sha256(published.read_bytes()).hexdigest() != hashlib.sha256(path.read_bytes()).hexdigest():
+                    raise ValueError('Published original differs from the reviewed candidate: ' + path.name)
+            sdist = f'domino_proxy-{requested}.tar.gz'
+            if hashlib.sha256((release / sdist).read_bytes()).hexdigest() != candidate_review['source_distribution_sha256']:
+                raise ValueError('Published source distribution differs from the reviewed candidate')
+            deb = work / f'channels/distribution/domino-proxy_{requested}-1_all.deb'
+            if hashlib.sha256(deb.read_bytes()).hexdigest() != candidate_review['deb_sha256']:
+                raise ValueError('Recovered APT package differs from the original CI candidate')
+            recovered['ci_candidate'] = candidate_review
+            write_json(work / 'plan.json', recovered)
+            return recovered
         allowed = {f'domino-runtime-{requested}.tar.gz', f'domino_proxy-{requested}-py3-none-any.whl',
                    'release.json', 'SHA256SUMS', 'domino.rb', 'domino.rb.in'}
         if {path.name for path in original.iterdir()} - allowed:

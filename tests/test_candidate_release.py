@@ -147,11 +147,47 @@ class CandidateReleaseTests(DistributionFixture):
         self.assertEqual(candidate.digest(work / 'channels/distribution/domino-proxy_0.16.0-1_all.deb'),
                          candidate.digest(self.output / 'dist/distribution/domino-proxy_0.16.0-1_all.deb'))
 
-    def test_existing_published_version_rejects_candidate_instead_of_replacing_originals(self):
+    def published_assets(self, work, change_sdist=False):
+        assets = {p.name: p.read_bytes() for p in (self.output / 'dist/release').iterdir()}
+        sdist = 'domino_proxy-0.16.0.tar.gz'
+        assets[sdist] = (self.output / 'dist/pypi' / sdist).read_bytes() + (b'other build' if change_sdist else b'')
+        names = ['domino_proxy-0.16.0-py3-none-any.whl', sdist]
+        assets['PYPI-SHA256SUMS'] = ''.join(hashlib.sha256(assets[name]).hexdigest() + '  ' + name + '\n' for name in names).encode()
+        plan = release.plan_at(work)
+        plan['assets'] = [{'name': name, 'digest': 'sha256:' + hashlib.sha256(content).hexdigest()}
+                          for name, content in assets.items()]
+        release.write_json(work / 'plan.json', plan)
+        return assets
+
+    def test_channel_recovery_uses_matching_official_originals_without_rebuilding(self):
         work = self.plan(existing=True)
-        with self.assertRaisesRegex(ValueError, 'original published assets'):
-            release.prepare(work, self.source, candidate=self.bundle)
-        self.assertFalse((work / 'release').exists())
+        assets = self.published_assets(work)
+        original = subprocess.run
+        def run(args, **kwargs):
+            if args[:4] == [sys.executable, '-m', 'twine', 'check']:
+                return subprocess.CompletedProcess(args, 0)
+            return original(args, **kwargs)
+        with patch.object(release, 'fetch', side_effect=lambda url: assets[url.rsplit('/', 1)[1]]), \
+             patch.object(release.verify_artifacts, 'verify', return_value={'ok': True}), \
+             patch.object(release.subprocess, 'run', side_effect=run):
+            result = release.prepare(work, self.source, candidate=self.bundle)
+        self.assertTrue(result['existing_release'])
+        self.assertEqual(result['ci_candidate']['run_id'], self.report['run_id'])
+        self.assertEqual((work / 'release/domino_proxy-0.16.0.tar.gz').read_bytes(), assets['domino_proxy-0.16.0.tar.gz'])
+
+    def test_different_published_bytes_cannot_be_replaced_by_a_same_version_candidate(self):
+        work = self.plan(existing=True)
+        assets = self.published_assets(work, change_sdist=True)
+        original = subprocess.run
+        def run(args, **kwargs):
+            if args[:4] == [sys.executable, '-m', 'twine', 'check']:
+                return subprocess.CompletedProcess(args, 0)
+            return original(args, **kwargs)
+        with patch.object(release, 'fetch', side_effect=lambda url: assets[url.rsplit('/', 1)[1]]), \
+             patch.object(release.verify_artifacts, 'verify', return_value={'ok': True}), \
+             patch.object(release.subprocess, 'run', side_effect=run):
+            with self.assertRaisesRegex(ValueError, 'Published source distribution differs'):
+                release.prepare(work, self.source, candidate=self.bundle)
 
     def test_preflight_blocks_already_published_github_version_before_other_requests(self):
         with patch.object(candidate, 'source_metadata', return_value=('0.16.0', 'release')), \
