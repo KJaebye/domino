@@ -130,6 +130,46 @@ pipx ensurepath
 
 输出在新的 `dist/local-release-<版本>-<运行编号>/`。`release-status.json` 记录各渠道 `verified / failed / blocked`；三个渠道都通过时才记为 `complete=true`。补发单渠道使用 `request_complete` 表示该请求成功，不推断其他渠道状态。只读演练记为 `checked`。
 
+### 自托管 CI 候选包与本机审核
+
+自托管构建不持有生产凭据。`scripts/candidate_release.py review` 接收下载后的
+`result.json`、`output/` 和固定提交的干净源码副本，核对控制器/容器报告、构建镜像、
+完整文件清单、runtime 源码清单、sdist 和 Debian 绑定关系。`--smoke` 在临时 HOME 中
+验收 wheel/runtime，不修改本机安装。审核报告仍为 `publication_allowed=false`。
+
+```bash
+.venv/bin/python scripts/candidate_release.py doctor
+.venv/bin/python scripts/candidate_release.py review \
+  --candidate /path/to/private-ci-candidate --source /path/to/clean-pinned-source --smoke
+```
+
+`doctor` 只检查凭据布局、公有签名指纹和钥匙串条目元数据，不读取密码、私钥正文或
+仓库内 token 文件。缺少凭据不会阻止候选包只读审核。
+
+日常 `development` 构建可以验收，但不能重贴稳定标签发布。只有维护者明确授权
+源码稳定化和创建正式标签后，`BUILD_CHANNEL=release`、标签提交完全一致且完整 CI
+通过的 `release-candidate` 才能进入发布准备。当前 1.3.0 仍遵循仓库开发约定，
+本流程不自动修改版本、BUILD_CHANNEL 或创建标签。
+
+稳定候选构建先运行 `candidate_release.py preflight`，拒绝 GitHub 已有 Release/draft、
+PyPI 已有同版本、APT/Homebrew 已有同版本或更高版本等情况。它只读取公开渠道。
+
+在获得发布授权后，既有本机发布入口可以导入该候选包：
+
+```bash
+# 只有正式标签已经存在、且候选来自相同稳定提交时才可执行；只读准备。
+.venv/bin/python scripts/release_channels.py publish --version X.Y.Z \
+  --candidate /path/to/private-ci-candidate --channels all --dry-run
+```
+
+wheel、runtime 和 sdist 原样导入，不重新构建 Python 发行包。APT 元数据由现有工具
+生成；预览及正式签名阶段的 `.deb` 都必须与 CI 原包摘要完全相同，否则在上传前失败。
+`plan.json` 保留 run-id、源码 SHA、infra SHA、镜像 ID 和候选报告摘要。
+已发布版本仍走原始公开产物复用流程，不能传 `--candidate` 替换既有版本。
+
+跨项目的抓取、审核封存和交互式人工确认入口由 `oetree-infra/scripts/release.py`
+管理；本仓库维护具体包格式、分发与签名规则。准备成功、临时签名验收和正式发布分别报告。
+
 ### 凭据存储：只留本机
 
 | 内容 | 位置与使用方式 |
