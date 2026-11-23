@@ -47,14 +47,14 @@
 - 根目录 `pypi-token` 是本机凭据，禁止读取、暂存、提交或上传。暂存使用明确文件列表，不使用会带入其他文件的批量操作。
 - 不输出完整订阅 URL、节点凭据、控制密钥、原始私有配置或索引正文；构建不包含用户配置。公共 CLI runtime 与包含内核/节点凭据的私有部署 bundle 分开处理。
 - commit、tag、推送与发布记录必须对应真实操作。普通 commit 的既有授权不延伸为推送、创建远端、合并、tag 或发布授权；已明确授权的外部步骤按原授权范围执行。
-- 主仓库推送和 PR 使用独立 GitHub App，通过 `.venv/bin/python scripts/github_agent.py status` 核验身份，再按授权执行 `push` 或 `pr --title ... --body-file ...`；不静默回退到用户个人 gh 身份。
+- 主仓库推送和创建 PR 使用本机已登录且具有仓库权限的 GitHub 账号；通过 `gh auth status` 核验身份，按用户授权执行 `git push` 或 `gh pr create --title ... --body-file ...`。不要求机器人身份、GitHub App 配置或 App 私钥。
 - main 至少需要 1 人审批，用户 KJaebye 负责审批；Agent 不使用用户凭据代为审批，不提前合并，不修改保护规则或设置绕过名单。
-- GitHub App 私钥留在本机钥匙串，认证元数据在仓库外；不把私钥或 token 写入代码、日志、Git remote 或 GitHub Secrets。
+- GitHub 凭据使用本机凭据管理器；不把私钥或 token 写入代码、日志、Git remote 或 GitHub Secrets。旧 GitHub App 工具仅保留兼容，不是日常操作前置条件。
 
 ## 分发与源码布局
 
 - 经明确发布授权后，统一从本机 `.venv/bin/python scripts/release_channels.py publish --version X.Y.Z --channels all` 执行；`--dry-run` 仅演练，`--channels pypi/brew/apt` 可补发指定渠道，不依赖 GitHub Actions 额度。
-- PyPI 使用 Twine 和本机钥匙串；Homebrew 使用本机 gh 的钥匙串认证；APT 使用仓库外的 GPG 私钥签名。分发仓库认证与主仓库 GitHub App 身份分别管理，不上传私钥或解锁口令。
+- PyPI 使用 Twine 和本机钥匙串；Homebrew 使用本机 gh 的钥匙串认证；APT 使用仓库外的 GPG 私钥签名。分发凭据与主仓库认证分别管理，不上传私钥或解锁口令。
 - 维护已有版本先复用原始公开产物并核对摘要，仅恢复失败渠道；内容冲突或降级即停止，不移动软件标签、不覆盖已发布文件。`release-status.json` 的单渠道完成不代表全部渠道通过，公开摘要校验与真实安装验收分别记录。
 - `.github/workflows/release.yml` 等工作流仅提供可选测试/隔离验收，不发布软件、不读取生产私钥。
 - Python 实现放在 `src/`，维护工具放在 `scripts/`，根目录不新增实现模块。开发使用虚拟环境 editable 安装及 `.venv/bin/python ./domino COMMAND`；独立 runtime/部署包维持 `cli/` 模块布局，不将仓库的 `src/` 路径带到目标设备。
