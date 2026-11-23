@@ -173,7 +173,7 @@ def pypi_files(work):
     return sums
 
 
-def prepare(work, source, candidate=None):
+def prepare(work, source, candidate=None, existing_deb=None):
     plan = plan_at(work)
     requested = plan['version']
     actual_sha = subprocess.check_output(['git', '-C', str(source), 'rev-parse', 'HEAD'], text=True).strip()
@@ -195,11 +195,12 @@ def prepare(work, source, candidate=None):
         if not candidate_review['eligible_for_release_preparation']:
             raise ValueError('; '.join(candidate_review['blockers']))
         original = candidate / 'output/dist/release'
+        existing_deb = candidate / f'output/dist/distribution/domino-proxy_{requested}-1_all.deb'
         if plan['existing_release']:
             # Channel recovery always takes the official bytes as its source of
             # truth. The same reviewed candidate may corroborate them; it can
             # never replace them or introduce a different same-version build.
-            recovered = prepare(work, source)
+            recovered = prepare(work, source, existing_deb=existing_deb)
             for path in original.iterdir():
                 published = release / path.name
                 if not published.is_file() or hashlib.sha256(published.read_bytes()).hexdigest() != hashlib.sha256(path.read_bytes()).hexdigest():
@@ -253,7 +254,8 @@ def prepare(work, source, candidate=None):
     write_json(work / 'artifact-verification.json', report)
     subprocess.run([sys.executable, '-m', 'twine', 'check', *[str(release / name) for name in sorted(sums)]], check=True)
     channels = prepare_channels.prepare(release, work / 'channels', release_repo=plan['repository'],
-        tap_repo=plan['tap_repository'], apt_repo=plan['repository'], apt_url=plan['apt_url'])
+        tap_repo=plan['tap_repository'], apt_repo=plan['repository'], apt_url=plan['apt_url'],
+        existing_deb=existing_deb)
     if candidate_review is not None:
         deb = work / f'channels/distribution/domino-proxy_{requested}-1_all.deb'
         if hashlib.sha256(deb.read_bytes()).hexdigest() != candidate_review['deb_sha256']:
@@ -457,7 +459,8 @@ def prepare_apt(work):
     with nullcontext() if local else signing_home(private):
         report = prepare_channels.prepare(work / 'release', work / 'apt-signed', release_repo=plan['repository'],
             tap_repo=plan['tap_repository'], apt_repo=plan['repository'], apt_url=plan['apt_url'],
-            sign_key=key, previous_repo=previous if old else None)
+            sign_key=key, previous_repo=previous if old else None,
+            existing_deb=work / f'channels/distribution/domino-proxy_{plan["version"]}-1_all.deb')
     if 'ci_candidate' in plan:
         deb = work / f'apt-signed/distribution/domino-proxy_{plan["version"]}-1_all.deb'
         if hashlib.sha256(deb.read_bytes()).hexdigest() != plan['ci_candidate']['deb_sha256']:

@@ -210,7 +210,7 @@ def doctor(directory):
             'apt_credentials_layout_valid': bool(layout), 'existing_apt_signing_identity_present': identity,
             'github_app_metadata_present': app.is_file(),
             'publication_credentials_ready': not blockers, 'blockers': blockers,
-            'source_submission_note': 'Business branch pushes still require github_agent.py status; never use personal auth as a fallback'}
+            'source_submission_note': 'Use the authenticated local GitHub account for authorized branch pushes and PRs; preserve main review requirements'}
 
 
 def main():

@@ -34,7 +34,7 @@ from urllib.request import getproxies
 from domino_model import DomainError
 
 VERSION = '1.3.0'
-BUILD_CHANNEL = 'development'
+BUILD_CHANNEL = 'release'
 PACKAGE_MANAGED = False
 DESCRIPTION = '捕获本机代理，并一键部署到指定 IP 的设备上，让翻墙像 domino 一样简单。'
 SUBSCRIPTION_USER_AGENT = 'clash.meta'

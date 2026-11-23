@@ -138,6 +138,7 @@ class CandidateReleaseTests(DistributionFixture):
                 return subprocess.CompletedProcess(args, 0)
             return original(args, **kwargs)
         with patch.object(release.verify_artifacts, 'verify', return_value={'ok': True}), \
+                patch.object(distribution, 'deb_bytes', side_effect=AssertionError('Do not recompress original CI packages')), \
                 patch.object(release.subprocess, 'run', side_effect=run):
             plan = release.prepare(work, self.source, candidate=self.bundle)
         for name in ('domino-runtime-0.16.0.tar.gz', 'domino_proxy-0.16.0-py3-none-any.whl'):
@@ -169,6 +170,7 @@ class CandidateReleaseTests(DistributionFixture):
             return original(args, **kwargs)
         with patch.object(release, 'fetch', side_effect=lambda url: assets[url.rsplit('/', 1)[1]]), \
              patch.object(release.verify_artifacts, 'verify', return_value={'ok': True}), \
+             patch.object(distribution, 'deb_bytes', side_effect=AssertionError('Do not recompress original CI packages')), \
              patch.object(release.subprocess, 'run', side_effect=run):
             result = release.prepare(work, self.source, candidate=self.bundle)
         self.assertTrue(result['existing_release'])

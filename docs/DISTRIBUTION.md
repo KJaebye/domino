@@ -1,6 +1,6 @@
 # pip、Homebrew 与 apt 分发
 
-当前工作区版本为 **1.3.0，未发布**，本轮功能与修复统一纳入这个稳定版本里程碑。日常开发只执行普通 commit；只有维护者明确授权后才能创建 `v1.3.0` tag 或发布到任何渠道。2026-11-22 公司 Mac 的 DIRECT 与重启技术验收已通过，用户已确认两个浏览器页面均正常，Mac 公司现场验收完成；最新源码的 Ubuntu 真机验收仍待完成。本地 CLI 显示 1.3.0 不表示 PyPI 已发布；已发布的 1.2.3 及其官方提交材料保持原样。
+当前工作区版本为 **1.3.0 发布候选，未发布**。2026-11-24 按维护者意向准备正式发布与合并 main，发布分支设置 `BUILD_CHANNEL=release`。完成源码审核、稳定候选校验及本机发布确认后，才发布到公开渠道。2026-11-22 公司 Mac 的 DIRECT 与重启技术验收已通过，用户已确认两个浏览器页面均正常，Mac 公司现场验收完成；最新源码的 Ubuntu 真机验收仍待完成。本地 CLI 显示 1.3.0 不表示 PyPI 已发布；已发布的 1.2.3 及其官方提交材料保持原样。
 
 三个渠道只安装管理命令。包安装、升级、卸载不会初始化本机服务、捕获配置、调整系统代理或改 shell 文件。需要本机代理时，以普通用户显式运行 `domino-install`；已有离线部署包时也可使用 `domino init --bundle /path/to/bundle.tar.gz`。仅管理远端设备则无需初始化本机服务。
 
@@ -102,7 +102,7 @@ pipx ensurepath
 
 ## 一个本机流程发布三个渠道
 
-发布统一在开发机执行，不要求 GitHub Actions 有可用额度，也不把生产凭据放入 GitHub Secrets。下列 1.2.3 命令保留为已发布版本的维护示例，不是当前 1.3.0 的发布授权。当前版本只做普通 commit，等待维护者明确批准 tag 与发布。
+发布统一在开发机执行，不要求 GitHub Actions 有可用额度，也不把生产凭据放入 GitHub Secrets。下列 1.2.3 命令保留为已发布版本的维护示例。1.3.0 已进入发布准备；源码审批、标签、产物审核与正式渠道发布仍分别核对。
 
 ```bash
 # 只读演练，不读取生产签名私钥或上传文件
@@ -148,8 +148,8 @@ pipx ensurepath
 
 日常 `development` 构建可以验收，但不能重贴稳定标签发布。只有维护者明确授权
 源码稳定化和创建正式标签后，`BUILD_CHANNEL=release`、标签提交完全一致且完整 CI
-通过的 `release-candidate` 才能进入发布准备。当前 1.3.0 仍遵循仓库开发约定，
-本流程不自动修改版本、BUILD_CHANNEL 或创建标签。
+通过的 `release-candidate` 才能进入发布准备。1.3.0 发布分支已切换 release 标记，
+本流程本身不自动修改版本、BUILD_CHANNEL 或创建标签。
 
 稳定候选构建先运行 `candidate_release.py preflight`，拒绝 GitHub 已有 Release/draft、
 PyPI 已有同版本、APT/Homebrew 已有同版本或更高版本等情况。它只读取公开渠道。
@@ -162,8 +162,10 @@ PyPI 已有同版本、APT/Homebrew 已有同版本或更高版本等情况。�
   --candidate /path/to/private-ci-candidate --channels all --dry-run
 ```
 
-wheel、runtime 和 sdist 原样导入，不重新构建 Python 发行包。APT 元数据由现有工具
-生成；预览及正式签名阶段的 `.deb` 都必须与 CI 原包摘要完全相同，否则在上传前失败。
+wheel、runtime、sdist 与 `.deb` 原样导入，不重新构建或重压缩发行包。Debian 原包的
+未压缩 control/payload 必须与已校验 runtime 的规范内容、路径、权限和时间戳一致，
+不允许添加安装钩子。工具只重新生成 APT 索引和签名，避免 Linux/macOS 的 gzip 差异。
+预览及正式签名阶段的 `.deb` 都必须与 CI 原包摘要完全相同，否则在上传前失败。
 `plan.json` 保留 run-id、源码 SHA、infra SHA、镜像 ID 和候选报告摘要。
 已发布版本仍走原始公开产物复用流程。补发渠道时可以携带同一个候选作为核对材料，
 但始终下载并使用官方原始字节；候选与公开文件有任何差异都会拒绝，不能替换既有版本。

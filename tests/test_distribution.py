@@ -73,6 +73,53 @@ class DistributionFixture(unittest.TestCase):
 
 
 class DistributionTests(DistributionFixture):
+    def test_original_deb_preserves_cross_platform_gzip_bytes(self):
+        first = distro.build(self.release, self.output)
+        original = bytearray((self.output / first['deb']).read_bytes())
+        # Python 3.12/Linux and 3.13/macOS may use different gzip OS headers.
+        offset = 8
+        while offset < len(original):
+            header = original[offset:offset + 60]
+            size = int(header[48:58])
+            offset += 60
+            if header[:16].decode().strip().rstrip('/').endswith('.gz'):
+                original[offset + 9] = 3 if original[offset + 9] != 3 else 255
+            offset += size + size % 2
+        supplied = self.root / 'ci-original.deb'
+        supplied.write_bytes(original)
+        self.assertNotEqual(supplied.read_bytes(), (self.output / first['deb']).read_bytes())
+        second = self.root / 'reuse'
+        report = distro.build(self.release, second, existing_deb=supplied)
+        self.assertTrue(report['reused_deb'])
+        self.assertEqual((second / report['deb']).read_bytes(), supplied.read_bytes())
+        self.assertEqual((second / 'apt/pool/main/d/domino-proxy' / report['deb']).read_bytes(), supplied.read_bytes())
+
+    def test_original_deb_rejects_added_hooks_payload_changes_and_invalid_archives(self):
+        manifest, runtime = distro.load_runtime(self.release)
+        epoch = int(distro.datetime.fromisoformat(manifest['built_at']).timestamp())
+        first = distro.build(self.release, self.output)
+        data = (self.output / first['deb']).read_bytes()
+        members = ar_members(data)
+        controls = tar_members(members['control.tar.gz'])
+        files = distro.payload(runtime)
+        unsafe_control = {**controls, 'postinst': (b'#!/bin/sh\nexit 0\n', 0o755)}
+        unsafe_payload = {**files, 'usr/bin/domino': (b'changed', 0o755)}
+        for label, blob in [('hook', distro.deb_bytes(unsafe_control, files, epoch)),
+                            ('payload', distro.deb_bytes(controls, unsafe_payload, epoch)),
+                            ('truncated', data[:-1]), ('extra', data + data[8:72]),
+                            ('invalid', b'!<arch>\nbroken')]:
+            with self.subTest(label=label):
+                supplied = self.root / (label + '.deb')
+                supplied.write_bytes(blob)
+                target = self.root / label
+                with self.assertRaises(ValueError):
+                    distro.build(self.release, target, existing_deb=supplied)
+                self.assertFalse(target.exists())
+        linked = self.root / 'linked.deb'
+        linked.symlink_to(self.output / first['deb'])
+        with self.assertRaisesRegex(ValueError, 'regular file'):
+            distro.build(self.release, self.root / 'symlink-output', existing_deb=linked)
+
     def test_previous_pool_survives_updates_without_replacing_published_packages(self):
         first = distro.build(self.release, self.output)
         previous = self.output / 'apt'
