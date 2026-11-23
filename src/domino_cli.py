@@ -1021,8 +1021,8 @@ def release_asset(release, arch, system='linux'):
     # v1 is the portable amd64 baseline; never assume AVX2/v3 support on a target.
     if system not in ['linux', 'darwin']:
         raise ToolError(_t('目标系统仅支持 Linux 或 macOS。'))
-    name = (f'mihomo-darwin-{arch}-{tag}.gz' if system == 'darwin' else
-            f'mihomo-linux-{arch}-{tag}.gz' if arch == 'arm64' else f'mihomo-linux-amd64-v1-{tag}.gz')
+    name = (f'mihomo-{system}-amd64-v1-{tag}.gz' if arch == 'amd64'
+            else f'mihomo-{system}-{arch}-{tag}.gz')
     assets = release.get('assets')
     if not isinstance(assets, list):
         raise ToolError(_t('官方 release 安装包列表无效。'))
@@ -1056,8 +1056,8 @@ def cached_init_release(args, arch, system, cache):
                 or not isinstance(tag, str) or not re.fullmatch(r'v\d+\.\d+\.\d+', tag)
                 or not isinstance(digest, str) or not re.fullmatch(r'[a-f0-9]{64}', digest)):
             return None
-        name = (f'mihomo-{system}-{arch}-{tag}.gz' if system == 'darwin' or arch == 'arm64'
-                else f'mihomo-linux-amd64-v1-{tag}.gz')
+        name = (f'mihomo-{system}-amd64-v1-{tag}.gz' if arch == 'amd64'
+                else f'mihomo-{system}-{arch}-{tag}.gz')
         archive = cache / name
         if not archive.is_file() or hashlib.sha256(archive.read_bytes()).hexdigest() != digest:
             return None

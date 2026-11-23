@@ -8,6 +8,7 @@ import tempfile
 import subprocess
 import unittest
 from unittest.mock import patch
+from types import SimpleNamespace
 
 import domino_resources as resources
 import domino_cli as cli
@@ -15,6 +16,55 @@ from domino_model import DomainError
 
 
 class ResourceSourceTests(unittest.TestCase):
+    def test_macos_intel_requires_explicit_v1_instead_of_generic_or_v3(self):
+        tag = 'v1.19.33'
+        names = ['mihomo-darwin-amd64-' + tag + '.gz',
+                 'mihomo-darwin-amd64-v3-' + tag + '.gz',
+                 'mihomo-darwin-amd64-v1-' + tag + '.gz']
+        release = {'tag_name': tag, 'assets': [{'name': name, 'digest': 'sha256:' + 'a' * 64,
+            'browser_download_url': 'https://github.com/MetaCubeX/mihomo/releases/download/' + tag + '/' + name}
+            for name in names]}
+        with patch.object(resources, 'resource_base', return_value=None):
+            self.assertEqual(cli.release_asset(release, 'amd64', 'darwin')[1]['name'], names[-1])
+            release['assets'].pop()
+            with self.assertRaises(DomainError):
+                cli.release_asset(release, 'amd64', 'darwin')
+
+    def test_cached_macos_intel_init_uses_the_verified_v1_archive(self):
+        with tempfile.TemporaryDirectory() as directory, patch.dict('os.environ', HOME=directory):
+            home = Path(directory)
+            cache = home / 'cache'
+            cache.mkdir()
+            name = 'mihomo-darwin-amd64-v1-v1.19.33.gz'
+            archive = cache / name
+            archive.write_bytes(b'verified fixture archive')
+            manifest = home / '.local/share/domino/manifest.json'
+            manifest.parent.mkdir(parents=True)
+            manifest.write_text(json.dumps({'version': 'v1.19.33', 'platform': 'darwin', 'arch': 'amd64',
+                'sha256_gzip': hashlib.sha256(archive.read_bytes()).hexdigest()}))
+            args = SimpleNamespace(command='init', mihomo_version='latest')
+            self.assertEqual(cli.cached_init_release(args, 'amd64', 'darwin', cache)[1]['name'], name)
+            archive.write_bytes(b'changed')
+            self.assertIsNone(cli.cached_init_release(args, 'amd64', 'darwin', cache))
+
+    def test_resource_mirror_stages_the_explicit_macos_intel_baseline(self):
+        from scripts import build_resources
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            name = 'mihomo-darwin-amd64-v1-v1.19.33.gz'
+            archive = root / name
+            archive.write_bytes(b'public fixture archive')
+            metadata = root / 'release.json'
+            metadata.write_text(json.dumps({'tag_name': 'v1.19.33', 'assets': [{'name': name,
+                'digest': 'sha256:' + hashlib.sha256(archive.read_bytes()).hexdigest()}]}))
+            output = root / 'resources'
+            arguments = ['build_resources.py', '--base-url', 'https://cdn.example.test/domino/',
+                '--release-json', str(metadata), '--archive', str(archive), '--output', str(output)]
+            with patch('sys.argv', arguments), redirect_stdout(io.StringIO()):
+                build_resources.main()
+            self.assertEqual((output / 'mihomo/v1.19.33' / name).read_bytes(), archive.read_bytes())
+            self.assertEqual(json.loads((output / 'mihomo/latest.json').read_text())['assets'][0]['name'], name)
+
     def test_ci_prefetched_metadata_keeps_version_and_archive_hash_checks(self):
         from scripts import fetch_test_core as fetch
         tag='v1.19.33';name='mihomo-darwin-arm64-'+tag+'.gz'

@@ -102,7 +102,7 @@ pip、Homebrew 与 apt 包只安装 CLI，不执行服务初始化钩子。完�
 mihomo/latest.json
 mihomo/v1.19.33.json
 mihomo/v1.19.33/mihomo-darwin-arm64-v1.19.33.gz
-mihomo/v1.19.33/mihomo-darwin-amd64-v1.19.33.gz
+mihomo/v1.19.33/mihomo-darwin-amd64-v1-v1.19.33.gz
 mihomo/v1.19.33/mihomo-linux-arm64-v1.19.33.gz
 mihomo/v1.19.33/mihomo-linux-amd64-v1-v1.19.33.gz
 geo/index.json
