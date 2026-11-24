@@ -15,6 +15,7 @@ import unittest
 from unittest.mock import patch
 
 import domino_cli as cli
+from tests.remote_transport import local_action_argv
 import domino_agent as agent
 import install_domino as backend
 from domino_model import DomainError, Result
@@ -159,7 +160,7 @@ class AgentProcessTests(unittest.TestCase):
         (app / 'mihomo').touch()
         ssh = cli.SSH(cli.build_parser().parse_args(['shell', 'on', 'alice@host', '--batch']))
         ssh.socket = '/tmp/not-used'
-        command = shlex.split(ssh.action_argv('agent')[-1])
+        command = local_action_argv(ssh, 'agent')
         request = {'schema_version': 1, 'operation': 'shell.on', 'arguments': {}, 'target': 'alice@host',
                    'operation_id': 'a' * 32, 'transport_token': 'b' * 32}
         inherited = dict(os.environ)
@@ -182,7 +183,7 @@ class AgentProcessTests(unittest.TestCase):
         args=cli.build_parser().parse_args(['status','alice@host','--batch'])
         ssh=cli.SSH(args)
         ssh.socket='/tmp/not-used'
-        command=shlex.split(ssh.action_argv('agent')[-1])
+        command=local_action_argv(ssh, 'agent')
         self.assertLess(len(ssh.action_argv('agent')[-1].encode()),128*1024-256)
         with self.assertRaises(cli.ToolError):ssh.action_argv('agent','x'*131072)
         request={'schema_version':1,'operation':'configs.add','arguments':{'name':'A','url':'https://example.test/PRIVATE-TOKEN'},
@@ -242,7 +243,7 @@ class AgentProcessTests(unittest.TestCase):
         args=cli.build_parser().parse_args(['status','alice@host','--batch'])
         ssh=cli.SSH(args)
         ssh.socket='/tmp/not-used'
-        command=shlex.split(ssh.action_argv('agent')[-1])
+        command=local_action_argv(ssh, 'agent')
         request={'schema_version':1,'operation':'capabilities','arguments':{},'target':'alice@host',
                  'operation_id':'a'*32,'transport_token':'b'*32}
         process=subprocess.run([sys.executable,*command[1:]],input=json.dumps(request),capture_output=True,text=True,
@@ -423,7 +424,7 @@ def discover_proxy():
             source = read_text(path, *args, **kwargs)
             return source + self.guard if path.name == 'domino_cli.py' else source
         with patch.object(Path, 'read_text', guarded_source):
-            command = shlex.split(ssh.action_argv('agent')[-1])
+            command = local_action_argv(ssh, 'agent')
         for operation, arguments in [('source.list', {}), ('source.inspect', {'path': str(self.saved)})]:
             request = {'schema_version': 1, 'operation': operation, 'arguments': arguments,
                        'target': 'alice@host', 'operation_id': 'a' * 32, 'transport_token': 'b' * 32}
@@ -596,8 +597,11 @@ class ServiceSeparationTests(unittest.TestCase):
             with patch('domino_service.platform.system',return_value='Darwin'), \
                     patch.object(domino_macos,'system_proxy_overview',return_value={'routing':'domino'}):
                 self.assertTrue(application.plan('service.stop',{})['would_change'])
-            with patch('domino_service.platform.system',return_value='Linux'):
-                self.assertFalse(application.plan('service.stop',{})['would_change'])
+            for routing in ['off', 'unsupported', 'domino']:
+                with self.subTest(routing=routing), \
+                        patch('domino_service.platform.system',return_value='Linux'), \
+                        patch('domino_linux.system_proxy_overview',return_value={'routing':routing}):
+                    self.assertEqual(application.plan('service.stop',{})['would_change'],routing=='domino')
 
     def test_query_collectors_return_data_without_terminal_output(self):
         output=io.StringIO()

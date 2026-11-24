@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # Copyright (C) 2026 KJaebye
 """Configurable HTTPS resource origin with required content hashes."""
+from domino_i18n import tr as _t
 import hashlib
 import json
 import os
@@ -15,14 +16,14 @@ def resource_base():
     configured=os.environ.get('DOMINO_RESOURCE_BASE')
     if configured is None and path.is_file():
         try: configured=json.loads(path.read_text()).get('resource_base')
-        except (ValueError,AttributeError): raise DomainError('资源下载配置格式无效。',code='INVALID_RESOURCE_SOURCE',exit_code=2) from None
+        except (ValueError,AttributeError): raise DomainError(_t('资源下载配置格式无效。'),code='INVALID_RESOURCE_SOURCE',exit_code=2) from None
     if not configured: return None
     if not isinstance(configured,str):
-        raise DomainError('资源源必须是 HTTPS 目录地址。',code='INVALID_RESOURCE_SOURCE',exit_code=2)
+        raise DomainError(_t('资源源必须是 HTTPS 目录地址。'),code='INVALID_RESOURCE_SOURCE',exit_code=2)
     try: parsed=urlsplit(configured)
     except ValueError: parsed=None
     if not parsed or parsed.scheme!='https' or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment or '..' in parsed.path.split('/'):
-        raise DomainError('资源源必须是无凭据的 HTTPS 目录地址。',code='INVALID_RESOURCE_SOURCE',exit_code=2)
+        raise DomainError(_t('资源源必须是无凭据的 HTTPS 目录地址。'),code='INVALID_RESOURCE_SOURCE',exit_code=2)
     return configured.rstrip('/')+'/'
 
 
@@ -83,20 +84,20 @@ def prepare_geo(profile,data,download,proxy=None):
     if not needed: return
     index=data/'.geo-index.json'
     try:
-        download('Geo 资源索引',base+'geo/index.json',index,proxy)
+        download(_t('Geo 资源索引'),base+'geo/index.json',index,proxy)
         metadata=json.loads(index.read_text())
     finally: index.unlink(missing_ok=True)
     if not isinstance(metadata,dict) or metadata.get('schema_version')!=1 or not isinstance(metadata.get('files'),dict):
-        raise DomainError('Geo 资源索引格式无效。',code='INVALID_RESOURCE_INDEX',exit_code=3)
+        raise DomainError(_t('Geo 资源索引格式无效。'),code='INVALID_RESOURCE_INDEX',exit_code=3)
     for name in sorted(needed):
         entry=metadata['files'].get(name,{})
         digest=entry.get('sha256') if isinstance(entry,dict) else None
         if not isinstance(digest,str) or not re.fullmatch('[a-f0-9]{64}',digest):
-            raise DomainError('Geo 资源缺少 SHA-256。',code='RESOURCE_DIGEST_REQUIRED',exit_code=3)
+            raise DomainError(_t('Geo 资源缺少 SHA-256。'),code='RESOURCE_DIGEST_REQUIRED',exit_code=3)
         target=data/name
         if target.is_file() and hashlib.sha256(target.read_bytes()).hexdigest()==digest: continue
-        download('Geo 资源',base+'geo/'+name,target,proxy)
+        download(_t('Geo 资源'),base+'geo/'+name,target,proxy)
         if hashlib.sha256(target.read_bytes()).hexdigest()!=digest:
             target.unlink(missing_ok=True)
-            raise DomainError('Geo 资源 SHA-256 校验失败。',code='RESOURCE_DIGEST_MISMATCH',exit_code=3)
+            raise DomainError(_t('Geo 资源 SHA-256 校验失败。'),code='RESOURCE_DIGEST_MISMATCH',exit_code=3)
         target.chmod(0o600)

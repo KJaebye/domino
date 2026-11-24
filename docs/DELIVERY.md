@@ -1,10 +1,30 @@
 # 交付状态与版本管理
 
+仓库开发约定统一维护在 [AGENTS.md](../AGENTS.md)；本页记录交付流程与验收范围。[Agent 接口文档](AGENT.md) 单独描述软件的机器协议。
+
+## 1.3.0 当前里程碑（未发布）
+
+用户要求本轮功能与修复累计在 1.3.0，期间只提交普通 commit。`BUILD_CHANNEL` 保持 `development`；只有明确授权后才能标记 release、创建 tag 或发布，不因构建成功或测试通过自动发布。
+
+已完成安装结果统一、状态语义、macOS/Linux 只读 doctor 与 TUI 入口、套餐新鲜度/到期、构建身份和恢复范围提示。CLI 首页推荐下一步，查询不自动初始化服务或修改启动文件。详细变化见变更记录。
+
+本轮本地验证：Mac 全量 788 项，0 失败、2 项环境跳过；修订后的系统 hosts 出站回归另行通过。隔离 Debian ARM64 全量 786 项，0 失败、33 项平台/可选 shell 等跳过，使用普通用户、Bash 和独立 Mihomo；包括独立 dconf/DBus 的代理应用与恢复。Linux 环境未安装 Zsh。wheel/runtime 和隔离 pip 安装、从 1.2.3 升级及卸载均已验证。测试环境使用 Debian 自带 Python；这是 Linux 补充检查，不作为 Ubuntu 真机安装验收。
+
+2026-11-22 公司现场技术验收：已安装的 1.3.0 开发构建 `4354eab5fa6b` 在正式 Mac 应用中完成两目标 DIRECT、证书校验及服务重启复测；独立真实 LAN 回归另行 1 项通过。内核、配置、手动节点和系统代理设置保持不变，用户已确认重启后 GitLab 和 data-eval 的浏览器页面均正常，Mac 公司现场验收完成。此次是现场专项验收，没有重新运行上述全量回归，详见 [macOS DIRECT 诊断记录](MACOS_DIRECT_DEBUG.md)。
+
+仍待完成：最新源码在 Ubuntu 真机上的 systemd、桌面代理、重启自启和 Bash 接入。公司外 OpenVPN + 既有系统 hosts 的浏览器访问已由用户确认，但不替代公司现场浏览器验收。Ubuntu 真机继续按用户要求留待之后。
+
+本轮详细报告保存在本机 `dist/v1.3.0-usability/`；这些报告不自动随源码分发，也不将模拟或跳过项目记为通过。公共 PyPI、Homebrew、APT 产物保持原样。
+
+## 默认输出精简的产品决策
+
+本轮输出精简使用 `prioritize-features` 与 `strategy-red-team` 复审，以“能否看懂本次结果、是否知道需要处理什么”为目标，未虚构用户调研或节省时间数据。优先处理 Shell、状态、配置列表/写操作、来源扫描，以及 CLI/TUI 的详细模式一致性。默认保留连接 ID（关闭操作需要）、策略与父 Shell 实际状态差异、过期/缓存/刷新失败、部分失败与恢复位置；现有 JSON v1 不删除字段。验收覆盖真实 Bash/Zsh 的同步与临时语言覆盖、简洁/详细输出和 JSON 一致性、代理协议差异及套餐异常，Ubuntu 真机验收仍单独保留。
+
 ## 版本规则
 
 - 用户已指定 `1.0.0` 为正式发布版本，采用三段版本号 `X.Y.Z`；兼容修复递增补丁号，兼容功能递增次版本号，破坏性变更递增主版本号。保留末尾 `.0`，历史 `0.x.y` 版本不改写。
-- 每批可交付代码变更更新 `src/domino_cli.py` / `pyproject.toml` 的版本与 `CHANGELOG.md`。中间调试不反复编号；完成后验证并构建，不把不同代码长期放在同一已交付版本下。
-- 本次将此前未逐次编号的功能与修复归档为 `0.13.0`；旧 `0.12.0` 产物保留，不编造中间发布记录。软件版本不等于 Mihomo 内核版本。
+- 当前 1.3.0 里程碑按用户要求累计开发变更，保持 `src/domino_cli.py` / `pyproject.toml` 版本一致，记录实际代码变更；不同开发快照使用全新 `--output` 目录构建，不覆盖旧产物。正式发布后，后续交付按上述语义版本规则编号；纯说明性文档修改不升版本、不重建软件包。
+- 历史 `0.13.0` 曾归档未逐次编号的功能与修复；旧 `0.12.0` 产物保留，不编造中间发布记录。本轮遵循上述 1.3.0 累计开发规则。软件版本不等于 Mihomo 内核版本。
 - 源码、构建、安装版同步、服务重启和公共发布是独立动作；构建不会修改用户安装。真实安装同步仍需明确授权。
 
 ## 工程交付范围
@@ -30,7 +50,9 @@
 .venv/bin/python -m unittest discover -s tests -p test_delay_configs.py
 # 较大重构、正式发布前或明确要求时，才运行完整回归：
 # .venv/bin/python scripts/verify.py
-# 构建前检查 CLI / wheel 版本一致，拒绝重复版本，保留旧包：
+# 当前未发布的 1.3.0 开发快照使用全新输出目录，保留旧构建：
+.venv/bin/python scripts/build_release.py --output dist/本次开发快照
+# 正式交付目录沿用默认布局；构建本身不代表发布授权：
 .venv/bin/python scripts/build_release.py
 # 可选：SSH 载荷相关改动再运行受控 SSH 验证
 # .venv/bin/python scripts/verify_ssh.py
@@ -56,7 +78,7 @@ dist/
 
 `dist/release/` 中历史版本的 wheel/runtime 原地保留；当前清单只列本次产物，不将旧包混进新清单。已有旧发行须先通过原清单/摘要校验，再将其产物、Formula、清单与 SHA256SUMS 原样归档，随后更新当前固定名称文件；失败尝试恢复旧元数据并移除本次新包。旧版本归档已存在、旧清单损坏、输出为符号链接或同版本包已存在时拒绝构建。默认构建锁用于防止脚本并行交付；进程被强制终止时需人工检查锁、清单和历史归档，不宣称断电原子性。
 
-runtime 含纯 Python UI/YAML 依赖及其许可证，不包含 Mihomo 内核或用户配置。同源码特殊复建可用 `--output` 指定全新目录，此时只生成该目录的独立产物，不更新默认 `dist/` 和 `dist/release/`；指定目录已存在（包括空目录或符号链接）则拒绝。后续代码变更应升版本，不以新目录代替版本管理。
+runtime 含纯 Python UI/YAML 依赖及其许可证，不包含 Mihomo 内核或用户配置。当前未发布的 1.3.0 开发快照及同源码特殊复建可用 `--output` 指定全新目录，此时只生成该目录的独立产物，不更新默认 `dist/` 和 `dist/release/`；指定目录已存在（包括空目录或符号链接）则拒绝。新目录不代表正式版本，源码快照由产物清单标识；已发布版本的后续代码变更必须使用新版本号。
 
 如已有公共地址，应在首次构建时指定 `--base-url https://你的发布域名/releases/0.17.0`，而不是向同一目录连续构建两次。也可为另一种分发形式显式选择新目录。模板地址必须替换为真实地址；生成带地址 Formula 也不会上传或发布。
 
@@ -80,7 +102,7 @@ pip、Homebrew 与 apt 包只安装 CLI，不执行服务初始化钩子。完�
 mihomo/latest.json
 mihomo/v1.19.33.json
 mihomo/v1.19.33/mihomo-darwin-arm64-v1.19.33.gz
-mihomo/v1.19.33/mihomo-darwin-amd64-v1.19.33.gz
+mihomo/v1.19.33/mihomo-darwin-amd64-v1-v1.19.33.gz
 mihomo/v1.19.33/mihomo-linux-arm64-v1.19.33.gz
 mihomo/v1.19.33/mihomo-linux-amd64-v1-v1.19.33.gz
 geo/index.json

@@ -9,6 +9,7 @@ import tempfile
 import unittest
 
 import domino_cli as cli
+from tests.remote_transport import local_command_argv
 
 
 class RemoteScanTests(unittest.TestCase):
@@ -36,7 +37,7 @@ class RemoteScanTests(unittest.TestCase):
         return {str(p.relative_to(self.home)): p.read_bytes()
                 for p in self.home.rglob('*') if p.is_file()}
 
-    def run_scan(self, *options, poison=False):
+    def run_scan(self, *options, poison=False, expected_exit=0):
         args = cli.build_parser().parse_args(['fixture.example.test', 'scan', '--batch'])
         ssh = cli.SSH(args)
         prefix = ''
@@ -52,24 +53,26 @@ class RemoteScanTests(unittest.TestCase):
                       '  if fullname == "install_domino": raise ModuleNotFoundError("No backend on disk")\n'
                       'sys.meta_path.insert(0, NoInstalledBackend())\n')
         def command_argv(command, tty=False):
-            tokens = shlex.split(command)
-            return [sys.executable, '-I', '-c', prefix + tokens[2], *tokens[3:]]
+            return local_command_argv(command, tty, prefix=prefix)
         ssh.command_argv = command_argv
         argv = ssh.action_argv('scan', *options)
         env = {k:v for k,v in os.environ.items() if k not in ('PYTHONPATH', 'PYTHONHOME', 'XDG_DATA_HOME', 'XDG_CONFIG_HOME')
+               and k.lower() not in ('http_proxy','https_proxy','all_proxy','no_proxy')
                and not k.startswith(('DOMINO_', '_DOMINO'))}
+        # Also suppress macOS urllib's fallback to the real desktop proxy.
+        env['no_proxy'] = '*'
         env['HOME'] = str(self.home)
         before = self.snapshot()
         result = subprocess.run(argv, cwd=self.home, env=env, text=True,
                                 capture_output=True, timeout=15)
         diagnostic = '\n'.join(line for line in result.stderr.splitlines() if len(line) < 500)[-2400:]
-        self.assertEqual(result.returncode, 0, diagnostic)
+        self.assertEqual(result.returncode, expected_exit, diagnostic)
         self.assertNotIn('TEST-NODE-CREDENTIAL', result.stdout)
         self.assertEqual(self.snapshot(), before)
         return result.stdout
 
     def test_human_scan_without_runtime_does_not_import_backend_from_disk(self):
-        self.assertIn('配置扫描', self.run_scan())
+        self.assertIn('Profile scan', self.run_scan())
 
     def test_json_scan_reads_target_configuration_using_embedded_backend(self):
         self.seed()
@@ -83,8 +86,10 @@ class RemoteScanTests(unittest.TestCase):
 
     def test_explicit_source_scan_uses_same_embedded_backend(self):
         source = self.seed()
-        result = json.loads(self.run_scan('--source', str(source), '--json'))
+        result = json.loads(self.run_scan('--source', str(source), '--json', expected_exit=3))
         self.assertEqual(result['current_config'], 'Fixture config')
+        self.assertFalse(result['healthy'])
+        self.assertFalse(result['exit_checked'])
 
     def test_installed_older_backend_is_not_mixed_with_client_payload(self):
         self.seed()
@@ -103,7 +108,7 @@ class RemoteScanTests(unittest.TestCase):
         self.assertEqual(len(result['sources']), 1)
         self.assertEqual(result['sources'][0]['profile_name'], 'Linux subscription')
         self.assertTrue(result['sources'][0]['client_current'])
-        self.assertIn('外部配置 1 个 · Domino 管理 0 个', self.run_scan())
+        self.assertIn('External profiles: 1 · Domino-managed: 0', self.run_scan())
 
     def test_remote_scan_transmits_v2rayn_database_adapter(self):
         import sqlite3
@@ -115,6 +120,6 @@ class RemoteScanTests(unittest.TestCase):
                 ('a', 6, 'Fixture node', 'fixture.example.test', 443, 'TEST-NODE-CREDENTIAL'))
         result = json.loads(self.run_scan('--json'))
         self.assertEqual(len(result['sources']), 1)
-        self.assertEqual(result['sources'][0]['name'], 'v2rayN · 节点快照')
+        self.assertEqual(result['sources'][0]['name'], 'v2rayN · Node snapshot')
         self.assertTrue(result['sources'][0]['compatible_config_found'])
         self.assertIsNone(result['sources'][0]['proxy'])

@@ -10,6 +10,7 @@ build/
 *.tar.gz
 
 # Local credentials, private exports, and machine-specific files
+/pypi-token
 .env
 .env.*
 !.env.example

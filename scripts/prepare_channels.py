@@ -48,7 +48,7 @@ def sources_text(url, armored_key):
 
 
 def prepare(release, output, *, release_repo=DEFAULT_RELEASE_REPO, tap_repo=DEFAULT_TAP_REPO,
-            apt_repo=DEFAULT_APT_REPO, sign_key=None, previous_repo=None, apt_url=None):
+            apt_repo=DEFAULT_APT_REPO, sign_key=None, previous_repo=None, apt_url=None, existing_deb=None):
     if output.exists() or output.is_symlink():
         raise FileExistsError('Channel output already exists; choose a new directory')
     release_repo, tap_repo, apt_repo = map(repository_name, (release_repo, tap_repo, apt_repo))
@@ -73,7 +73,8 @@ def prepare(release, output, *, release_repo=DEFAULT_RELEASE_REPO, tap_repo=DEFA
         stage = Path(directory) / 'ready'
         stage.mkdir()
         distribution = stage / 'distribution'
-        build_distribution.build(release, distribution, sign_key=sign_key, previous_repo=previous_repo)
+        build_distribution.build(release, distribution, sign_key=sign_key, previous_repo=previous_repo,
+                                 existing_deb=existing_deb)
         tap = stage / 'tap'
         (tap / 'Formula').mkdir(parents=True)
         (tap / 'Formula/domino.rb').write_text(build_release.formula_text(runtime, version, entry['sha256'], release_url))
@@ -121,10 +122,11 @@ def main():
     parser.add_argument('--apt-url', help='Override the apt HTTPS directory, e.g. the project Pages /apt/ directory')
     parser.add_argument('--sign-key')
     parser.add_argument('--previous-repo', type=Path)
+    parser.add_argument('--existing-deb', type=Path)
     args = parser.parse_args()
     report = prepare(args.release, args.output, release_repo=args.release_repo, tap_repo=args.tap_repo,
                      apt_repo=args.apt_repo, sign_key=args.sign_key, previous_repo=args.previous_repo,
-                     apt_url=args.apt_url)
+                     apt_url=args.apt_url, existing_deb=args.existing_deb)
     print(json.dumps({'output': str(args.output), **{key: value for key, value in report.items() if key != 'files'}}))
 
 

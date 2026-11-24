@@ -14,7 +14,12 @@ from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
 from unittest.mock import AsyncMock,Mock,patch
 
 import domino_cli as cli
+from tests.remote_transport import local_action_argv
 import domino_tui as ui
+
+from tests.locale_fixture import chinese_ui
+
+setUpModule, tearDownModule = chinese_ui()
 
 
 class UiParityTests(unittest.TestCase):
@@ -45,7 +50,7 @@ class UiParityTests(unittest.TestCase):
     def test_embedded_capture_options_work_without_an_installed_cli_or_network_probe(self):
         import shlex
         ssh=cli.SSH(cli.build_parser().parse_args(['lab','ui','--batch']));ssh.socket='/tmp/not-used'
-        command=shlex.split(ssh.action_argv('catch-options')[-1])
+        command=local_action_argv(ssh, 'catch-options')
         with tempfile.TemporaryDirectory() as directory:
             home=Path(directory);source=home/'.config/clash/config.yaml';source.parent.mkdir(parents=True)
             content=json.dumps({'mixed-port':17897,'proxies':[{'name':'fixture','type':'ss','server':'192.0.2.1','port':9,'cipher':'aes-128-gcm','password':'PRIVATE'}]})

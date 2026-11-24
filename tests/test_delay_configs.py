@@ -15,6 +15,10 @@ import domino_cli as cli
 import domino_subscriptions as subs
 import install_domino as control
 
+from tests.locale_fixture import chinese_ui
+
+setUpModule, tearDownModule = chinese_ui()
+
 CORE = Path(os.environ.get('DOMINO_TEST_CORE', str(Path.home() / '.local/share/domino/mihomo')))
 REAL_POPEN = subprocess.Popen
 
@@ -420,7 +424,9 @@ class ConfigDelayTests(unittest.TestCase):
             self.assertEqual(profile['mixed-port'], 0)
             self.assertEqual(profile['rules'], ['MATCH,DIRECT'])
             self.assertFalse(profile['tun']['enable'])
-            self.assertFalse(profile['dns']['enable'])
+            self.assertTrue(profile['dns']['enable'])
+            self.assertTrue(profile['dns']['use-system-hosts'])
+            self.assertEqual(profile['dns']['listen'], '')
             self.assertNotEqual(profile['external-controller'], '127.0.0.1:19091')
             return process
         from unittest.mock import MagicMock

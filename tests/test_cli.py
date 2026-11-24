@@ -70,6 +70,29 @@ class TargetTests(unittest.TestCase):
         self.assertNotIn(proxy, argv)
         self.assertIn(url, run.call_args.kwargs['input'])
 
+    def test_download_returns_only_final_response_usage_and_removes_private_headers(self):
+        captured = []
+        def response(arguments, **kwargs):
+            headers = Path(arguments[arguments.index('--dump-header') + 1])
+            captured.append(headers)
+            self.assertEqual(headers.stat().st_mode & 0o777, 0o600)
+            headers.write_text('HTTP/1.1 200 Connection established\r\n\r\n'
+                               'HTTP/2 302\r\nSubscription-Userinfo: upload=999; download=999; total=1\r\n'
+                               'Location: https://example.test/private-token\r\n\r\n'
+                               'HTTP/2 200\r\nSuBsCrIpTiOn-UsErInFo: upload=1; download=2; total=100\r\n'
+                               'Set-Cookie: PRIVATE\r\n\r\n')
+        with patch.object(tool, 'run', side_effect=response):
+            value = tool.download('https://example.test/config', Path('/tmp/unused'))
+        self.assertEqual(value, {'subscription-userinfo': 'upload=1; download=2; total=100'})
+        self.assertFalse(captured[0].exists())
+
+    def test_redirect_usage_is_not_mistaken_for_final_subscription_metadata(self):
+        def response(arguments, **kwargs):
+            Path(arguments[arguments.index('--dump-header') + 1]).write_text(
+                'HTTP/2 302\r\nSubscription-Userinfo: upload=1; download=2; total=100\r\n\r\nHTTP/2 200\r\n\r\n')
+        with patch.object(tool, 'run', side_effect=response):
+            self.assertEqual(tool.download('https://example.test/config', Path('/tmp/unused')), {})
+
     def test_subscription_user_agent_is_in_request_config_and_http_status_is_captured(self):
         with patch.object(tool,'run') as run:
             tool.download('https://example.test/sub?token=PRIVATE',Path('/tmp/profile'),'http://127.0.0.1:17897',

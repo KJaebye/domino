@@ -2,6 +2,7 @@
 # Copyright (C) 2026 KJaebye
 """Private named subscriptions; cache updates and transactional runtime switching."""
 from __future__ import annotations
+from domino_i18n import tr as _t
 
 import copy
 from datetime import datetime, timezone
@@ -29,8 +30,83 @@ CUSTOM_RULES = True
 GEO_FILES = ('Country.mmdb', 'geoip.metadb', 'geoip.dat', 'geosite.dat', 'ASN.mmdb')
 
 
+def subscription_usage(value):
+    """Keep only valid server-reported counters, never the raw response header."""
+    if not isinstance(value, str) or len(value) > 8192:
+        return None
+    fields = {}
+    for field in value.split(';'):
+        key, separator, number = field.strip().partition('=')
+        key, number = key.lower().strip(), number.strip()
+        if key not in ('upload', 'download', 'total', 'expire'):
+            continue
+        if key == 'expire' and not re.fullmatch(r'[0-9]{1,20}', number):
+            continue
+        if not separator or key in fields or not re.fullmatch(r'[0-9]{1,20}', number) or int(number) > 2**64 - 1:
+            return None
+        fields[key] = int(number)
+    return fields if all(key in fields for key in ('upload', 'download', 'total')) else None
+
+
+USAGE_MAX_AGE_SECONDS = 6 * 60 * 60
+
+
+def usage_summary(item):
+    usage = item.get('usage')
+    if not isinstance(usage, dict) or any(type(usage.get(key)) is not int or not 0 <= usage[key] <= 2**64 - 1
+                                          for key in ('upload', 'download', 'total')):
+        return None
+    now = datetime.now(timezone.utc)
+    used, total = usage['upload'] + usage['download'], usage['total']
+    status = ('exceeded' if used > total else 'critical' if used * 100 >= total * 90 else
+              'warning' if used * 100 >= total * 70 else 'normal') if total else 'unknown'
+    expires_at, expired = None, False
+    expiry = usage.get('expire')
+    if type(expiry) is int and expiry > 0:
+        try:
+            expiry_time = datetime.fromtimestamp(expiry, timezone.utc)
+            expires_at, expired = expiry_time.isoformat(timespec='seconds'), expiry_time <= now
+        except (ValueError, OverflowError, OSError):
+            pass
+    age = None
+    try:
+        checked = datetime.fromisoformat(str(item.get('usage_checked_at')).replace('Z', '+00:00'))
+        if checked.tzinfo is not None:
+            age = max(0, int((now - checked).total_seconds()))
+    except (ValueError, TypeError, OverflowError):
+        pass
+    stale = item.get('usage_error') == 'request_failed' or age is not None and age >= USAGE_MAX_AGE_SECONDS
+    return {'upload_bytes': usage['upload'], 'download_bytes': usage['download'], 'used_bytes': used,
+            'total_bytes': total, 'remaining_bytes': max(0, total - used) if total else None,
+            'percent_used': used * 100 / total if total else None, 'status': status,
+            'checked_at': item.get('usage_checked_at'), 'age_seconds': age,
+            'stale': stale, 'freshness': 'stale' if stale else 'fresh' if age is not None else 'unknown',
+            'expires_at': expires_at, 'expired': expired}
+
+
+def usage_cell(ctx, item):
+    usage = item.get('usage')
+    if usage is None:
+        message = {'request_failed': _t('获取失败'), 'no_subscription': _t('未关联订阅')}.get(item.get('usage_error'))
+        return (message or (_t('未提供') if item.get('usage_checked_at') else _t('未获取')), '2')
+    used, total = usage['used_bytes'], usage['total_bytes']
+    text = ctx.human_size(used) + ' / ' + (ctx.human_size(total) if total else _t('未知总量'))
+    if total:
+        # Truncate to avoid a green 69.99% value being displayed as yellow's 70.0%.
+        percentage = used * 1000 // total
+        text += f' ({percentage // 10}.{percentage % 10}%)'
+    if usage['status'] == 'exceeded':
+        text += _t(' 已超额')
+    if usage.get('expired'):
+        text += _t(' · 套餐已到期')
+    if usage['stale']:
+        text += _t(' · 刷新失败，沿用缓存') if item.get('usage_error')=='request_failed' else _t(' · 缓存待刷新')
+    tone = '31' if usage.get('expired') and usage['status'] != 'exceeded' else None
+    return text, tone or {'normal': '32', 'warning': '33', 'critical': '31', 'exceeded': '2', 'unknown': '2'}[usage['status']]
+
+
 def _invalid():
-    raise DomainError('配置登记或备份数据无效。', code='INVALID_REGISTRATION', exit_code=2)
+    raise DomainError(_t('配置登记或备份数据无效。'), code='INVALID_REGISTRATION', exit_code=2)
 
 
 def _source_identity(kind, value):
@@ -324,12 +400,12 @@ class Manager:
         self.index = self.root / 'index.json'
         for path in [ctx.HOME / '.config', self.root.parent, self.root, self.index]:
             if path.is_symlink():
-                raise ctx.InstallError('配置存储路径不能是符号链接。')
+                raise ctx.InstallError(_t('配置存储路径不能是符号链接。'))
         try:
             self.registry = json.loads(self.index.read_text()) if self.index.exists() else {'schema': 1, 'items': []}
             _validate_registry(self.registry)
         except (OSError, ValueError, TypeError, DomainError):
-            raise ctx.InstallError('配置目录格式不受支持。') from None
+            raise ctx.InstallError(_t('配置目录格式不受支持。')) from None
         self.app = ctx.current_installation()[0] if hasattr(ctx, 'current_installation') else ctx.APP
         self.data = self.app / 'data'
 
@@ -340,7 +416,7 @@ class Manager:
 
     def name(self, value):
         if not value or len(value) > 100 or value.strip() != value or any(ord(c) < 32 or ord(c) == 127 for c in value):
-            raise self.ctx.InstallError('配置名称需为 1–100 个字符，不能含控制字符或首尾空白。')
+            raise self.ctx.InstallError(_t('配置名称需为 1–100 个字符，不能含控制字符或首尾空白。'))
         return value
 
     def find(self, name):
@@ -348,12 +424,12 @@ class Manager:
         for item in self.registry['items']:
             if item['name'] == name:
                 return item
-        raise self.ctx.InstallError('未找到配置：' + name,code='SUBSCRIPTION_NOT_FOUND',exit_code=3)
+        raise self.ctx.InstallError(_t('未找到配置：') + name,code='SUBSCRIPTION_NOT_FOUND',exit_code=3)
 
     def available_name(self, name):
         self.name(name)
         if any(item['name'] == name for item in self.registry['items']):
-            raise self.ctx.InstallError('配置名称已存在：' + name,code='SUBSCRIPTION_EXISTS',exit_code=6)
+            raise self.ctx.InstallError(_t('配置名称已存在：') + name,code='SUBSCRIPTION_EXISTS',exit_code=6)
 
     def unique_name(self, value):
         base = self.name(value[:100])
@@ -367,11 +443,11 @@ class Manager:
     def url(self, value):
         if value is None:
             if not sys.stdin.isatty():
-                raise self.ctx.InstallError('隐藏输入需要交互终端；脚本请使用 --url。')
-            value = getpass.getpass('完整配置订阅地址（隐藏输入）：')
+                raise self.ctx.InstallError(_t('隐藏输入需要交互终端；脚本请使用 --url。'))
+            value = getpass.getpass(_t('完整配置订阅地址（隐藏输入）：'))
         parsed = urlsplit(value)
         if parsed.scheme != 'https' or not parsed.hostname or parsed.username or parsed.password or any(c.isspace() for c in value):
-            raise self.ctx.InstallError('订阅地址必须是无嵌入用户名和密码的 HTTPS URL。',code='INVALID_SUBSCRIPTION_URL',exit_code=2)
+            raise self.ctx.InstallError(_t('订阅地址必须是无嵌入用户名和密码的 HTTPS URL。'),code='INVALID_SUBSCRIPTION_URL',exit_code=2)
         return value
 
     def active_id(self):
@@ -381,13 +457,13 @@ class Manager:
     def config(self):
         path = self.data / 'config.json'
         if not path.is_file() or not (self.app / 'mihomo').is_file():
-            raise self.ctx.InstallError('尚未安装运行环境，请先运行安装程序，再下载或切换订阅。')
+            raise self.ctx.InstallError(_t('尚未安装运行环境，请先运行安装程序，再下载或切换订阅。'))
         return json.loads(path.read_text())
 
     def cached(self, item):
         revision = item.get('revision', '')
         if not re.fullmatch(r'[a-f0-9]{32}', revision):
-            raise self.ctx.InstallError('订阅尚未下载，请先更新或使用该订阅。')
+            raise self.ctx.InstallError(_t('订阅尚未下载，请先更新或使用该订阅。'))
         path = self.root / 'cache' / revision
         _validate_cache(path)
         return path
@@ -398,9 +474,11 @@ class Manager:
         for item in self.registry['items']:
             values.append({k: item.get(k) for k in ['name', 'kind', 'updated_at', 'node_count', 'group_count']})
             values[-1].update(active=item['id'] == active, cached=bool(item.get('revision')),
-                              host=urlsplit(item.get('url', '')).hostname)
+                              host=urlsplit(item.get('url', '')).hostname,
+                              usage=usage_summary(item), usage_checked_at=item.get('usage_checked_at'),
+                              usage_error=item.get('usage_error'))
         current = next((v['name'] for v in values if v['active']), None)
-        return {'active': current, 'current_source': current or ('未关联订阅的当前配置' if (self.data / 'config.json').exists() else '尚未初始化'),
+        return {'active': current, 'current_source': current or (_t('未关联订阅的当前配置') if (self.data / 'config.json').exists() else _t('尚未初始化')),
                 'configs': values}
 
     def show(self, as_json):
@@ -409,19 +487,32 @@ class Manager:
             self.ctx.show(result, True)
             return
         pending = not (self.data/'config.json').is_file() or self.ctx.subscription_pending(self.app)
-        current = result['active'] or ('待添加订阅' if pending else '独立配置（未绑定订阅）')
-        self.ctx.human_header('配置',f'{len(result["configs"])} 个配置 · 在线订阅 / 快照')
-        self.ctx.human_row('当前配置',(current,'1'))
+        current = result['active'] or (_t('待添加订阅') if pending else _t('独立配置（未绑定订阅）'))
+        self.ctx.human_header(_t('配置'),_t('{0} 个配置 · 在线订阅 / 快照', len(result['configs'])))
+        verbose=getattr(self.ctx,'OUTPUT_VERBOSE',False)
+        self.ctx.human_row(_t('当前配置'),(current,'1'))
+        active = next((item for item in result['configs'] if item['active']), None)
+        if active:
+            if verbose:self.ctx.human_row(_t('套餐流量'), usage_cell(self.ctx, active))
+            usage = active.get('usage')
+            if usage:
+                if verbose:self.ctx.human_row(_t('套餐剩余'), self.ctx.human_size(usage['remaining_bytes']) if usage['remaining_bytes'] is not None else _t('未知总量'))
+                if verbose or usage['expires_at']:
+                    self.ctx.human_row(_t('套餐到期'), self.ctx.human_time(usage['expires_at']) if usage['expires_at'] else _t('未提供'))
+            if verbose and active.get('usage_checked_at'):
+                self.ctx.human_row(_t('流量更新'), self.ctx.human_time(active['usage_checked_at']))
         if not result['configs']:
-            print('\n  添加订阅：domino add "名称"')
+            print(_t('\n  添加订阅：domino add "名称"'))
             return
         print()
         rows=[]
         for item in result['configs']:
             name = ('● ' if item['active'] else '  ') + item['name']
-            rows.append([(name,'32' if item['active'] else None),'在线订阅' if item['kind'] == 'subscription' else '配置快照',
-                         item['node_count'],self.ctx.human_time(item['updated_at']) if item['updated_at'] else '尚未下载',item['host'] or '本地'])
-        self.ctx.human_table(['配置名称','类型','节点','更新时间','来源'],rows)
+            rows.append([(name,'32' if item['active'] else None),_t('在线订阅') if item['kind'] == 'subscription' else _t('配置快照'),
+                         item['node_count'],usage_cell(self.ctx, item),self.ctx.human_time(item['usage_checked_at']) if item['usage_checked_at'] else _t('尚未更新'),item['host'] or _t('本地')])
+        headers=[_t('配置名称'),_t('类型'),_t('节点'),_t('套餐已用 / 总量'),_t('流量更新'),_t('来源')]
+        self.ctx.human_table(headers if verbose else headers[:4],rows if verbose else [r[:4] for r in rows])
+        if verbose:print(_t('\n  套餐数据来自订阅服务；domino list --refresh-usage 仅刷新流量，不切换或重载配置。'))
 
     def register_current(self, url, name=None):
         url = self.url(url)
@@ -460,9 +551,9 @@ class Manager:
             self.ctx.write_private(data / 'config.json', json.dumps(profile, ensure_ascii=False))
             binary = Path(core).expanduser() if core else self.app / 'mihomo'
             if not binary.is_file():
-                raise self.ctx.InstallError('缺少配置校验内核，请先安装 Domino 或使用 --core。')
+                raise self.ctx.InstallError(_t('缺少配置校验内核，请先安装 Domino 或使用 --core。'))
             self.ctx.run([str(binary), '-t', '-d', str(data), '-f', str(data / 'config.json')],
-                         capture_output=True, text=True, timeout=90, stage='本机配置校验')
+                         capture_output=True, text=True, timeout=90, stage=_t('本机配置校验'))
             return self.register_prepared(bundle, {'version': 1, 'kind': 'snapshot'}, activate=False), True
 
     def register_prepared(self, bundle, envelope, *, activate=True):
@@ -486,7 +577,7 @@ class Manager:
                         if provider.get('type') in ('http', 'file') and (not value or not (prepared / value).is_file()):
                             _invalid()
                 metadata = origin_info(baseline, prepared / 'config.json')
-                metadata.update(capture_kind='legacy-runtime-snapshot', origin_label='旧版运行配置快照')
+                metadata.update(capture_kind='legacy-runtime-snapshot', origin_label=_t('旧版运行配置快照'))
                 metadata['identity'] = _source_identity('legacy-runtime-snapshot', metadata['parsed_digest'])
                 create_source(baseline, prepared / 'config.json', source, metadata=metadata, _offline=True)
                 # The local materialized source supplies portable provider/cert refs.
@@ -603,15 +694,15 @@ class Manager:
             if snapshot:
                 raw, source = dict(current, rules=self.ctx.base_rules(self.data, current)), self.data / 'config.json'
                 metadata = origin_info(raw, source)
-                metadata.update(capture_kind='runtime-snapshot', origin_label='当前运行配置快照')
+                metadata.update(capture_kind='runtime-snapshot', origin_label=_t('当前运行配置快照'))
                 metadata['identity'] = _source_identity('runtime-snapshot', metadata['parsed_digest'])
             else:
                 source = work / 'subscription.yaml'
-                tool.download(item['url'], source, proxy, user_agent=tool.SUBSCRIPTION_USER_AGENT)
+                headers = tool.download(item['url'], source, proxy, user_agent=tool.SUBSCRIPTION_USER_AGENT)
                 raw = tool.load_yaml(source)
                 metadata = origin_info(raw, source, subscription=True)
             if not isinstance(raw, dict) or not (raw.get('proxies') or raw.get('proxy-providers')):
-                raise self.ctx.InstallError('订阅必须返回完整 Clash/Mihomo 配置；不支持节点链接列表或登录页面。')
+                raise self.ctx.InstallError(_t('订阅必须返回完整 Clash/Mihomo 配置；不支持节点链接列表或登录页面。'))
             data = work / 'data'
             data.mkdir(mode=0o700)
             try:
@@ -621,7 +712,7 @@ class Manager:
                 runtime_source = data / 'source'
                 profile = derive_runtime(runtime_source, data, {}, current['mixed-port'], int(current['external-controller'].rsplit(':', 1)[1]))
             except DomainError:
-                raise self.ctx.InstallError('订阅源配置或依赖无效，未更改运行配置。') from None
+                raise self.ctx.InstallError(_t('订阅源配置或依赖无效，未更改运行配置。')) from None
             for name in GEO_FILES:
                 if (self.data / name).is_file() and not (data / name).exists():
                     self.ctx.write_private(data / name, (self.data / name).read_bytes())
@@ -634,7 +725,34 @@ class Manager:
         updated = copy.deepcopy(item)
         updated.update(revision=revision, updated_at=datetime.now(timezone.utc).isoformat(timespec='seconds'),
                        node_count=node_count, group_count=len(profile.get('proxy-groups', [])))
+        if not snapshot:
+            updated.update(usage=subscription_usage(headers.get('subscription-userinfo') if isinstance(headers, dict) else None),
+                           usage_checked_at=updated['updated_at'])
+            updated.pop('usage_error', None)
         return updated
+
+    def refresh_usage(self):
+        """Refresh account counters without updating source caches or the live core."""
+        import domino_cli as tool
+        proxy = tool.discover_proxy()
+        responses = {}
+        for item in self.registry['items']:
+            try:
+                url = item.get('url') or self.source_subscription_url(item)
+            except (DomainError, OSError, ValueError):
+                item.update(usage=None, usage_error='no_subscription')
+                continue
+            try:
+                if url not in responses:
+                    responses[url] = tool.download_subscription_usage(url, proxy)
+                headers = responses[url]
+                item.update(usage=subscription_usage(headers.get('subscription-userinfo') if isinstance(headers, dict) else None),
+                            usage_checked_at=datetime.now(timezone.utc).isoformat(timespec='seconds'))
+                item.pop('usage_error', None)
+            except (DomainError, OSError, RuntimeError, ValueError):
+                item['usage_error'] = 'request_failed'
+        if self.registry['items']:
+            self.save()
 
     def replace(self, item):
         self.registry['items'] = [item if old['id'] == item['id'] else old for old in self.registry['items']]
@@ -656,6 +774,8 @@ class Manager:
         candidate = json.loads((cached / 'config.json').read_text())
         base = list(candidate.get('rules', []))
         candidate = self.ctx.compose_custom_rules(candidate)
+        from domino_sources import independent_dns
+        candidate['dns'] = independent_dns(candidate)
         for key in ['mixed-port', 'external-controller', 'secret']:
             candidate[key] = current[key]
         candidate['mode'] = runtime.get('mode', current.get('mode', 'rule'))
@@ -748,8 +868,8 @@ class Manager:
                 shutil.rmtree(resources, ignore_errors=True)
                 (self.data / ('.subscription-' + revision + '.json')).unlink(missing_ok=True)
             except BaseException as recovery_error:
-                raise RecoveryError('订阅应用失败且恢复未完成；备份：' + str(backup)) from recovery_error
-            raise self.ctx.InstallError('订阅未应用，已恢复原配置；备份：' + str(backup),code='APPLY_ROLLED_BACK',effect='rolled_back') from None
+                raise RecoveryError(_t('订阅应用失败且恢复未完成；备份：') + str(backup)) from recovery_error
+            raise self.ctx.InstallError(_t('订阅未应用，已恢复原配置；备份：') + str(backup),code='APPLY_ROLLED_BACK',effect='rolled_back') from None
         # Keep only the active resource copy; the previous one is in the backup.
         for path in resources.parent.iterdir():
             if path != resources and path.is_dir() and not path.is_symlink():
@@ -802,14 +922,14 @@ class Manager:
                             self.ctx.write_private(marker, marker_before)
                     shutil.rmtree(self.cached(item), ignore_errors=True)
                 except BaseException as error:
-                    raise RecoveryError('当前配置快照登记失败且恢复未完成。') from error
+                    raise RecoveryError(_t('当前配置快照登记失败且恢复未完成。')) from error
                 raise
 
     def source_subscription_url(self, item):
         """Recover only the captured Clash profile's explicitly recorded subscription."""
         import domino_cli as tool
         from domino_sources import read_source
-        message = '本地快照没有可用订阅地址；请在“修改地址”中填写 HTTPS 订阅地址后更新配置。'
+        message = _t('本地快照没有可用订阅地址；请在“修改地址”中填写 HTTPS 订阅地址后更新配置。')
         try:
             _, origin = read_source(self.cached(item) / 'source')
             kind = origin.get('capture_kind')
@@ -857,9 +977,9 @@ class Manager:
 
     def execute(self, args, *, render=True):
         if args.url is not None and not (args.add or args.set_url):
-            raise self.ctx.InstallError('--url 需用于 domino add 或 domino set-url。')
+            raise self.ctx.InstallError(_t('--url 需用于 domino add 或 domino set-url。'))
         if args.new_name is not None and not args.rename:
-            raise self.ctx.InstallError('--new-name 需与 --rename 配合使用。')
+            raise self.ctx.InstallError(_t('--new-name 需与 --rename 配合使用。'))
         if args.add:
             self.available_name(args.add)
             self.registry['items'].append({'id': uuid.uuid4().hex, 'name': args.add, 'kind': 'subscription', 'url': self.url(args.url)})
@@ -869,7 +989,7 @@ class Manager:
         elif args.remove:
             item = self.find(args.remove)
             if item['id'] == self.active_id():
-                raise self.ctx.InstallError('不能删除当前正在使用的配置，请先切换到其他配置。')
+                raise self.ctx.InstallError(_t('不能删除当前正在使用的配置，请先切换到其他配置。'))
             self.registry['items'].remove(item)
             self.save()
             if item.get('revision'):
@@ -886,7 +1006,11 @@ class Manager:
             item.pop('updated_at', None)
             item.pop('node_count', None)
             item.pop('group_count', None)
+            for key in ('usage', 'usage_checked_at', 'usage_error'):
+                item.pop(key, None)
             self.save()
+        elif getattr(args, 'refresh_usage', False):
+            self.refresh_usage()
         elif args.use:
             item = self.find(args.use)
             fetched = not item.get('revision')
@@ -902,8 +1026,10 @@ class Manager:
             self.update(self.find(args.update))
         elif args.update_all:
             failed = []
+            attempted=0
             for item in list(self.registry['items']):
                 if item.get('url'):
+                    attempted+=1
                     try:
                         self.update(item)
                     except RecoveryError:
@@ -912,8 +1038,19 @@ class Manager:
                         self.registry = json.loads(self.index.read_text())
                         failed.append(item['name'])
             if failed:
-                raise self.ctx.InstallError('部分订阅更新失败，保留各自旧配置：' + '、'.join(failed))
-        if render: self.show(args.json)
+                raise self.ctx.InstallError(_t('已更新 {0} 个，失败 {1} 个；失败项保留旧配置：{2}',attempted-len(failed),len(failed),'、'.join(failed)))
+        if render:
+            changes=[('add',_t('已添加：{0}')),('use',_t('已切换：{0}')),('update',_t('已更新：{0}')),
+                     ('remove',_t('已删除：{0}')),('set_url',_t('已修改订阅地址：{0}')),('import_current',_t('已保存快照：{0}'))]
+            changed=any(getattr(args,key,None) for key,_ in changes) or args.rename or args.update_all
+            if args.json or not changed:self.show(args.json)
+            else:
+                if args.rename:summary=_t('已重命名：{0} → {1}',args.rename,args.new_name)
+                elif args.update_all:summary=_t('已更新 {0} 个订阅',attempted)
+                else:summary=next(message.format(getattr(args,key)) for key,message in changes if getattr(args,key,None))
+                self.ctx.human_header(_t('配置'),summary)
+                if args.use or args.update or args.update_all:self.ctx.human_row(_t('出网检测'),_t('未检测'))
+                if getattr(self.ctx,'OUTPUT_VERBOSE',False):self.show(False)
         return self.listing()
 
 

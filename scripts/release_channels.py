@@ -173,7 +173,7 @@ def pypi_files(work):
     return sums
 
 
-def prepare(work, source):
+def prepare(work, source, candidate=None, existing_deb=None):
     plan = plan_at(work)
     requested = plan['version']
     actual_sha = subprocess.check_output(['git', '-C', str(source), 'rev-parse', 'HEAD'], text=True).strip()
@@ -185,7 +185,46 @@ def prepare(work, source):
     if declared != requested:
         raise ValueError('Tag and CLI version differ')
     release = work / 'release'
-    if plan['existing_release']:
+    candidate_review = None
+    if candidate is not None:
+        try:
+            from scripts import candidate_release
+        except ModuleNotFoundError:
+            import candidate_release
+        candidate_review = candidate_release.review(candidate, source)
+        if not candidate_review['eligible_for_release_preparation']:
+            raise ValueError('; '.join(candidate_review['blockers']))
+        original = candidate / 'output/dist/release'
+        existing_deb = candidate / f'output/dist/distribution/domino-proxy_{requested}-1_all.deb'
+        if plan['existing_release']:
+            # Channel recovery always takes the official bytes as its source of
+            # truth. The same reviewed candidate may corroborate them; it can
+            # never replace them or introduce a different same-version build.
+            recovered = prepare(work, source, existing_deb=existing_deb)
+            for path in original.iterdir():
+                published = release / path.name
+                if not published.is_file() or hashlib.sha256(published.read_bytes()).hexdigest() != hashlib.sha256(path.read_bytes()).hexdigest():
+                    raise ValueError('Published original differs from the reviewed candidate: ' + path.name)
+            sdist = f'domino_proxy-{requested}.tar.gz'
+            if hashlib.sha256((release / sdist).read_bytes()).hexdigest() != candidate_review['source_distribution_sha256']:
+                raise ValueError('Published source distribution differs from the reviewed candidate')
+            deb = work / f'channels/distribution/domino-proxy_{requested}-1_all.deb'
+            if hashlib.sha256(deb.read_bytes()).hexdigest() != candidate_review['deb_sha256']:
+                raise ValueError('Recovered APT package differs from the original CI candidate')
+            recovered['ci_candidate'] = candidate_review
+            write_json(work / 'plan.json', recovered)
+            return recovered
+        allowed = {f'domino-runtime-{requested}.tar.gz', f'domino_proxy-{requested}-py3-none-any.whl',
+                   'release.json', 'SHA256SUMS', 'domino.rb', 'domino.rb.in'}
+        if {path.name for path in original.iterdir()} - allowed:
+            raise ValueError('Unexpected files in candidate release directory')
+        shutil.copytree(original, release)
+        sdist = f'domino_proxy-{requested}.tar.gz'
+        shutil.copyfile(candidate / 'output/dist/pypi' / sdist, release / sdist)
+        names = [f'domino_proxy-{requested}-py3-none-any.whl', sdist]
+        (release / 'PYPI-SHA256SUMS').write_text(''.join(
+            hashlib.sha256((release / name).read_bytes()).hexdigest() + '  ' + name + '\n' for name in names))
+    elif plan['existing_release']:
         release.mkdir()
         allowed = {f'domino-runtime-{requested}.tar.gz', f'domino_proxy-{requested}-py3-none-any.whl',
                    f'domino_proxy-{requested}.tar.gz', 'release.json', 'SHA256SUMS', 'PYPI-SHA256SUMS',
@@ -215,7 +254,13 @@ def prepare(work, source):
     write_json(work / 'artifact-verification.json', report)
     subprocess.run([sys.executable, '-m', 'twine', 'check', *[str(release / name) for name in sorted(sums)]], check=True)
     channels = prepare_channels.prepare(release, work / 'channels', release_repo=plan['repository'],
-        tap_repo=plan['tap_repository'], apt_repo=plan['repository'], apt_url=plan['apt_url'])
+        tap_repo=plan['tap_repository'], apt_repo=plan['repository'], apt_url=plan['apt_url'],
+        existing_deb=existing_deb)
+    if candidate_review is not None:
+        deb = work / f'channels/distribution/domino-proxy_{requested}-1_all.deb'
+        if hashlib.sha256(deb.read_bytes()).hexdigest() != candidate_review['deb_sha256']:
+            raise ValueError('Local APT package differs from the original CI candidate bytes')
+        plan['ci_candidate'] = candidate_review
     plan.update(pypi_files=sums, files={p.name: hashlib.sha256(p.read_bytes()).hexdigest()
                                       for p in sorted(release.iterdir()) if p.is_file()},
                 deb=channels['version'] + '-1')
@@ -414,7 +459,12 @@ def prepare_apt(work):
     with nullcontext() if local else signing_home(private):
         report = prepare_channels.prepare(work / 'release', work / 'apt-signed', release_repo=plan['repository'],
             tap_repo=plan['tap_repository'], apt_repo=plan['repository'], apt_url=plan['apt_url'],
-            sign_key=key, previous_repo=previous if old else None)
+            sign_key=key, previous_repo=previous if old else None,
+            existing_deb=work / f'channels/distribution/domino-proxy_{plan["version"]}-1_all.deb')
+    if 'ci_candidate' in plan:
+        deb = work / f'apt-signed/distribution/domino-proxy_{plan["version"]}-1_all.deb'
+        if hashlib.sha256(deb.read_bytes()).hexdigest() != plan['ci_candidate']['deb_sha256']:
+            raise ValueError('Signed APT staging changed the original CI package bytes')
     public = work / 'pages'
     public.mkdir()
     shutil.copytree(work / 'apt-signed/apt-site', public / 'apt')
@@ -614,7 +664,7 @@ def keychain_password(service, username):
     return Keyring().get_password(service, username)
 
 
-def publish_local(work, repo, requested, selected, credentials, dry_run=False):
+def publish_local(work, repo, requested, selected, credentials, dry_run=False, candidate=None):
     """One local workflow. Each channel has its own recoverable result."""
     selected_channels = ['pypi', 'brew', 'apt'] if selected == 'all' else [selected]
     previous_api = os.environ.get('RELEASE_LOCAL_API')
@@ -636,7 +686,7 @@ def publish_local(work, repo, requested, selected, credentials, dry_run=False):
                 subprocess.run(['git', '-c', 'http.version=HTTP/1.1', 'clone', '--quiet', '--depth', '1',
                                 '--single-branch', '--branch', 'v' + requested,
                                 f'https://github.com/{repo}.git', str(source)], check=True, timeout=180)
-            prepare(work, source)
+            prepare(work, source, candidate=candidate) if candidate is not None else prepare(work, source)
         results['prepare'] = 'success'
         if dry_run:
             return summary(work, results, selected, True)
@@ -725,6 +775,7 @@ def main():
     parser.add_argument('--install', action='store_true')
     parser.add_argument('--channels', choices=['all', 'pypi', 'brew', 'apt'], default='all')
     parser.add_argument('--dry-run', action='store_true')
+    parser.add_argument('--candidate', type=Path, help='Import an exact, fully checked stable CI candidate; never relabel a development build')
     parser.add_argument('--credentials-dir', type=Path, default=Path.home() / '.local/share/domino-release')
     args = parser.parse_args()
     operation = args.operation
@@ -732,7 +783,8 @@ def main():
         requested = version(args.version or '')
         work = args.work or prepare_channels.ROOT / 'dist' / f'local-release-{requested}-{time.time_ns()}'
         work.parent.mkdir(parents=True, exist_ok=True)
-        result = publish_local(work, args.repo, requested, args.channels, args.credentials_dir, args.dry_run)
+        result = publish_local(work, args.repo, requested, args.channels, args.credentials_dir, args.dry_run,
+                               candidate=args.candidate.resolve() if args.candidate else None)
         print(json.dumps({'work': str(work), **result}))
         return
     args.work = args.work or Path('release-work')
@@ -740,7 +792,7 @@ def main():
         resolve(args.work, args.repo, args.version or '', os.environ.get('RELEASE_TAP_REPOSITORY') or None,
                 os.environ.get('RELEASE_APT_URL') or None, os.environ.get('RELEASE_APT_REPOSITORY') or None)
     elif operation == 'prepare':
-        prepare(args.work, args.source.resolve())
+        prepare(args.work, args.source.resolve(), candidate=args.candidate.resolve() if args.candidate else None)
     elif operation == 'summary':
         needs = json.loads(os.environ['RELEASE_JOB_RESULTS'])
         results = {name: job['result'] for name, job in needs.items()}

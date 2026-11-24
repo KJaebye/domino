@@ -20,6 +20,7 @@ import unittest
 from unittest.mock import patch
 
 import domino_cli as tool
+from tests.remote_transport import embedded_command
 import domino_sources as sources
 
 
@@ -314,7 +315,7 @@ class SourceDeliveryTests(unittest.TestCase):
         ssh.socket = str(self.home / 'never-opened-control-socket')
         for action in ('scan', 'configs', 'agent', 'catch-options'):
             with self.subTest(action=action):
-                command = shlex.split(ssh.action_argv(action)[-1])
+                command = embedded_command(ssh.action_argv(action))
                 self.assertEqual(command[:2], ['python3', '-c'])
                 self.assertEqual(command[-1], action)
                 wrapper = ast.parse(command[2])

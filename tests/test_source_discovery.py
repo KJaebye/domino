@@ -12,6 +12,10 @@ from unittest.mock import patch
 import domino_cli as cli
 import domino_sources as sources
 
+from tests.locale_fixture import chinese_ui
+
+setUpModule, tearDownModule = chinese_ui()
+
 
 class ClientDiscoveryTests(unittest.TestCase):
     def setUp(self):

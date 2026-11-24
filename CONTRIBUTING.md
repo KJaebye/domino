@@ -52,14 +52,16 @@ DOMINO_TEST_CORE="$PWD/.test-resources/mihomo" .venv/bin/python scripts/verify.p
 
 测试使用临时 HOME、合成配置、受控 HTTP 服务和临时内核。请勿通过切换真实配置、下载私人订阅或重启正在使用的服务验证改动。没有 `DOMINO_TEST_CORE` 时，临时内核集成测试会明确跳过；`--require-core` 禁止这种跳过。
 
-日常 push、PR 和标签推送不自动运行完整 GitHub Actions 矩阵。发版前可在 Actions 中手动运行 `Verify`，或运行会先执行完整验证的 `Release artifacts`；上传 PyPI 使用独立的手动工作流 `Publish to PyPI`。
+断言中文界面的测试模块通过 `tests.locale_fixture.chinese_ui()` 明确设置并在模块结束时恢复语言环境，不依赖产品默认语言或开发机偏好。默认英文、偏好持久化和中英文切换由独立的 `test_i18n` 验证；不要用全局强制中文掩盖默认英文行为。
+
+日常 push、PR 和标签推送不自动运行本仓库的完整 GitHub Actions 矩阵。当前日常 CI 由 `oetree-infra` 轮询可信分支或手动触发，在自托管 runner 执行；合并 main 不是运行 CI 的前提。PyPI、Homebrew 与 APT 使用本机统一发布入口，凭据留在本机，见 [分发指南](docs/DISTRIBUTION.md)。
 
 ## 提交与发布
 
 - 使用 `domino [USER@IP] COMMAND` 语法，配置管理使用顶层命令。
 - 保留普通 JSON 和 Agent 协议的兼容性；人类可读输出不要进入机器结果。
 - 新增模块同步更新 `CLI_MODULES`、打包配置和 SSH 分发；新增依赖说明其用途。
-- 功能与修复记录到 `CHANGELOG.md`，CLI 与包版本保持一致，使用三段 `0.x.y`。
+- 功能与修复记录到 `CHANGELOG.md`，CLI 与包版本保持一致，使用三段 `X.Y.Z`。
 - 不提交用户配置、订阅链接、密钥、私有导出包、内核二进制或本机验证报告。
 - PR 说明实际变化、验证结果和未验证的平台。构建不会自动安装或发布。
 

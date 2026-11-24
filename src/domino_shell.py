@@ -17,6 +17,16 @@ import shlex
 import sys
 from typing import Optional
 
+def _t(message, *values):
+    # Shell startup also supports a standalone copy of this helper. Localization
+    # must never become a prerequisite for restoring the terminal environment.
+    try:
+        from domino_i18n import tr
+    except ModuleNotFoundError:
+        return message.format(*values) if values else message
+    return tr(message, *values)
+
+
 VARIABLES = ('http_proxy', 'https_proxy', 'HTTP_PROXY', 'HTTPS_PROXY',
              'all_proxy', 'ALL_PROXY', 'no_proxy', 'NO_PROXY')
 NO_PROXY = 'localhost,127.0.0.1,::1,.local,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16'
@@ -91,22 +101,41 @@ export NO_PROXY="$no_proxy"
 def display_value(name: str, value: Optional[str]) -> str:
     """Display proxy endpoints without credentials, paths or terminal controls."""
     if value is None:
-        return '未设置'
+        return _t('未设置')
     if not value:
-        return '空值'
+        return _t('空值')
     if name.lower() == 'no_proxy':
-        return value if re.fullmatch(r'[A-Za-z0-9:.,*/_ -]+', value) else '已设置（值已隐藏）'
+        return value if re.fullmatch(r'[A-Za-z0-9:.,*/_ -]+', value) else _t('已设置（值已隐藏）')
     from urllib.parse import urlsplit
     try:
         url = urlsplit(value)
         if url.scheme not in ('http', 'https', 'socks4', 'socks4a', 'socks5', 'socks5h') or not url.hostname:
-            return '已设置（值已隐藏）'
+            return _t('已设置（值已隐藏）')
         host = '[' + url.hostname + ']' if ':' in url.hostname else url.hostname
         if not all(c.isprintable() for c in host):
-            return '已设置（值已隐藏）'
+            return _t('已设置（值已隐藏）')
         return url.scheme + '://' + host + (':' + str(url.port) if url.port else '')
     except ValueError:
-        return '已设置（值已隐藏）'
+        return _t('已设置（值已隐藏）')
+
+
+def current_proxy_rows(environment):
+    """Describe exported proxy variables after parent-shell synchronization."""
+    names = ('http_proxy', 'https_proxy', 'all_proxy')
+    if not any(environment.get(name) for lower in names for name in (lower, lower.upper())):
+        return [(_t('当前代理'), _t('未设置'))]
+    rows = []
+    for lower, label in zip(names, ('HTTP', 'HTTPS', 'ALL_PROXY')):
+        upper = lower.upper()
+        value = environment.get(lower)
+        if value == environment.get(upper):
+            if rows and lower == 'https_proxy' and environment.get('http_proxy') == value == environment.get('HTTP_PROXY'):
+                rows[-1] = ('HTTP / HTTPS', rows[-1][1])
+            else:
+                rows.append((label, display_value(lower, value)))
+        else:
+            rows.extend((name, display_value(name, environment.get(name))) for name in (lower, upper))
+    return rows
 
 
 def _desired(port: int) -> dict:
@@ -229,9 +258,9 @@ def sync_state(app: Path, current: dict, *, metadata: str = '', pid: str = '',
     commands.append(f'export {STATE_VAR}={shlex.quote(encoded)}')
     manual = sum(name not in owned and (reported[name]['present'] or name in detached)
                  for name in VARIABLES)
-    summary = 'Domino 已接管终端代理' if len(owned)==len(VARIABLES) else 'Domino 已接管部分变量' if owned else '使用原有代理设置'
-    if manual:summary+=' · 保留手动设置'
-    if readonly_count:summary+=' · 跳过只读变量'
+    summary = _t('Domino 已接管终端代理') if len(owned)==len(VARIABLES) else _t('Domino 已接管部分变量') if owned else _t('使用原有代理设置')
+    if manual:summary+=_t(' · 保留手动设置')
+    if readonly_count:summary+=_t(' · 跳过只读变量')
     commands.append(f'_DOMINO_SHELL_SUMMARY={shlex.quote(summary)}')
     if intent in ('on', 'off') and readonly_count:
         commands.append("printf '%s\\n' 'Domino: readonly proxy parameters skipped; terminal application is partial.' >&2")
@@ -277,6 +306,7 @@ def integration(app: Path, python: str, legacy_port: Optional[int] = None) -> st
     helper = app / 'cli/domino_shell.py'
     executable = shlex.join(python if isinstance(python, (list, tuple)) else [python])
     command = f'{executable} -I {shlex.quote(str(helper))} sync --app {shlex.quote(str(app))}'
+    summary_command=f'{executable} -I {shlex.quote(str(helper))} summary --app {shlex.quote(str(app))}'
     if legacy_port is not None:
         if type(legacy_port) is not int or not 1024 <= legacy_port <= 65535:
             raise ValueError('Invalid legacy proxy port')
@@ -302,7 +332,7 @@ _domino_shell_collect() {
 ''' + _collect_source() + '''
 }
 _domino_shell_sync() {
-  _domino_sync_code=$(_domino_shell_collect "${1-auto}" | ''' + command + ''' 2>/dev/null) || {
+  _domino_sync_code=$(_domino_shell_collect "${1-auto}" | DOMINO_LANG="${2-${DOMINO_LANG-}}" ''' + command + ''' 2>/dev/null) || {
     _DOMINO_SHELL_SUMMARY=unavailable
     unset _domino_sync_code
     return 0
@@ -321,8 +351,16 @@ case $- in
     domino() {
       local _domino_rc _domino_intent=auto _domino_show_status=
       local _domino_action=status _domino_safe=1 _domino_json= _domino_target= _domino_argument
+      local _domino_details= _domino_action_seen= _domino_language=${DOMINO_LANG-}
       command domino "$@"
       _domino_rc=$?
+      while [ "$#" -gt 0 ]; do
+        case "$1" in
+          --lang) _domino_language=${2-}; shift; [ "$#" -eq 0 ] || shift;;
+          --lang=*) _domino_language=${1#--lang=}; shift;;
+          *) break;;
+        esac
+      done
       _domino_argument=${1-}
       while [ "${_domino_argument%.}" != "$_domino_argument" ]; do
         _domino_argument=${_domino_argument%.}
@@ -333,7 +371,6 @@ case $- in
       esac
       if [ "$_domino_rc" -eq 0 ] && [ "${1-}" = shell ]; then
         shift
-        case "${1-}" in on|off|status) _domino_action=$1; shift;; esac
         while [ "$#" -gt 0 ]; do
           _domino_argument=$1
           while [ "${_domino_argument%.}" != "$_domino_argument" ]; do
@@ -342,6 +379,12 @@ case $- in
           case "$_domino_argument" in
             --json) _domino_json=1;;
             --batch) ;;
+            --verbose) _domino_details=--verbose;;
+            --lang) shift; _domino_language=${1-};;
+            --lang=*) _domino_language=${1#--lang=};;
+            on|off|status)
+              if [ -n "$_domino_action_seen" ]; then _domino_safe=; fi
+              _domino_action=$_domino_argument; _domino_action_seen=1;;
             [lL][oO][cC][aA][lL][hH][oO][sS][tT]|127.0.0.1|::1|'[::1]')
               if [ -n "$_domino_target" ]; then _domino_safe=; fi
               _domino_target=1;;
@@ -352,17 +395,13 @@ case $- in
         if [ -n "$_domino_safe" ]; then
           case "$_domino_action" in
             on|off) _domino_intent=$_domino_action;;
-            status) [ -n "$_domino_json" ] || _domino_show_status=1;;
           esac
+          [ -n "$_domino_json" ] || _domino_show_status=1
         fi
       fi
-      _domino_shell_sync "$_domino_intent"
+      _domino_shell_sync "$_domino_intent" "$_domino_language"
       if [ "$_domino_rc" -eq 0 ] && [ -n "$_domino_show_status" ]; then
-        if [ "${DOMINO_SHELL_MODE-auto}" = manual ]; then
-          printf '%s\\n' 'Current shell: manual mode (policy sync paused).'
-        else
-          printf 'Current shell: %s\\n' "${_DOMINO_SHELL_SUMMARY-unavailable}"
-        fi
+        printf '%s\\0%s\\0' "${DOMINO_SHELL_MODE-auto}" "${_DOMINO_SHELL_SUMMARY-}" | DOMINO_LANG="$_domino_language" ''' + summary_command + ''' ${_domino_details:+--verbose}
       fi
       return "$_domino_rc"
     }
@@ -372,7 +411,7 @@ case $- in
       return "$_domino_prompt_rc"
     }
     if [ -n "${ZSH_VERSION-}" ]; then
-      eval 'if (( ! ${precmd_functions[(Ie)_domino_shell_prompt]} )); then
+      eval 'if (( ! ${precmd_functions[(Ie)_domino_shell_prompt]:-0} )); then
         precmd_functions+=(_domino_shell_prompt)
       fi'
     elif [ -n "${BASH_VERSION-}" ]; then
@@ -416,14 +455,39 @@ def _read_parent(raw: bytes) -> tuple:
 def main(argv=None) -> int:
     import argparse
     parser = argparse.ArgumentParser(description='Private Domino parent-shell synchronizer')
-    parser.add_argument('command', choices=['sync'])
+    parser.add_argument('command', choices=['sync','summary'])
     parser.add_argument('--app', required=True, type=Path)
     parser.add_argument('--legacy-port', type=int)
+    parser.add_argument('--verbose',action='store_true')
     args = parser.parse_args(argv)
     try:
+        sys.path.insert(0,str(Path(__file__).resolve().parent))
         raw = sys.stdin.buffer.read(MAX_INPUT + 1)
         if len(raw) > MAX_INPUT:
             raise ValueError('Parent shell state too large')
+        if args.command=='summary':
+            import os
+            mode,summary,tail=raw.decode('utf-8','replace').split('\0')
+            if tail:raise ValueError('Invalid parent summary')
+            # Isolated startup must remain stdlib-only. Presentation can use
+            # the owned sibling modules when the complete CLI is installed.
+            summary=(_t('手动模式，已暂停策略同步') if mode=='manual' else
+                     _t('无法确认') if summary in ('','unavailable') else summary)
+            rows = [(_t('当前终端'), summary)]
+            if args.verbose or summary != _t('Domino 已接管终端代理'):
+                rows.extend(current_proxy_rows(os.environ))
+            try:
+                from install_domino import human_output,human_row,shell_label_width
+            except ModuleNotFoundError:
+                for label,value in rows:
+                    print('  '+label+'  '+value)
+                print()
+            else:
+                width=shell_label_width(args.verbose)
+                with human_output(leading=False,label_width=width):
+                    for label,value in rows:
+                        human_row(label,value,wrap=True)
+            return 0
         current, options = _read_parent(raw)
         code = sync_state(args.app, current, legacy_port=args.legacy_port, **options)
         sys.stdout.buffer.write(code.encode('utf-8', 'surrogateescape'))

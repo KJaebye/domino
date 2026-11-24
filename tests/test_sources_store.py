@@ -11,6 +11,10 @@ import domino_cli as tool
 import domino_sources as sources
 from domino_model import DomainError
 
+from tests.locale_fixture import chinese_ui
+
+setUpModule, tearDownModule = chinese_ui()
+
 
 class SourceStoreTests(unittest.TestCase):
     def setUp(self):

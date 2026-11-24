@@ -32,7 +32,7 @@ def wheel_name(version, distribution=DISTRIBUTION):
 DOCUMENT_FILES = ('README.md','README.pypi.md','CHANGELOG.md','NOTICE','SECURITY.md','CONTRIBUTING.md') + tuple(
     sorted(path.relative_to(ROOT).as_posix() for pattern in ['LICENSE','docs/*.md','assets/*','licenses/*']
            for path in ROOT.glob(pattern) if path.is_file()))
-SOURCE_FILES = ('pyproject.toml',) + tuple('src/' + name for name in cli.CLI_MODULES) + DOCUMENT_FILES
+SOURCE_FILES = ('pyproject.toml',) + tuple('src/' + name for name in (*cli.CLI_MODULES, *cli.CLI_RESOURCES)) + DOCUMENT_FILES
 
 
 def source_version(inputs):
@@ -119,7 +119,8 @@ def build(source, artifacts, inputs, version, base_url):
     package.mkdir()
     cli.copy_cli(package)
     # copy_cli supplies dependencies/licenses. Both artifacts use the frozen project inputs.
-    for name in cli.CLI_MODULES:
+    for name in (*cli.CLI_MODULES, *cli.CLI_RESOURCES):
+        (package / 'cli' / name).parent.mkdir(parents=True, exist_ok=True)
         (package / 'cli' / name).write_bytes(inputs['src/' + name])
     if not all((package / 'cli/_vendor' / name).is_dir() for name in ['yaml', 'prompt_toolkit', 'wcwidth']):
         raise RuntimeError('Install project dependencies before building the runtime archive')

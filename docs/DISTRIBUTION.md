@@ -1,5 +1,7 @@
 # pip、Homebrew 与 apt 分发
 
+当前工作区版本为 **1.3.0 发布候选，未发布**。2026-11-24 按维护者意向准备正式发布与合并 main，发布分支设置 `BUILD_CHANNEL=release`。完成源码审核、稳定候选校验及本机发布确认后，才发布到公开渠道。2026-11-22 公司 Mac 的 DIRECT 与重启技术验收已通过，用户已确认两个浏览器页面均正常，Mac 公司现场验收完成；最新源码的 Ubuntu 真机验收仍待完成。本地 CLI 显示 1.3.0 不表示 PyPI 已发布；已发布的 1.2.3 及其官方提交材料保持原样。
+
 三个渠道只安装管理命令。包安装、升级、卸载不会初始化本机服务、捕获配置、调整系统代理或改 shell 文件。需要本机代理时，以普通用户显式运行 `domino-install`；已有离线部署包时也可使用 `domino init --bundle /path/to/bundle.tar.gz`。仅管理远端设备则无需初始化本机服务。
 
 **PyPI、Homebrew 和签名 APT 源均已发布 1.2.3。** 可从 [PyPI 安装 domino-proxy](https://pypi.org/project/domino-proxy/)，可执行命令保持 `domino`。不要安装 PyPI 上的 `domino`：该名字属于另一个项目。发布在本机执行，凭据保存在钥匙串与仓库外；下文提供安装、签名验证和维护命令。
@@ -37,7 +39,7 @@ python3 -m venv .venv
 .venv/bin/python scripts/build_distribution.py
 ```
 
-同版本不重复构建。已有发行产物时，构建下一版或用同一源码的全新 `--output` 路径进行独立验收，不能覆盖既有包。源码包通过 `MANIFEST.in` 纳入构建脚本与工作流。
+不覆盖或重建已发布版本。当前未发布的 1.3.0 开发变更按 [仓库约定](../AGENTS.md) 累计，使用全新 `--output` 目录区分源码快照；正式发布后的代码变更使用新版本号。同源码独立验收也可使用全新输出目录，不能覆盖既有包。源码包通过 `MANIFEST.in` 纳入构建脚本与工作流。
 
 主发行仍平铺在 `dist/release/`；补充分发材料在 `dist/distribution-0.17.0/`：
 
@@ -100,7 +102,7 @@ pipx ensurepath
 
 ## 一个本机流程发布三个渠道
 
-发布统一在开发机执行，不要求 GitHub Actions 有可用额度，也不把生产凭据放入 GitHub Secrets。软件继续保持 1.2.3，发布工具更新不提升软件版本。
+发布统一在开发机执行，不要求 GitHub Actions 有可用额度，也不把生产凭据放入 GitHub Secrets。下列 1.2.3 命令保留为已发布版本的维护示例。1.3.0 已进入发布准备；源码审批、标签、产物审核与正式渠道发布仍分别核对。
 
 ```bash
 # 只读演练，不读取生产签名私钥或上传文件
@@ -127,6 +129,49 @@ pipx ensurepath
 已有版本直接复用 GitHub Release 原始 wheel、sdist、runtime 和校验清单，并核对其标签提交；不会因为修改发布流程而重建或覆盖软件。新版本须先有与源码版本一致的标签。软件产物只构建一次，失败后不替换同版本的不同内容。
 
 输出在新的 `dist/local-release-<版本>-<运行编号>/`。`release-status.json` 记录各渠道 `verified / failed / blocked`；三个渠道都通过时才记为 `complete=true`。补发单渠道使用 `request_complete` 表示该请求成功，不推断其他渠道状态。只读演练记为 `checked`。
+
+### 自托管 CI 候选包与本机审核
+
+自托管构建不持有生产凭据。`scripts/candidate_release.py review` 接收下载后的
+`result.json`、`output/` 和固定提交的干净源码副本，核对控制器/容器报告、构建镜像、
+完整文件清单、runtime 源码清单、sdist 和 Debian 绑定关系。`--smoke` 在临时 HOME 中
+验收 wheel/runtime，不修改本机安装。审核报告仍为 `publication_allowed=false`。
+
+```bash
+.venv/bin/python scripts/candidate_release.py doctor
+.venv/bin/python scripts/candidate_release.py review \
+  --candidate /path/to/private-ci-candidate --source /path/to/clean-pinned-source --smoke
+```
+
+`doctor` 只检查凭据布局、公有签名指纹和钥匙串条目元数据，不读取密码、私钥正文或
+仓库内 token 文件。缺少凭据不会阻止候选包只读审核。
+
+日常 `development` 构建可以验收，但不能重贴稳定标签发布。只有维护者明确授权
+源码稳定化和创建正式标签后，`BUILD_CHANNEL=release`、标签提交完全一致且完整 CI
+通过的 `release-candidate` 才能进入发布准备。1.3.0 发布分支已切换 release 标记，
+本流程本身不自动修改版本、BUILD_CHANNEL 或创建标签。
+
+稳定候选构建先运行 `candidate_release.py preflight`，拒绝 GitHub 已有 Release/draft、
+PyPI 已有同版本、APT/Homebrew 已有同版本或更高版本等情况。它只读取公开渠道。
+
+在获得发布授权后，既有本机发布入口可以导入该候选包：
+
+```bash
+# 只有正式标签已经存在、且候选来自相同稳定提交时才可执行；只读准备。
+.venv/bin/python scripts/release_channels.py publish --version X.Y.Z \
+  --candidate /path/to/private-ci-candidate --channels all --dry-run
+```
+
+wheel、runtime、sdist 与 `.deb` 原样导入，不重新构建或重压缩发行包。Debian 原包的
+未压缩 control/payload 必须与已校验 runtime 的规范内容、路径、权限和时间戳一致，
+不允许添加安装钩子。工具只重新生成 APT 索引和签名，避免 Linux/macOS 的 gzip 差异。
+预览及正式签名阶段的 `.deb` 都必须与 CI 原包摘要完全相同，否则在上传前失败。
+`plan.json` 保留 run-id、源码 SHA、infra SHA、镜像 ID 和候选报告摘要。
+已发布版本仍走原始公开产物复用流程。补发渠道时可以携带同一个候选作为核对材料，
+但始终下载并使用官方原始字节；候选与公开文件有任何差异都会拒绝，不能替换既有版本。
+
+跨项目的抓取、审核封存和交互式人工确认入口由 `oetree-infra/scripts/release.py`
+管理；本仓库维护具体包格式、分发与签名规则。准备成功、临时签名验收和正式发布分别报告。
 
 ### 凭据存储：只留本机
 

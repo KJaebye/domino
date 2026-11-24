@@ -16,6 +16,10 @@ from unittest.mock import patch
 import domino_shell as shell
 import install_domino as control
 
+from tests.locale_fixture import chinese_ui
+
+setUpModule, tearDownModule = chinese_ui()
+
 
 class ShellPolicyTests(unittest.TestCase):
     def setUp(self):
@@ -70,7 +74,7 @@ class ShellPolicyTests(unittest.TestCase):
                         patch.dict(os.environ, {'TERM': 'xterm-256color'}):
                     with patch.dict(os.environ):
                         os.environ.pop('NO_COLOR', None)
-                        control.shell_proxy()
+                        control.shell_proxy(verbose=True)
                 text = output.getvalue()
                 if enabled:
                     self.assertIn('\033[32m● 策略已开启\033[0m', text)
@@ -100,7 +104,7 @@ class ShellPolicyTests(unittest.TestCase):
         with patch.object(control, 'current_installation', return_value=(self.app, None)), \
                 patch.object(control, 'HOME', self.app), \
                 patch.dict(os.environ, variables), redirect_stdout(output):
-            control.shell_proxy()
+            control.shell_proxy(verbose=True)
         text = output.getvalue()
         self.assertIn('http://127.0.0.1:7897', text)
         self.assertIn('http://[::1]:19876', text)
@@ -509,7 +513,8 @@ printf '{{broken' > {shlex.quote(str(self.app / 'shell-policy.json'))}
 domino shell status
 printf 'KEPT=%s\\n' "$http_proxy"
 ''')
-                self.assertIn('Current shell: unavailable', result.stdout)
+                self.assertIn('当前终端', result.stdout)
+                self.assertIn('无法确认', result.stdout)
                 self.assertIn('KEPT=http://127.0.0.1:19876', result.stdout)
                 self.assertNotIn('Domino 已接管终端代理', result.stdout)
 

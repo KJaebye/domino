@@ -8,6 +8,10 @@ from unittest.mock import patch
 
 import domino_cli as tool
 
+from tests.locale_fixture import chinese_ui
+
+setUpModule, tearDownModule = chinese_ui()
+
 
 class ManagementTests(unittest.TestCase):
     def test_shell_actions_and_default_status_route_only_to_requested_target(self):

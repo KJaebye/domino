@@ -2,6 +2,7 @@
 # Copyright (C) 2026 KJaebye
 """User-owned launchd installation and lifecycle; no administrator password required."""
 from __future__ import annotations
+from domino_i18n import tr as _t
 
 import copy
 import json
@@ -31,7 +32,7 @@ def domain():
 def launch(*arguments, check=True):
     result = subprocess.run(['launchctl', *arguments], capture_output=True, text=True)
     if check and result.returncode:
-        raise RuntimeError('launchctl 操作失败；请确认当前用户已登录 macOS 图形会话。')
+        raise RuntimeError(_t('launchctl 操作失败；请确认当前用户已登录 macOS 图形会话。'))
     return result
 
 
@@ -47,17 +48,26 @@ def state(home):
 def owned(ctx):
     plist, _ = paths(ctx.HOME)
     if plist.is_symlink() or ctx.APP.is_symlink():
-        raise ctx.InstallError('Domino 安装路径不能是符号链接。')
+        raise ctx.InstallError(_t('Domino 安装路径不能是符号链接。'))
     if plist.exists():
         value = plistlib.loads(plist.read_bytes())
         if value.get('Label') != LABEL or value.get('DominoManaged') != 1:
-            raise ctx.InstallError('同名 LaunchAgent 不属于 Domino，未覆盖。')
+            raise ctx.InstallError(_t('同名 LaunchAgent 不属于 Domino，未覆盖。'))
 
 
 def stop(home):
     result = launch('bootout', domain() + '/' + LABEL, check=False)
-    if result.returncode and launch('print', domain() + '/' + LABEL, check=False).returncode == 0:
-        raise RuntimeError('Domino LaunchAgent 未能停止。')
+    if result.returncode:
+        if launch('print', domain() + '/' + LABEL, check=False).returncode == 0:
+            raise RuntimeError(_t('Domino LaunchAgent 未能停止。'))
+        return
+    # bootout can return while the supervisor is still reaping its child. A
+    # subsequent start must bootstrap a new job, not kickstart the departing one.
+    deadline = time.monotonic() + 30
+    while launch('print', domain() + '/' + LABEL, check=False).returncode == 0:
+        if time.monotonic() >= deadline:
+            raise RuntimeError(_t('等待 Domino LaunchAgent 退出超时；请检查服务状态后重试。'))
+        time.sleep(.1)
 
 
 def start(home):
@@ -87,7 +97,7 @@ def snapshot(ctx, kind='deploy', *, preserve_cli=False):
             meta['files'][name] = {'preserved': True}
             continue
         if path.is_symlink():
-            raise ctx.InstallError('受管理的文件不能是符号链接。')
+            raise ctx.InstallError(_t('受管理的文件不能是符号链接。'))
         item = {'exists': path.exists(), 'index': index}
         if path.exists():
             item['mode'] = path.stat().st_mode & 0o777
@@ -112,19 +122,21 @@ def restore(ctx, backup):
     except BaseException as exc:
         failures.append(exc)
     if failures:
-        raise ctx.InstallError('恢复未完成；备份：' + str(backup),
+        raise ctx.InstallError(_t('恢复未完成；备份：') + str(backup),
                                code='RECOVERY_INCOMPLETE', effect='unknown') from None
 
 
 def _restore_installation(ctx, backup):
+    import domino_macos_app as native
     owned(ctx)
     meta = json.loads((backup / 'snapshot.json').read_text())
     expected = {'Library/LaunchAgents/' + LABEL + '.plist', '.local/bin/domino',
                 '.zshrc', '.bashrc', '.config/domino/proxy.env'}
     if meta.get('schema') != 'macos-1' or set(meta['files']) != expected:
-        raise ctx.InstallError('不是 macOS Domino 备份，未恢复。')
+        raise ctx.InstallError(_t('不是 macOS Domino 备份，未恢复。'))
     stop(ctx.HOME)
     if ctx.APP.exists():
+        native.register(ctx, ctx.APP, remove=True)
         shutil.rmtree(ctx.APP)
     if meta['had_app']:
         shutil.copytree(backup / 'app', ctx.APP, symlinks=True)
@@ -133,11 +145,12 @@ def _restore_installation(ctx, backup):
             continue
         path = ctx.HOME / name
         if path.is_symlink():
-            raise ctx.InstallError('受管理的文件不能是符号链接。')
+            raise ctx.InstallError(_t('受管理的文件不能是符号链接。'))
         if item['exists']:
             ctx.write_private(path, (backup / f"file-{item['index']}").read_bytes(), item['mode'])
         else:
             path.unlink(missing_ok=True)
+    native.register(ctx, ctx.APP)
     if meta['active']:
         start(ctx.HOME)
 
@@ -147,116 +160,26 @@ def configure_environment(ctx, *, legacy_port=None):
 
 
 def install(ctx, bundle):
-    owned(ctx)
-    manifest = json.loads((bundle / 'manifest.json').read_text())
-    arch = {'aarch64': 'arm64', 'arm64': 'arm64', 'x86_64': 'amd64'}.get(platform.machine())
-    if manifest.get('platform', 'linux') != 'darwin' or manifest.get('arch') != arch:
-        raise ctx.InstallError('安装包与本机 macOS 架构不一致。')
-    if manifest.get('schema') != 1:
-        raise ctx.InstallError('安装包格式不受支持。')
-    config = json.loads((bundle / 'data/config.json').read_text())
-    ports = [manifest['proxy_port'], manifest['api_port']]
-    if any(type(p) is not int or not 1024 <= p <= 65535 for p in ports) or ports[0] == ports[1]:
-        raise ctx.InstallError('代理端口和控制端口无效。')
-    if config.get('mixed-port') != ports[0] or config.get('external-controller') != f'127.0.0.1:{ports[1]}' or config.get('allow-lan') or config.get('tun', {}).get('enable'):
-        raise ctx.InstallError('安装包的监听或 TUN 设置不符合预期。')
-    import domino_subscriptions
-    domino_subscriptions.validate_install_registration(ctx, bundle)
-    preserve_cli = bool(manifest.get('package_managed_cli')) or ctx.is_package_cli(ctx.HOME / '.local/bin/domino')
-    if not preserve_cli and not ctx.owned_cli(ctx.HOME / '.local/bin/domino'):
-        raise ctx.InstallError('~/.local/bin/domino 已被其他程序使用。')
-    for name in ['.zshrc', '.bashrc', '.config/domino/proxy.env']:
-        path = ctx.HOME / name
-        if path.is_symlink():
-            raise ctx.InstallError('受管理的环境文件不能是符号链接。')
-        if path.exists() and name != '.config/domino/proxy.env':
-            ctx.managed_block(path.read_text(), '')
-    old_ports = set()
-    if state(ctx.HOME)[0] and (ctx.APP / 'data/config.json').is_file():
-        old = json.loads((ctx.APP / 'data/config.json').read_text())
-        old_ports = {old['mixed-port'], int(old['external-controller'].rsplit(':', 1)[1])}
-    for number in ports:
-        if number not in old_ports:
-            with socket.socket() as sock:
-                if sock.connect_ex(('127.0.0.1', number)) == 0:
-                    raise ctx.InstallError(f'端口 {number} 已被占用，请使用 --proxy-port / --api-port 选择空闲端口。')
-    ctx.prepare_custom_rules(bundle / 'data')
-    ctx.run([str(bundle / 'mihomo'), '-t', '-d', str(bundle / 'data'), '-f', str(bundle / 'data/config.json')],
-            capture_output=True, text=True, timeout=60)
-    pending = manifest.get('awaiting_subscription') and not (config.get('proxies') or config.get('proxy-providers'))
-    shell_state = ctx.prepare_shell_policy(ctx.APP, ctx.HOME, system='darwin', shell_env=manifest['shell_env'], pending=pending)
-    backup = snapshot(ctx, preserve_cli=True) if preserve_cli else snapshot(ctx)
-    try:
-        stop(ctx.HOME)
-        if ctx.APP.exists():
-            shutil.rmtree(ctx.APP)
-        ctx.APP.mkdir(mode=0o700, parents=True)
-        shutil.copy2(bundle / 'mihomo', ctx.APP / 'mihomo')
-        (ctx.APP / 'mihomo').chmod(0o755)
-        shutil.copytree(bundle / 'data', ctx.APP / 'data')
-        (ctx.APP / 'data/config.json').chmod(0o600)
-        ctx.write_private(ctx.APP / 'manifest.json', json.dumps(manifest))
-        ctx.install_cli(bundle, preserve_cli=preserve_cli)
-        legacy_port = ctx.install_shell_policy(ctx.APP, shell_state)
-        plist, logs = paths(ctx.HOME)
-        logs.mkdir(mode=0o700, parents=True, exist_ok=True)
-        value = {'Label': LABEL, 'DominoManaged': 1,
-                 'ProgramArguments': [str(ctx.APP / 'mihomo'), '-d', str(ctx.APP / 'data'), '-f', str(ctx.APP / 'data/config.json')],
-                 'RunAtLoad': True, 'KeepAlive': True, 'ThrottleInterval': 3,
-                 'WorkingDirectory': str(ctx.APP / 'data'), 'Umask': 0o077,
-                 'StandardOutPath': str(logs / 'mihomo.log'), 'StandardErrorPath': str(logs / 'mihomo.log')}
-        ctx.write_private(plist, plistlib.dumps(value))
-        start(ctx.HOME)
-        for attempt in range(20):
-            try:
-                ctx.controller(ctx.APP / 'data', '/version')
-                break
-            except (OSError,ctx.InstallError):
-                if attempt == 19:
-                    raise ctx.InstallError('Domino 控制接口未就绪，请查看日志。')
-                time.sleep(.5)
-        selections = json.loads((bundle / 'selections.json').read_text())
-        for name, selected in selections.items():
-            import urllib.parse
-            ctx.controller(ctx.APP / 'data', '/proxies/' + urllib.parse.quote(name, safe=''), {'name': selected})
-        health = None if pending else ctx.probe(ports[0], manifest['test_url'])
-        if manifest['shell_env']:
-            configure_environment(ctx, legacy_port=legacy_port)
-        domino_subscriptions.register_installed(ctx, bundle)
-    except BaseException as failure:
-        try:
-            restore(ctx, backup)
-        except BaseException:
-            raise ctx.InstallError('安装失败且恢复未完成；备份：' + str(backup),code='RECOVERY_INCOMPLETE',effect='unknown') from None
-        if isinstance(failure, KeyboardInterrupt):
-            failure.domino_effect = 'rolled_back'
-            raise
-        raise ctx.InstallError('安装未完成，已恢复原状态；备份：'+str(backup),code='APPLY_ROLLED_BACK',effect='rolled_back') from None
-    finally:
-        vars(ctx).pop('_domino_registry_backup', None)
-    print(f'Domino 已独立运行；代理端口 {ports[0]}，控制端口 {ports[1]}；登录当前用户时自动启动。')
-    if health is None:
-        print('基础环境已就绪，待添加订阅：domino configs add "名称"；domino configs switch "名称"。')
-    else:
-        print('代理出网通过；出口地区：' + (health['exit_country'] or '未返回'))
-    if manifest['shell_env']:
-        print('终端代理策略：' + ('已开启' if shell_state[0]['enabled'] else '已关闭') + '；与系统代理独立，使用 domino shell on/off/status 管理。')
-        print('已有终端请加载一次：. "$HOME/.config/domino/proxy.env"；Bash 登录配置需已加载 .bashrc。')
-        print('其他已接入终端下次提示符同步；运行中的 VS Code 不会更新环境。')
-    print('部署前备份：' + backup.name)
+    from domino_macos_app_build import install as apply
+    return apply(ctx, bundle)
+
+
+def setup_network_app(ctx):
+    from domino_macos_app_build import setup_network_app as setup
+    return setup(ctx)
 
 
 def service_action(ctx, action, lines=100, follow=False, *, batch=False):
     owned(ctx)
     if not 1 <= lines <= 10000:
-        raise ctx.InstallError('日志行数必须在 1–10000 之间。')
+        raise ctx.InstallError(_t('日志行数必须在 1–10000 之间。'))
     plist, logs = paths(ctx.HOME)
     if not plist.exists():
-        raise ctx.InstallError('尚未安装本机 Domino 运行环境，请先运行安装程序。')
+        raise ctx.InstallError(_t('尚未安装本机 Domino 运行环境，请先运行安装程序。'))
     if action == 'logs':
         path = logs / 'mihomo.log'
         if not path.exists():
-            print('暂无日志。')
+            print(_t('暂无日志。'))
             return
         arguments = ['tail', '-n', str(lines)]
         if follow:
@@ -265,10 +188,10 @@ def service_action(ctx, action, lines=100, follow=False, *, batch=False):
     elif action == 'stop':
         system_proxy(ctx, 'off',batch=batch,render=False)
         stop(ctx.HOME)
-        ctx.human_header('运行状态','● 已关闭','31')
-        ctx.human_row('服务','已停止')
-        ctx.human_row('系统代理','已解除 Domino 接管（恢复原设置，保留其他程序的修改）')
-        print('  开启 Domino：domino start')
+        ctx.human_header(_t('运行状态'),_t('● 已关闭'),'31')
+        if getattr(ctx,'OUTPUT_VERBOSE',False):ctx.human_row(_t('服务'),_t('已停止'))
+        ctx.human_row(_t('系统代理'),_t('已解除 Domino 接管（恢复原设置，保留其他程序的修改）') if getattr(ctx,'OUTPUT_VERBOSE',False) else _t('已解除 Domino 接管'))
+        if getattr(ctx,'OUTPUT_VERBOSE',False):print(_t('  开启 Domino：domino start'))
     else:
         if action == 'restart':
             stop(ctx.HOME)
@@ -280,20 +203,20 @@ def service_action(ctx, action, lines=100, follow=False, *, batch=False):
                     break
                 except (OSError, ctx.InstallError):
                     if attempt == 19:
-                        raise ctx.InstallError('控制接口未就绪，请用 domino logs 查看日志。') from None
+                        raise ctx.InstallError(_t('控制接口未就绪，请用 domino logs 查看日志。')) from None
                     time.sleep(.25)
             proxy_result = system_proxy(ctx, 'on', batch=batch, render=False)
         except DomainError as error:
-            raise ctx.InstallError('服务已启动，但系统代理未接通：' + str(error),
+            raise ctx.InstallError(_t('服务已启动，但系统代理未接通：') + str(error),
                                    code=error.code, exit_code=error.exit_code, effect='unknown') from None
         except (OSError, RuntimeError):
-            raise ctx.InstallError('服务已启动，但系统代理未接通；请运行 domino status 检查。',
+            raise ctx.InstallError(_t('服务已启动，但系统代理未接通；请运行 domino status 检查。'),
                                    effect='unknown') from None
-        ctx.human_header('运行状态','● 已重启 · 系统代理已接通' if action == 'restart' else '● 已开启 · 系统代理已接通')
-        ctx.human_row('服务','运行中')
+        ctx.human_header(_t('运行状态'),_t('● 已重启 · 系统代理已接通') if action == 'restart' else _t('● 已开启 · 系统代理已接通'))
+        if getattr(ctx,'OUTPUT_VERBOSE',False):ctx.human_row(_t('服务'),_t('运行中'))
         number = proxy_result['proxies']['web']['port']
-        ctx.human_row('系统代理','已开启（HTTP / HTTPS / SOCKS）')
-        ctx.human_row('代理目标',f'127.0.0.1:{number}（Domino）')
+        if getattr(ctx,'OUTPUT_VERBOSE',False):ctx.human_row(_t('系统代理'),_t('已开启（HTTP / HTTPS / SOCKS）'))
+        ctx.human_row(_t('代理目标'),f'127.0.0.1:{number}（Domino）')
 
 
 def rollback(ctx, name=None):
@@ -304,11 +227,11 @@ def rollback(ctx, name=None):
     except BaseException:
         try: restore(ctx, safety)
         except BaseException:
-            raise ctx.InstallError('回滚和自动恢复未完成；当前状态备份：'+safety.name,code='RECOVERY_INCOMPLETE',effect='unknown') from None
-        raise ctx.InstallError('回滚未完成，已恢复操作前状态。',code='APPLY_ROLLED_BACK',effect='rolled_back') from None
+            raise ctx.InstallError(_t('回滚和自动恢复未完成；当前状态备份：')+safety.name,code='RECOVERY_INCOMPLETE',effect='unknown') from None
+        raise ctx.InstallError(_t('回滚未完成，已恢复操作前状态。'),code='APPLY_ROLLED_BACK',effect='rolled_back') from None
     finally:
         vars(ctx).pop('_domino_registry_backup', None)
-    print('已恢复：' + backup.name)
+    print(_t('已恢复：') + backup.name)
 
 
 def network(*arguments, write=False, batch=False):
@@ -318,11 +241,11 @@ def network(*arguments, write=False, batch=False):
         if batch:
             authorization=subprocess.run(['sudo','-n','-v'],capture_output=True,text=True)
             if authorization.returncode:
-                raise DomainError('系统代理修改需要预先授权 sudo；机器接口不会询问密码。',code='AUTH_REQUIRED',exit_code=4)
+                raise DomainError(_t('系统代理修改需要预先授权 sudo；机器接口不会询问密码。'),code='AUTH_REQUIRED',exit_code=4)
         result = subprocess.run(['sudo', *(['-n'] if batch else []), '/usr/sbin/networksetup', *arguments],
                                 capture_output=False, text=True)
     if result.returncode or (result.stdout or '').startswith('** Error'):
-        raise DomainError('无法读取或修改系统代理；请检查网络服务名称和管理员权限。',code='SYSTEM_PROXY_FAILED',exit_code=8 if write else 5,effect='unknown' if write else 'none')
+        raise DomainError(_t('无法读取或修改系统代理；请检查网络服务名称和管理员权限。'),code='SYSTEM_PROXY_FAILED',exit_code=8 if write else 5,effect='unknown' if write else 'none')
     return result.stdout or ''
 
 
@@ -331,7 +254,7 @@ def network_service(requested=None):
     names = [name for name in names if name and not name.startswith('*')]
     if requested:
         if requested not in names:
-            raise RuntimeError('网络服务不存在；可用：' + ', '.join(names))
+            raise RuntimeError(_t('网络服务不存在；可用：') + ', '.join(names))
         return requested
     route = subprocess.run(['/sbin/route', '-n', 'get', 'default'], capture_output=True, text=True)
     match = re.search(r'interface:\s*(\S+)', route.stdout)
@@ -344,7 +267,7 @@ def network_service(requested=None):
             current = item.group(1)
         if device and f'Device: {device})' in line and current in names:
             return current
-    raise RuntimeError('无法确定当前网络服务，请用 --service 指定；可用：' + ', '.join(names))
+    raise RuntimeError(_t('无法确定当前网络服务，请用 --service 指定；可用：') + ', '.join(names))
 
 
 def proxy_settings(service):
@@ -417,7 +340,7 @@ def restore_proxy_targets(ctx, path, record, current, targets, batch=False, *, e
                                  current={kind: value})
             value = proxy_settings(record['service'])[kind]
             if not restored_system_proxy(value, item['target']):
-                raise ctx.InstallError('系统代理恢复读回不一致，恢复记录已保留。',code='RECOVERY_INCOMPLETE',effect='unknown')
+                raise ctx.InstallError(_t('系统代理恢复读回不一致，恢复记录已保留。'),code='RECOVERY_INCOMPLETE',effect='unknown')
         # Unknown live states belong to a later owner, not to this pending operation.
         del pending[kind]
         if not pending:
@@ -442,15 +365,15 @@ def show_system_proxy(ctx, service, current, previous, as_json=False, message=No
     matching=sum(owns_system_proxy(value, config.get('mixed-port')) for value in enabled)
     automatic = 'Enabled: Yes' in network('-getautoproxyurl',service) or ': On' in network('-getproxyautodiscovery',service)
     directed = bool(enabled) and matching == len(enabled) and not automatic
-    summary = '● 使用 PAC / 自动代理配置' if automatic else '● 已指向 Domino' if directed else '● 未指向 Domino'
-    ctx.human_header('系统代理', summary, '32' if directed else '33' if automatic else '31')
-    ctx.human_row('网络服务',service)
-    for kind,label in [('web','HTTP'),('secureweb','HTTPS'),('socksfirewall','SOCKS')]:
-        value=current.get(kind,{})
-        endpoint = f"{value.get('server')}:{value.get('port')}" if value.get('enabled') else '未开启'
-        ctx.human_row(label,endpoint + ('  ·  需要认证' if value.get('authenticated') else ''))
-    ctx.human_row('恢复记录','可用 domino proxy off 恢复仍由 Domino 管理的项目' if available else '历史记录已失效，现有设置保持不变' if previous else '无')
-    if message: ctx.human_row('操作',message)
+    summary = _t('● 使用 PAC / 自动代理配置') if automatic else _t('● 已指向 Domino') if directed else _t('● 未指向 Domino')
+    ctx.human_header(_t('系统代理'), summary, '32' if directed else '33' if automatic else '31')
+    verbose=getattr(ctx,'OUTPUT_VERBOSE',False)
+    if verbose:ctx.human_row(_t('网络服务'),service)
+    from install_domino import human_proxy_rows
+    human_proxy_rows(current,[('web','HTTP'),('secureweb','HTTPS'),('socksfirewall','SOCKS')],row=ctx.human_row,verbose=verbose)
+    if verbose or previous and not available:
+        ctx.human_row(_t('恢复记录'),_t('可用 domino proxy off 恢复仍由 Domino 管理的项目') if available else _t('历史记录已失效，现有设置保持不变') if previous else _t('无'))
+    if message and (verbose or not directed):ctx.human_row(_t('操作'),message)
     return result
 
 
@@ -463,7 +386,7 @@ def system_proxy(ctx, action=None, service=None, as_json=False, batch=False, *, 
     if not action:
         return show_system_proxy(ctx,service,current,previous if not previous or previous['service'] == service else None,as_json,render=render)
     if previous and previous['service'] != service:
-        raise ctx.InstallError('另一网络服务已有代理备份，请先使用 domino proxy off 恢复。')
+        raise ctx.InstallError(_t('另一网络服务已有代理备份，请先使用 domino proxy off 恢复。'))
     app, _ = ctx.current_installation()
     config = json.loads((app / 'data/config.json').read_text())
     number = config['mixed-port']
@@ -471,18 +394,18 @@ def system_proxy(ctx, action=None, service=None, as_json=False, batch=False, *, 
         manifest_path = app / 'manifest.json'
         manifest = json.loads(manifest_path.read_text()) if manifest_path.is_file() else {}
         if manifest.get('awaiting_subscription') and not (config.get('proxies') or config.get('proxy-providers')):
-            raise ctx.InstallError('请先用 domino add / domino switch 配好订阅，再运行 domino start。')
+            raise ctx.InstallError(_t('请先用 domino add / domino switch 配好订阅，再运行 domino start。'))
         if not state(ctx.HOME)[0]:
-            raise ctx.InstallError('请先启动 Domino，再开启系统代理。')
+            raise ctx.InstallError(_t('请先启动 Domino，再开启系统代理。'))
         ctx.controller(app / 'data', '/version')
         if any(value['authenticated'] for value in current.values()):
-            raise ctx.InstallError('当前网络使用需要认证的系统代理，无法完整备份其密码；请先手动处理该代理。')
+            raise ctx.InstallError(_t('当前网络使用需要认证的系统代理，无法完整备份其密码；请先手动处理该代理。'))
         pac = network('-getautoproxyurl', service)
         discovery = network('-getproxyautodiscovery', service)
         if 'Enabled: Yes' in pac or ': On' in discovery:
-            raise ctx.InstallError('当前网络启用了 PAC/自动发现，请先手动关闭或选择其他网络服务。')
+            raise ctx.InstallError(_t('当前网络启用了 PAC/自动发现，请先手动关闭或选择其他网络服务。'))
         if previous and (previous.get('pending') or 'rollback_record' in previous):
-            raise ctx.InstallError('系统代理有未完成的恢复，请先使用 domino proxy off 处理。',code='RECOVERY_INCOMPLETE')
+            raise ctx.InstallError(_t('系统代理有未完成的恢复，请先使用 domino proxy off 处理。'),code='RECOVERY_INCOMPLETE')
         entry = copy.deepcopy(current)
         saved = copy.deepcopy(previous)
         baseline = {kind: copy.deepcopy(previous['proxies'][kind] if previous and owns_system_proxy(value, previous['domino_port']) else value)
@@ -499,7 +422,7 @@ def system_proxy(ctx, action=None, service=None, as_json=False, batch=False, *, 
                 network('-set' + kind + 'proxystate', service, 'on', write=True, batch=batch)
             observed = proxy_settings(service)
             if any(not owns_system_proxy(value, number) or value['authenticated'] for value in observed.values()):
-                raise RuntimeError('系统代理设置读回不一致，正在恢复原设置。')
+                raise RuntimeError(_t('系统代理设置读回不一致，正在恢复原设置。'))
             previous.pop('pending')
             previous.pop('rollback_record')
             ctx.write_private(record, json.dumps(previous))
@@ -508,15 +431,15 @@ def system_proxy(ctx, action=None, service=None, as_json=False, batch=False, *, 
                 previous['rollback_record'] = saved
                 restored = restore_proxy_targets(ctx, record, previous, entry, entry, batch, expected=expected)
                 if any(not restored_system_proxy(restored[kind], value) for kind, value in entry.items()):
-                    raise RuntimeError('系统代理回滚读回不一致。')
+                    raise RuntimeError(_t('系统代理回滚读回不一致。'))
                 if saved:
                     ctx.write_private(record, json.dumps(saved))
                 else:
                     record.unlink(missing_ok=True)
             except BaseException:
-                raise ctx.InstallError('系统代理修改失败且恢复未完成，恢复记录已保留。',code='RECOVERY_INCOMPLETE',effect='unknown') from None
-            raise ctx.InstallError('系统代理未应用，已恢复本次操作前设置。',code='APPLY_ROLLED_BACK',effect='rolled_back') from None
-        return show_system_proxy(ctx,service,observed,previous,as_json,'已开启 Domino 系统代理',render=render)
+                raise ctx.InstallError(_t('系统代理修改失败且恢复未完成，恢复记录已保留。'),code='RECOVERY_INCOMPLETE',effect='unknown') from None
+            raise ctx.InstallError(_t('系统代理未应用，已恢复本次操作前设置。'),code='APPLY_ROLLED_BACK',effect='rolled_back') from None
+        return show_system_proxy(ctx,service,observed,previous,as_json,_t('已开启 Domino 系统代理'),render=render)
     else:
         if previous and previous.get('pending'):
             targets = {kind: item['target'] for kind, item in previous['pending'].items()}
@@ -544,9 +467,9 @@ def system_proxy(ctx, action=None, service=None, as_json=False, batch=False, *, 
             recovery = previous or {'service': service, 'proxies': {}, 'domino_port': number}
             current = restore_proxy_targets(ctx, record, recovery, current, targets, batch)
         if any(owns_system_proxy(value, number) or (previous and owns_system_proxy(value, previous['domino_port'])) for value in current.values()):
-            raise ctx.InstallError('仍有生效代理指向 Domino，恢复记录已保留。',code='RECOVERY_INCOMPLETE',effect='unknown')
+            raise ctx.InstallError(_t('仍有生效代理指向 Domino，恢复记录已保留。'),code='RECOVERY_INCOMPLETE',effect='unknown')
         record.unlink(missing_ok=True)
-        message='已解除 Domino 系统代理；已关闭或由其他程序管理的设置保持不变'
+        message=_t('已解除 Domino 系统代理；已关闭或由其他程序管理的设置保持不变')
         return show_system_proxy(ctx,service,current,None,as_json,message,render=render)
 
 

@@ -18,6 +18,7 @@ import shutil
 import subprocess
 import tarfile
 import tempfile
+import zlib
 
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGE = 'domino-proxy'
@@ -28,7 +29,7 @@ def digest(data):
     return hashlib.sha256(data).hexdigest()
 
 
-def tar_bytes(files, epoch):
+def tar_payload(files, epoch):
     stream = io.BytesIO()
     # dpkg requires parent directories to be present in data.tar, and tracks
     # these entries so package-owned directories can be removed on uninstall.
@@ -45,7 +46,48 @@ def tar_bytes(files, epoch):
             info.uid = info.gid = 0
             info.uname = info.gname = 'root'
             archive.addfile(info, io.BytesIO(content))
-    return gzip.compress(stream.getvalue(), mtime=0)
+    return stream.getvalue()
+
+
+def tar_bytes(files, epoch):
+    return gzip.compress(tar_payload(files, epoch), mtime=0)
+
+
+def validate_existing_deb(data, control, files, epoch):
+    """Validate original CI bytes without depending on host gzip/zlib output."""
+    if len(data) > 128 * 1024 * 1024 or not data.startswith(b'!<arch>\n'):
+        raise ValueError('Invalid original Debian archive')
+    members, offset = {}, 8
+    while offset < len(data):
+        header = data[offset:offset + 60]
+        if len(header) != 60 or header[-2:] != b'`\n':
+            raise ValueError('Invalid original Debian archive header')
+        try:
+            name = header[:16].decode('ascii').strip().rstrip('/')
+            size = int(header[48:58])
+        except (ValueError, UnicodeError):
+            raise ValueError('Invalid original Debian archive member') from None
+        if name not in ('debian-binary', 'control.tar.gz', 'data.tar.gz') or name in members or size < 0:
+            raise ValueError('Unexpected original Debian archive member')
+        offset += 60
+        end = offset + size
+        if end > len(data) or (size % 2 and data[end:end + 1] != b'\n'):
+            raise ValueError('Truncated original Debian archive')
+        members[name] = data[offset:end]
+        offset = end + size % 2
+    if set(members) != {'debian-binary', 'control.tar.gz', 'data.tar.gz'} or members['debian-binary'] != b'2.0\n':
+        raise ValueError('Invalid original Debian archive structure')
+    for name, expected, limit in [('control.tar.gz', control, 1024 * 1024),
+                                  ('data.tar.gz', files, 128 * 1024 * 1024)]:
+        try:
+            with gzip.GzipFile(fileobj=io.BytesIO(members[name])) as stream:
+                actual = stream.read(limit + 1)
+        except (OSError, EOFError, zlib.error):
+            raise ValueError('Invalid original Debian compressed member') from None
+        # Compare canonical uncompressed archives, including permissions, paths,
+        # ownership and timestamps. Added hooks or changed payloads fail closed.
+        if len(actual) > limit or actual != tar_payload(expected, epoch):
+            raise ValueError('Original Debian control or payload differs from verified runtime')
 
 
 def deb_bytes(control, files, epoch):
@@ -228,7 +270,8 @@ def sign_repository(repo, key):
     (repo / 'domino-archive-keyring.gpg').write_bytes(public)
 
 
-def build(release, output, maintainer=MAINTAINER, sign_key=None, epoch=None, previous_repo=None):
+def build(release, output, maintainer=MAINTAINER, sign_key=None, epoch=None, previous_repo=None,
+          existing_deb=None):
     if output.exists() or output.is_symlink():
         raise FileExistsError('Distribution output already exists; choose a new directory')
     if '\n' in maintainer or '\r' in maintainer or not parseaddr(maintainer)[1] or '@' not in parseaddr(maintainer)[1]:
@@ -254,7 +297,15 @@ def build(release, output, maintainer=MAINTAINER, sign_key=None, epoch=None, pre
         staged = Path(directory) / 'output'
         staged.mkdir()
         deb = staged / f'{PACKAGE}_{version}-1_all.deb'
-        deb.write_bytes(deb_bytes(control_files, files, epoch))
+        if existing_deb is not None:
+            if (existing_deb.is_symlink() or not existing_deb.is_file()
+                    or existing_deb.stat().st_size > 128 * 1024 * 1024):
+                raise ValueError('Original Debian package must be a bounded regular file')
+            original = existing_deb.read_bytes()
+            validate_existing_deb(original, control_files, files, epoch)
+            deb.write_bytes(original)
+        else:
+            deb.write_bytes(deb_bytes(control_files, files, epoch))
         repo = repository(staged, deb, control, epoch, previous_repo)
         if sign_key:
             sign_repository(repo, sign_key)
@@ -263,6 +314,7 @@ def build(release, output, maintainer=MAINTAINER, sign_key=None, epoch=None, pre
         report = {'version': version, 'distribution': PACKAGE, 'published': False,
                   'release_manifest_sha256': digest((release / 'release.json').read_bytes()),
                   'deb': deb.name, 'apt_signed': bool(sign_key), 'maintainer': maintainer,
+                  'reused_deb': existing_deb is not None,
                   'service_install_hooks': False, 'architecture': 'all',
                   'files': {p.relative_to(staged).as_posix(): digest(p.read_bytes())
                             for p in sorted(staged.rglob('*')) if p.is_file()}}
@@ -285,12 +337,13 @@ def main():
     parser.add_argument('--maintainer', default=MAINTAINER, help='Public Debian maintainer identity')
     parser.add_argument('--sign-key', help='Existing GPG key fingerprint; omit for an unsigned preview')
     parser.add_argument('--previous-repo', type=Path, help='Retain immutable pool packages from the previous apt site')
+    parser.add_argument('--existing-deb', type=Path, help='Validate and reuse original CI package bytes')
     args = parser.parse_args()
     version = json.loads((args.release / 'release.json').read_text())['version']
     output = args.output or ROOT / ('dist/distribution-' + version)
     report = build(args.release, output, args.maintainer, args.sign_key,
                    int(os.environ['SOURCE_DATE_EPOCH']) if 'SOURCE_DATE_EPOCH' in os.environ else None,
-                   args.previous_repo)
+                   args.previous_repo, existing_deb=args.existing_deb)
     print(json.dumps({'output': str(output), **report}))
 
 

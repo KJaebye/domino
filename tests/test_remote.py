@@ -16,6 +16,10 @@ import domino_cli as tool
 import domino_shell as shell
 import domino_subscriptions as subscriptions
 
+from tests.locale_fixture import chinese_ui
+
+setUpModule, tearDownModule = chinese_ui()
+
 
 class EnvironmentTests(unittest.TestCase):
     def test_managed_block_preserves_shebang_and_is_idempotent(self):
@@ -660,6 +664,11 @@ export NO_PROXY="$no_proxy"
         from domino_shell import proxy_port
         self.assertEqual(proxy_port(self.home / '.local/share/domino'),17890)
         self.assertIn('Managed by Domino shell integration', (self.home / '.config/domino/proxy.env').read_text())
+
+    def test_default_install_sets_up_bash_without_creating_zshrc(self):
+        remote.install(self.bundle)
+        self.assertIn('proxy.env', (self.home / '.bashrc').read_text())
+        self.assertFalse((self.home / '.zshrc').exists())
 
     def test_first_install_without_shell_env_does_not_create_policy_or_environment(self):
         manifest = json.loads((self.bundle / 'manifest.json').read_text())

@@ -28,7 +28,7 @@ def main():
     selected=[]
     for path in args.archive:
         name=path.name
-        if not re.fullmatch(r'mihomo-(?:darwin-(?:arm64|amd64)|linux-(?:arm64|amd64-v1))-'+re.escape(tag)+r'\.gz',name):
+        if not re.fullmatch(r'mihomo-(?:darwin-(?:arm64|amd64(?:-v1)?)|linux-(?:arm64|amd64-v1))-'+re.escape(tag)+r'\.gz',name):
             parser.error('unsupported or mismatched archive name')
         digest=hashlib.sha256(path.read_bytes()).hexdigest()
         if assets.get(name,{}).get('digest')!='sha256:'+digest: parser.error('archive digest differs from upstream metadata')

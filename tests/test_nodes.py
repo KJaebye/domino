@@ -11,6 +11,10 @@ from unittest.mock import patch
 import install_domino as remote
 import domino_cli as tool
 
+from tests.locale_fixture import chinese_ui
+
+setUpModule, tearDownModule = chinese_ui()
+
 
 class NodeTests(unittest.TestCase):
     def setUp(self):
@@ -74,7 +78,7 @@ class NodeTests(unittest.TestCase):
                     patch.object(remote,'proxy_state',return_value=({'mode':'rule'},self.live)), redirect_stdout(io.StringIO()) as output:
                 remote.nodes()
         text=output.getvalue()
-        self.assertIn('当前配置  xlink',text)
+        self.assertRegex(text,r'当前配置 +xlink')
         self.assertNotIn('old name',text)
         self.assertNotIn('手动选择',text)
         self.assertNotRegex(text,r'(?m)^  策略组\s+当前选择\s+类型$')
@@ -103,7 +107,7 @@ class NodeTests(unittest.TestCase):
         self.live['Unused'] = {'type': 'Trojan'}
         output = io.StringIO()
         with patch.object(remote, 'proxy_state', return_value=({'mode': 'rule'}, self.live)), \
-                patch.object(remote, 'proxy_inventory', side_effect=lambda live: live), redirect_stdout(output):
+                patch.object(remote, 'proxy_inventory', side_effect=lambda live: live), redirect_stdout(output),remote.output_details(True):
             remote.nodes()
         text = output.getvalue()
         us = next(line for line in text.splitlines() if '* US A' in line)
@@ -121,7 +125,7 @@ class NodeTests(unittest.TestCase):
             with self.subTest(mode=mode):
                 output = io.StringIO()
                 with patch.object(remote, 'proxy_state', return_value=({'mode': mode}, self.live)), \
-                        patch.object(remote, 'proxy_inventory', side_effect=lambda live: live), redirect_stdout(output):
+                        patch.object(remote, 'proxy_inventory', side_effect=lambda live: live), redirect_stdout(output),remote.output_details(True):
                     remote.nodes()
                 row = next(line for line in output.getvalue().splitlines() if '* US A' in line)
                 self.assertIn('🚀 节点选择（手动）', row)

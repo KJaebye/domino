@@ -15,6 +15,10 @@ import zipfile
 import domino_cli as cli
 import domino_cli_sync as sync
 
+from tests.locale_fixture import chinese_ui
+
+setUpModule, tearDownModule = chinese_ui()
+
 
 INSTALLER = b'''import shutil, sys
 from pathlib import Path
@@ -52,6 +56,7 @@ class CLISyncTests(unittest.TestCase):
         self.stage = self.root / 'stage'
         (self.stage / 'cli').mkdir(parents=True)
         for name, content in self.files(cli.VERSION).items():
+            (self.stage / 'cli' / name).parent.mkdir(parents=True, exist_ok=True)
             (self.stage / 'cli' / name).write_bytes(content)
         (self.stage / 'install_domino.py').write_bytes(INSTALLER)
         (self.stage / 'manifest.json').write_text('{"schema":1}')
@@ -60,7 +65,7 @@ class CLISyncTests(unittest.TestCase):
         self.runtime = self.home / '.local/share/domino/cli'
 
     def files(self, version):
-        files = {name: Path(cli.__file__).with_name(name).read_bytes() for name in cli.CLI_MODULES}
+        files = {name: (Path(cli.__file__).parent / name).read_bytes() for name in (*cli.CLI_MODULES, *cli.CLI_RESOURCES)}
         files['domino_cli.py'] = files['domino_cli.py'].replace(
             f"VERSION = '{cli.VERSION}'".encode(), f"VERSION = '{version}'".encode())
         files['install_domino.py'] = INSTALLER
@@ -90,6 +95,7 @@ class CLISyncTests(unittest.TestCase):
     def seed_runtime(self, version):
         self.runtime.mkdir(parents=True)
         for name, content in self.files(version).items():
+            (self.runtime / name).parent.mkdir(parents=True, exist_ok=True)
             (self.runtime / name).write_bytes(content)
 
     def actual_version(self):
@@ -257,7 +263,7 @@ if __name__ == '__main__':
     def test_runtime_wheel_reads_only_declared_modules(self):
         root = self.stage / 'cli'
         (root / 'private.py').write_text('do not include')
-        self.assertEqual(set(sync.module_files(root)), set(cli.CLI_MODULES))
+        self.assertEqual(set(sync.module_files(root)), set(cli.CLI_MODULES) | set(cli.CLI_RESOURCES))
         content = (root / 'domino_cli.py').read_text().replace("'domino_cli_sync.py'", "'../private.py'")
         (root / 'domino_cli.py').write_text(content)
         with self.assertRaises(sync.SyncError):
@@ -268,6 +274,7 @@ if __name__ == '__main__':
             info = f'domino_proxy-{cli.VERSION}.dist-info'
             self.assertIn(f'Version: {cli.VERSION}', archive.read(info + '/METADATA').decode())
             self.assertIn(info + '/licenses/LICENSE', archive.namelist())
+            self.assertEqual(archive.read('domino_assets/Domino.icns')[:4], b'icns')
             self.assertEqual(set(cli.CLI_MODULES), {name for name in archive.namelist() if '/' not in name})
         with self.assertRaises(sync.SyncError):
             sync.make_wheel({'private/config.json': b'private'}, self.root / 'bad.whl', cli.VERSION, b'license')

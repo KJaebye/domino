@@ -53,7 +53,14 @@ def main():
             home=work/'home'
             home.mkdir()
             original_command=ssh.command_argv
-            ssh.command_argv=lambda command,tty=False:original_command('env HOME='+shlex.quote(str(home))+' sh -c '+shlex.quote(command),tty)
+            def isolated_command(command, tty=False):
+                prefix = 'env HOME=' + shlex.quote(str(home))
+                # The streamed bridge removes the final command argument before
+                # appending its runner. Keep HOME on that resulting SSH prefix.
+                if not command:
+                    return [*original_command(prefix, tty), '']
+                return original_command(prefix+' sh -c '+shlex.quote(command),tty)
+            ssh.command_argv=isolated_command
             with ssh:
                 request={'schema_version':1,'operation':'configs.add','arguments':{'name':'SSH fixture','url':'https://example.test/private'},
                     'operation_id':'a'*32,'transport_token':'b'*32,'target':ssh.target,'request_id':'ssh-fixture'}

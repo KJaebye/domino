@@ -5,6 +5,7 @@ import io
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import tempfile
 import unittest
@@ -13,6 +14,10 @@ from unittest.mock import patch
 import domino_cli as tool
 import domino_agent
 from domino_service import OPERATIONS, validate
+
+from tests.locale_fixture import chinese_ui
+
+setUpModule, tearDownModule = chinese_ui()
 
 
 def assert_result_schema(case, value, schema):
@@ -110,12 +115,30 @@ class SourceTests(unittest.TestCase):
         self.assertEqual(raw, before)
         self.assertFalse(result['allow-lan'])
         self.assertFalse(result['tun']['enable'])
-        self.assertFalse(result['dns']['enable'])
+        self.assertTrue(result['dns']['enable'])
+        self.assertTrue(result['dns']['use-system-hosts'])
+        self.assertEqual(result['dns']['listen'], '')
         self.assertNotIn('external-controller-unix', result)
         self.assertNotIn('interface-name', result['proxies'][0])
         self.assertEqual(result['proxies'][0]['password'], 'TEST-NODE-PASSWORD')
         self.assertEqual(result['proxy-groups'][0]['proxies'][0], 'DIRECT')
         self.assertNotEqual(result['secret'], 'TEST-OLD-SECRET')
+
+    def test_internal_dns_uses_target_hosts_without_copying_source_dns_or_opening_a_listener(self):
+        raw = self.profile()
+        raw['dns'].update({'listen': '0.0.0.0:53', 'enhanced-mode': 'fake-ip',
+                           'nameserver': ['127.0.0.1:5553'], 'use-system-hosts': False})
+        for ipv6 in (False, True):
+            raw['ipv6'] = ipv6
+            result = tool.sanitize_profile(raw, {}, 17890, 19091)
+            self.assertEqual(result['dns']['nameserver'], ['system'])
+            self.assertEqual(result['dns']['enhanced-mode'], 'redir-host')
+            self.assertTrue(result['dns']['use-hosts'])
+            self.assertTrue(result['dns']['use-system-hosts'])
+            self.assertEqual(result['dns']['listen'], '')
+            self.assertEqual(result['dns']['ipv6'], ipv6)
+            self.assertFalse(result['tun']['enable'])
+        self.assertEqual(raw['dns']['listen'], '0.0.0.0:53')
 
     def test_global_mode_is_preserved_and_disabled_source_is_refused(self):
         raw = self.profile()
@@ -388,10 +411,11 @@ class SourceListingTests(unittest.TestCase):
         with redirect_stdout(output):
             self.assertEqual(tool.main(['scan']), 0)
         text = output.getvalue()
-        for expected in ['外部配置 1 个', 'Domino 管理 0 个', 'Clash Verge', 'clash-verge.yaml',
+        for expected in ['外部配置 1 个', 'Domino 管理 0 个', 'Clash Verge',
                          '代理入口', '入口出网', 'http://127.0.0.1:7897', '检查未通过']:
             self.assertIn(expected, text)
         self.assertNotIn('PRIVATE', text)
+        self.assertNotIn('clash-verge.yaml',text)
 
     def managed_registry(self):
         items = [dict(id=f'{i+1:032x}', name=name, kind='snapshot', revision=f'{i+10:032x}',
@@ -766,7 +790,7 @@ items:
         with redirect_stdout(output):
             self.assertEqual(tool.main(['scan']), 0)
         text = output.getvalue()
-        for expected in ['运行配置', 'Saved subscription', 'Backup', '默认导入来源',
+        for expected in ['Saved subscription', 'Backup', '默认导入来源',
                          '客户端当前启用', '非当前', '未检查（保存配置）', '扫描提示']:
             self.assertIn(expected, text)
         self.assertNotIn('PRIVATE', text)
@@ -782,10 +806,10 @@ items:
         with patch.object(tool, 'collect_sources', return_value=collected):
             output = io.StringIO()
             with redirect_stdout(output):
-                tool.main(['scan'])
+                tool.main(['scan','--verbose'])
             text = output.getvalue()
             self.assertIn('外部配置 2 个 · Domino 管理 0 个', text)
-            self.assertEqual(text.count('来源      '), 2)
+            self.assertEqual(len(re.findall(r'(?m)^  来源 +',text)), 2)
             self.assertIn('Clash Verge · xlink', text)
             self.assertIn('Clash Verge · feiniao', text)
             self.assertNotIn('Clash Verge · 运行配置', text)
@@ -793,7 +817,7 @@ items:
             self.assertIn('原始配置', text)
             self.assertIn('未关联运行入口', text)
             self.assertIn('出网结果属于运行入口', text)
-            self.assertEqual(text.count('入口出网  可用'), 1)
+            self.assertEqual(len(re.findall(r'(?m)^  入口出网 +可用$',text)), 1)
             json_output = io.StringIO()
             with redirect_stdout(json_output):
                 tool.main(['scan', '--json'])
@@ -837,7 +861,7 @@ items:
         self.assertIn('外部配置 1 个 · Domino 管理 0 个', text)
         self.assertIn('检查未通过', text)
         self.assertNotIn('未检查（保存配置）', text)
-        self.assertIn('原始配置', text)
+        self.assertNotIn('原始配置', text)
 
     def test_invalid_items_are_skipped_without_hiding_valid_profile(self):
         path = self.saved()

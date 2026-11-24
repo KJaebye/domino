@@ -14,11 +14,17 @@ domino user@192.168.1.10 deploy    # 将翻墙能力复制到指定电脑
 
 先按 [安装步骤](../README.md#1-安装) 创建并激活 venv，再用 `python -m pip install --upgrade domino-proxy` 安装 CLI。Python 包不包含 Mihomo；首次在本机使用代理时，再运行 `domino-install` 联网下载内核并配置后台服务。仅管理远端可跳过本机初始化。下文的 `./install.sh` 用于源码安装。
 
+安装结束统一显示“安装结果”：后台服务、配置、补全、终端代理策略和实际出网分别列出。无订阅时下一步是 `domino add "名称"`；已有配置时使用 `domino status` 检查应用接入。服务已启动不等于浏览器或当前终端已经使用代理。
+
 ## Tab 补全
 
-支持 zsh（macOS 常用）和 bash（Ubuntu 常用）。例如输入 `domino sh` 后按 Tab 补成 `shell`，`domino shell ` 后按 Tab 查看 `on/off/status`；`domino test `、`domino switch ` 可补本机配置名，`domino select ` 可补节点和策略组。补全会处理名称中的空格和方括号。
+默认接入 macOS 的 Zsh 和 Ubuntu 的 Bash，不安装额外 shell，不修改登录 shell。两种补全脚本均保留，主动使用其他 shell 时可自行加载。例如输入 `domino sh` 后按 Tab 补成 `shell`，`domino shell ` 后按 Tab 查看 `on/off/status`；`domino test `、`domino switch ` 可补本机配置名，`domino select ` 可补节点和策略组。补全会处理名称中的空格和方括号。
 
-源码初始化会随已有终端加载器接入；已有终端重新打开或重新加载更新后的 `~/.config/domino/proxy.env`。Homebrew / apt 提供标准补全文件，需要 shell 自身的补全机制已启用。pip 安装或独立使用 CLI 时，在当前终端运行对应一行：
+**完整安装会自动配置补全，无需每次手动加载。** macOS 和 Ubuntu 上运行 `domino-install`、源码 `./install.sh` 或部署到远端后，安装程序会按平台写入加载区块：macOS 使用 `~/.zshrc`，Ubuntu / Linux 使用 `~/.bashrc`，不新建或改写另一种 shell 的启动文件。旧版已写入另一种 shell 的接入区块保留，避免影响主动使用该 shell 的用户。之后新开的对应终端自动支持 `domino sw` + Tab → `domino switch`；升级、重新安装会保留其他启动配置，不重复添加区块。终端代理策略为 `off` 时，补全同样可用。显式使用 `--no-shell-env` 会跳过此次终端接入设置。Bash 登录终端沿用 Ubuntu 等系统已有的登录配置来加载 `.bashrc`；自定义登录配置仍需保留这一接入。
+
+安装前已经打开的终端不会重新读取启动文件；重新打开终端即可，或仅在这些旧窗口里手动加载一次。`completion=未注册`、`_domino: none` 表示当前 Zsh 尚未加载补全，并不表示安装文件丢失。
+
+Homebrew / apt 另外提供标准补全文件，需要 shell 自身的补全机制已启用。**只执行 pip 安装 CLI，且没有运行 `domino-install` 的设备**尚未接入本机终端加载器；仅管理远端而不初始化本机服务时，可将对应一行加入 `~/.zshrc` 或 `~/.bashrc`，以后新开终端便自动加载：
 
 ```bash
 # zsh
@@ -27,11 +33,48 @@ eval "$(domino completion zsh)"
 eval "$(domino completion bash)"
 ```
 
-如需永久启用，将对应一行加入 `~/.zshrc` 或 `~/.bashrc`；命令本身只输出脚本，不自动修改 rc 文件。`domino USER@IP ` 也可补命令和选项，但不连接远端获取配置或节点；本机节点来自已保存配置及已有 provider 缓存，不触发刷新或测速。
+上面的 `domino completion zsh/bash` 命令只输出脚本，不自动修改 rc 文件；完整安装无需额外添加这些行。`domino USER@IP ` 也可补命令和选项，但不连接远端获取配置或节点；本机节点来自已保存配置及已有 provider 缓存，不触发刷新或测速。
 
 当前版本自动发现 Mac 的 Clash Verge 配置，以及 Domino 已部署在本机的配置，也支持 `--source` 指定 Clash/Mihomo 配置，或 `--subscription` 提供完整配置订阅。本机 macOS（Apple Silicon / Intel）和使用 systemd 的 Linux（ARM64 / x86_64）通过 `./install.sh` 一次安装管理程序、内核和后台服务。通过 SSH 部署的目标仍支持使用 systemd 的 Linux ARM64 和 x86_64。这里迁移的是兼容的节点配置；不支持直接克隆专用隧道客户端的登录状态或设备证书，不接管目标系统的默认路由。
 
 保留源配置的规则模式或全局模式，以及可获取的当前节点选择。源客户端处于 `direct` 模式时停止迁移，避免将直连误当作已开启的代理。
+
+## 开发构建与恢复
+
+`domino --version` 保持纯版本号，`domino status` 另列管理 CLI 的源码指纹及开发/发布标识，并与内核版本分开；不同机器上同为 1.3.0 的开发快照可由指纹区分。运行目录中的 CLI 快照不同会单独显示，不自动替换包管理器文件或重启服务。CLI 首页根据当前状态给出建议下一步，读取首页不会联网检测或修改配置。
+
+安装结果保留恢复备份 ID；使用 `domino-install --verbose` 查看完整恢复说明，目标电脑可执行 `domino rollback --backup ID` 恢复服务、配置和环境，可能重建连接。只有本工具的完整安装备份可按此命令恢复；订阅操作的局部备份应根据其错误提示保留并检查，不能当作完整安装备份使用。彻底卸载也会删除恢复备份，需要保留时应先复制到运行目录之外。
+
+默认输出聚焦本次结果；`status`、`shell`、`list`、`scan`、`nodes`、`select`、`test`、`mode`、`log`、服务开关、系统代理、规则和集合等命令可加 `--verbose` 查看路径、环境变量、更新时间或操作说明，远端同样支持，例如 `domino USER@IP status --verbose`。添加、切换、重命名等配置操作默认只确认本次动作，不重新打印整张配置表；需要列表时运行 `domino list`。异常、未检测、部分完成、恢复位置与无桌面支持状态不会因精简而隐藏。现有 JSON 字段、环境脚本、补全协议和动态流量面板格式保持兼容。
+
+## 连接诊断
+
+macOS 与 Ubuntu 均可运行 `domino doctor`，默认比较系统直连与代理到公网测试地址的 HTTPS；指定问题地址使用 `domino doctor --url https://example.com/`，机器结果添加 `--json`。TUI 中使用 `/doctor`，或 `/doctor https://example.com/`。默认先显示“已连通 / 未连通 / 未检测”的结论，并分别说明系统直连与经过 Domino 的结果；HTTP 302 会明确解释为网站要求跳转，HTTP 401/403 表示已连通但需要登录或授权，5xx 表示已连通但网站服务异常。默认不展示 DNS 和路由术语，排查详情加 `--verbose`，完整机器数据使用 `--json`（含稳定的 `conclusion.state` 和两条路径的连通布尔值）。检查不修改 DNS、规则、VPN 或权限，也不会跟随跳转或验证登录成功。诊断地址不能包含凭据或查询参数。
+
+套餐信息区分用量与到期：默认表格显示已用/总量和百分比，当前套餐有到期信息时另行显示；到期套餐单独标记，不根据缺失信息推断永久有效。超过 6 小时标为“缓存待刷新”，刷新失败时标为“刷新失败，沿用缓存”。`list --verbose` 另列剩余流量、来源及“流量更新”时间。普通 `list` 不触发网络刷新，使用 `list --refresh-usage` 主动更新；无总量时剩余流量保持未知。
+
+## OpenVPN 与公司内网
+
+Domino 的 DIRECT 请求仍遵循系统路由，可以与 OpenVPN 同时运行。公司域名若由目标机 `/etc/hosts` 提供，独立内核必须读取**目标机**的系统 hosts；不复制源电脑的 hosts 文件。1.3.0 开发版启用 Mihomo 内部解析与 `use-system-hosts`，使用 `system` 上游、`redir-host` 模式和空 DNS 监听地址，不接管系统 DNS，不创建 DNS 服务端口，也不开启 TUN。既有缓存配置在下次切换时自动使用新设置。
+
+排查时先比较系统直连与经过 Domino 的相同 HTTPS 地址，再检查 DIRECT 规则及 VPN 路由。若原生解析正常、内核日志显示 `dns resolve failed`，还应检查目标 hosts 与内核解析配置，不能直接归因于本地网络权限或 VPN 路由。仅配置 DIRECT 不会自动解决域名解析。
+
+本轮已在 macOS + OpenVPN + 目标 hosts 环境完成对照。VPN 仅提供分流 DNS、没有 hosts 映射的其他环境仍需单独验证；Mihomo 的 `system` 上游不等同 macOS 完整的系统解析服务。
+
+## 界面语言 / Interface language
+
+默认中文。使用 `domino language en` 保存英文偏好，`domino language zh` 切回中文；`domino language` 查看当前语言。交互界面可用 `/language` 选择，也支持 `/language en` 和 `/language zh` 即时切换。
+
+```sh
+domino language en           # Save English as the default
+domino language zh           # 保存中文为默认语言
+domino --lang en list        # English for this command only
+domino --lang zh status      # 仅本次命令使用中文
+```
+
+优先级为 `--lang`、`DOMINO_LANG` 环境变量、`~/.config/domino/preferences.json` 中的偏好，最后为中文默认值。SSH 管理沿用发起端语言，不修改目标语言偏好。命令名称、配置与节点名称、规则、日志原文及 JSON 字段名保持不变；帮助、状态说明、错误提示和交互界面随语言切换。
+
+English and Chinese interfaces are available. Use `domino language en` or `domino language zh` to save a default, or `--lang` for one command. The terminal workspace also supports `/language`. Language changes do not restart the proxy service or alter profiles, node names or routing rules.
 
 ## 命令格式
 
@@ -46,6 +89,8 @@ domino catch --source '/path/config.yaml'    # 明确选择配置来源
 ```
 
 `domino catch` 列出本机可捕获的 Clash/Mihomo 运行配置和 Clash Verge 保存配置，配置名称与文件路径分行展示，路径用 `~` 缩写并按终端宽度换行；保存配置标注客户端当前项。输入编号捕获一个，输入 `all` 捕获全部，回车取消。也可直接运行 `domino catch all`，或用 `domino catch --source PATH` 指定文件。Domino 和旧版 robot-clash 自有配置不列为外部来源；辅助 merge/script 配置不作为独立来源。这里的“可捕获”表示配置兼容，不保证节点实际出网可用。
+
+`scan` 的来源名称是展示标签，不是 `catch` 的位置参数；例如 `domino catch 'Clash Verge · 旗舰Pro'` 不受支持。请运行 `domino catch` 后按菜单编号选择，不要把扫描顺序当作捕获菜单编号。需要保留 Clash Verge 合并、脚本生成的当前运行配置时，选择 `clash-verge.yaml` 对应项，或用 `domino catch --source "$HOME/Library/Application Support/io.github.clash-verge-rev.clash-verge-rev/clash-verge.yaml"` 明确指定；选择 `profiles/` 下的原始文件则捕获该保存配置，两者可能不同。路径包含空格时必须使用引号，命令中的 `$HOME` 会在双引号内展开。
 
 捕获成功后会**自动开启 Domino**，无需再运行 `domino start`：调用与 `domino start` 相同的流程，启动服务并接通 macOS / Ubuntu GNOME 系统代理。已有安装保留当前配置和节点选择，不自动切换到新捕获项；需要切换时使用 `domino switch "配置名"`。重复配置会跳过登记，但仍自动开启。终端代理策略保持独立，无 GNOME 桌面时仅启动服务并提示使用 `domino shell on`。捕获保存文件默认节点，不查询来源客户端的运行选择或执行客户端脚本；外部客户端配置保持原样。
 
@@ -227,7 +272,8 @@ UI 内支持 `/rules add "完整规则"`、`/rules remove "完整规则"` 和 `/
 使用 `domino list` 统一管理完整 Clash/Mihomo 配置订阅和本地快照，选择其中一个作为本机当前配置；不会自动合并不同机场的节点和规则。`scan` 列出本机发现的导入来源，`configs` 只列出已登记到 Domino 的配置，因此两者数量不必相同。已有安装执行 `catch` 将配置快照登记到配置库并自动开启 Domino，保留当前项和节点选择；首次安装或安装器文件导入成功后会登记快照并设为当前，保留其他在线订阅；不会因为扫描发现了其他配置就自动加入配置库。捕获配置直接使用来源配置名，重名时追加六位随机字母数字后缀，例如 `xlink-xqEiJS`，不把来源说明放入名称。同一来源重复捕获保留已有名称（包括手动重命名）；已有配置不会自动改名。
 
 ```bash
-domino list    # 查看名称、当前项、节点数、更新时间和来源主机
+domino list    # 查看当前项、节点、套餐已用/总量、更新时间和来源
+domino list --refresh-usage    # 只刷新套餐流量，不更新或重载运行配置
 domino list --import-current '原有配置'    # 将现有配置保存为可切回的快照
 domino add '主力机场'    # 隐藏输入地址，添加后不切换
 domino add '备用机场'
@@ -253,6 +299,10 @@ domino user@192.168.8.21 remove '备用'
 `configs update all` 中的 `all` 表示全部订阅；如果某个订阅恰好叫 `all`，可用 `domino list --update all` 单独更新它。
 
 完整配置订阅的下载使用 Clash/Mihomo 兼容客户端标识 `clash.meta`，用于兼容按客户端类型识别请求的订阅服务。下载失败会报告可获取的 HTTP 状态码，并隐藏订阅密钥；本机管理失败保留后端退出码，避免重复输出失败提示。
+
+`domino list` 显示订阅服务提供的套餐已用/总量和百分比；已用量为上传与下载之和。低于 70% 为绿色，70% 至不足 90% 为黄色，90% 至 100% 为红色，超过 100% 使用随终端前景色变化的暗色并标注“已超额”。重定向输出或设置 `NO_COLOR` 时保留数字与状态文字。
+
+默认列表读取缓存，不访问订阅服务。更新订阅时会保存响应中的套餐信息；`domino list --refresh-usage` 仅刷新这些信息，不更新、切换或重载内核配置。Clash Verge 捕获快照可以按记录的来源找回订阅地址以读取流量，不因此改变快照类型。无地址、未提供计数和未知总量会分别标明；刷新失败保留上次计数并显示“缓存”。套餐流量以服务商返回值为准，不等同于内核本次运行的流量。
 
 ### 导入源快照与运行配置
 
@@ -294,7 +344,7 @@ domino restart   # 重启并重新接通支持的桌面系统代理
 
 全新 macOS / Linux 安装的终端策略均默认为 `off`，与是否提供订阅无关。已有策略在重装、升级和重新部署时保留；尚无策略的旧安装中，只有完整匹配已识别旧版 Linux 固定导出模板的环境才迁移为 `on`，旧版 macOS 迁移为 `off`。`--no-shell-env` 跳过本次 shell 环境修改并保留此前设置，不会撤销旧代理环境或重置策略。
 
-安装程序通过 `~/.bashrc`、`~/.zshrc` 的受管理区块加载 `~/.config/domino/proxy.env`；Linux 还接入 `~/.vscode-server/server-env-setup`。加载器配置命令 PATH、shell 包装函数和提示符同步，不再无条件导出固定代理。Bash 登录终端需由已有登录配置加载 `.bashrc`，安装程序不改 `.bash_profile`、`.bash_login` 或 `.profile`。已经打开的 Bash / Zsh 终端需先加载一次：
+安装程序按平台通过 macOS 的 `~/.zshrc` 或 Ubuntu / Linux 的 `~/.bashrc` 受管理区块加载 `~/.config/domino/proxy.env`；Linux 还接入 `~/.vscode-server/server-env-setup`。加载器配置命令 PATH、shell 包装函数和提示符同步，不再无条件导出固定代理。Bash 登录终端需由已有登录配置加载 `.bashrc`，安装程序不改 `.bash_profile`、`.bash_login` 或 `.profile`。已经打开的 Bash / Zsh 终端需先加载一次：
 
 ```bash
 . "$HOME/.config/domino/proxy.env"
@@ -303,7 +353,7 @@ domino shell on    # 开启策略，并在本机已接入的当前 shell 应用
 domino shell off    # 关闭策略，并恢复仍由 Domino 管理的原变量
 ```
 
-`domino shell on/off` 显示终端代理用途、从当前配置读取的 Domino 端口，以及 HTTP(S)、SOCKS、绕过地址的目标环境变量。`domino shell status` 额外列出本次命令继承的已导出变量，隐藏代理地址中的账号密码、路径和查询参数；这份环境是命令启动时的快照，不代表后续同步完成后的父 shell，也无法看到未导出的变量。
+`domino shell on/off/status` 默认显示策略状态、启用时的地址；已接入的本机 Bash/Zsh 包装函数在同步后追加当前终端的实际状态。策略关闭、手动模式或部分接管时，默认同时显示当前已导出的 HTTP、HTTPS 和通用代理地址；全部为空时明确显示“当前代理：未设置”。大小写变量值不一致时分别展示，不将策略关闭等同于没有其他代理。添加 `--verbose` 查看用途、目标环境变量与本次命令继承的已导出变量，代理地址隐藏账号密码、路径和查询参数；继承环境是命令启动时的快照，不代表后续同步完成后的父 shell，也无法看到未导出的变量。独立子进程、SSH 或 UI 中的政策结果不会冒充父 shell 已生效。
 
 包装函数逐个管理 `http_proxy`、`https_proxy`、`all_proxy`、`no_proxy` 及其大写形式。开启前保存变量是否存在、值及是否 export；重复开启保留最初基线，关闭时仅恢复仍属于 Domino 的变量。手动赋值、`unset` 或更改 export 属性后，该变量脱离管理，不会在下次提示符被覆盖；自动启动同步也保护已有、未归 Domino 管理的变量。显式在本机执行 `domino shell on` 可以重新接管它们，并保存此时的基线。无法检测把变量手动赋成完全相同值且属性不变的操作。嵌套 shell 继承管理元数据，避免把 Domino 值误存为原始基线；子 shell 不会凭空恢复父 shell 未 export 的变量。
 
@@ -798,7 +848,7 @@ HTTP/file providers 会连同缓存资源迁移，并改为目标上的相对路
 | 迁移前自定义加载器备份 | `~/.local/share/domino/shell-env.previous` |
 | 资源源配置 | `~/.config/domino/downloads.json` |
 | Agent 操作记录与去重 | `~/.local/state/domino/operations/` |
-| shell 加载区块 | `~/.bashrc`、`~/.zshrc`；不修改 Bash 登录文件 |
+| shell 加载区块 | macOS：`~/.zshrc`；Ubuntu / Linux：`~/.bashrc`；不修改 Bash 登录文件 |
 | Linux VS Code 环境入口 | `~/.vscode-server/server-env-setup` |
 
 服务名和目录名统一使用 `domino`。服务以 SSH 用户身份运行，只监听目标回环地址；不开放 LAN 代理，不启用 TUN，不修改系统 DNS/默认路由。新增环境排除 localhost 和常见私网范围；已运行的进程需要自行重启才会继承环境。
