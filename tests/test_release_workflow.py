@@ -157,13 +157,42 @@ class ReleaseWorkflowTests(DistributionFixture):
 
     def test_github_resume_reuses_matching_draft_assets_without_clobbering(self):
         items = [{'name': name, 'digest': 'sha256:' + digest} for name, digest in self.plan['files'].items()]
-        with patch.object(release, 'api', side_effect=[{'draft': True, 'assets': items[:1]}, {'assets': items}]), \
+        with patch.object(release, 'api', side_effect=[{'id': 1, 'draft': True, 'assets': items[:1]}, {'tag_name': 'v0.16.0', 'assets': items}]), \
                 patch.object(release.subprocess, 'run') as command:
             release.publish_github(self.work)
         calls = [call.args[0] for call in command.call_args_list]
         self.assertEqual([args[2] for args in calls], ['upload', 'edit'])
         self.assertNotIn('--clobber', str(calls))
         self.assertNotIn(str(self.work / 'release' / items[0]['name']), calls[0])
+
+    def test_draft_tag_404_is_resolved_through_listing_then_verified_by_id(self):
+        items = [{'name': name, 'digest': 'sha256:' + digest} for name, digest in self.plan['files'].items()]
+        draft = {'id': 42, 'tag_name': 'v0.16.0', 'draft': True, 'assets': items[:1]}
+        with patch.dict(os.environ, {'RELEASE_LOCAL_API': '1'}), \
+             patch.object(release, 'api', side_effect=[None, [draft], {'tag_name': 'v0.16.0', 'assets': items}]) as api, \
+             patch.object(release.subprocess, 'run') as command:
+            release.publish_github(self.work)
+        self.assertEqual(api.call_args_list[-1].args[0], 'repos/KJaebye/domino/releases/42')
+        self.assertEqual([call.args[0][2] for call in command.call_args_list], ['upload', 'edit'])
+
+    def test_new_draft_remains_invisible_by_tag_after_upload(self):
+        items = [{'name': name, 'digest': 'sha256:' + digest} for name, digest in self.plan['files'].items()]
+        draft = {'id': 43, 'tag_name': 'v0.16.0', 'draft': True, 'assets': []}
+        with patch.dict(os.environ, {'RELEASE_LOCAL_API': '1'}), \
+             patch.object(release, 'api', side_effect=[None, [], None, [draft], {'tag_name': 'v0.16.0', 'assets': items}]) as api, \
+             patch.object(release.subprocess, 'run') as command:
+            release.publish_github(self.work)
+        self.assertEqual(api.call_args_list[-1].args[0], 'repos/KJaebye/domino/releases/43')
+        self.assertEqual([call.args[0][2] for call in command.call_args_list], ['create', 'upload', 'edit'])
+
+    def test_duplicate_drafts_do_not_upload_or_publish(self):
+        draft = {'id': 42, 'tag_name': 'v0.16.0', 'draft': True, 'assets': []}
+        with patch.dict(os.environ, {'RELEASE_LOCAL_API': '1'}), \
+             patch.object(release, 'api', side_effect=[None, [draft, {**draft, 'id': 43}]]), \
+             patch.object(release.subprocess, 'run') as command:
+            with self.assertRaisesRegex(ValueError, 'Multiple GitHub releases'):
+                release.publish_github(self.work)
+        command.assert_not_called()
 
     def test_github_release_conflict_never_writes_remote_files(self):
         name = next(iter(self.plan['files']))
@@ -221,21 +250,36 @@ class ReleaseWorkflowTests(DistributionFixture):
 
     def test_homebrew_downgrade_never_writes_a_repository(self):
         current = b'class Domino < Formula\n  version "1.0.0"\nend\n'
-        with patch.object(release, 'fetch', return_value=current), patch.object(release, 'publish_git_files') as publish:
+        with patch.object(release, 'branch_file', return_value=current), patch.object(release, 'publish_git_files') as publish:
             with self.assertRaisesRegex(ValueError, 'downgrade'):
                 release.publish_brew(self.work)
         publish.assert_not_called()
 
+    def test_channel_file_uses_fixed_commit_instead_of_cached_main_alias(self):
+        with patch.object(release, 'api', return_value={'object': {'sha': 'a' * 40}}), \
+             patch.object(release, 'fetch', return_value=b'formula') as fetch:
+            self.assertEqual(release.branch_file('KJaebye/homebrew-tap', 'Formula/domino.rb'), b'formula')
+        self.assertEqual(fetch.call_args.args[0], 'https://raw.githubusercontent.com/KJaebye/homebrew-tap/' + 'a' * 40 + '/Formula/domino.rb')
+
+    def test_apt_snapshot_pins_fetches_but_preserves_client_source_url(self):
+        plan = {**self.plan, 'apt_url': 'https://raw.githubusercontent.com/KJaebye/domino-apt/main/'}
+        with patch.object(release, 'api', return_value={'object': {'sha': 'a' * 40}}), \
+             patch.object(release, 'fetch', return_value=b'index') as fetch:
+            pinned = release.pinned_apt_plan(plan)
+            release.apt_fetch(pinned, 'channel.json')
+        self.assertEqual(pinned['apt_url'], plan['apt_url'])
+        self.assertIn('/' + 'a' * 40 + '/channel.json', fetch.call_args.args[0])
+
     def test_matching_homebrew_version_does_not_read_credentials_or_write(self):
         current = (self.work / 'channels/tap/Formula/domino.rb').read_bytes()
-        with patch.object(release, 'fetch', return_value=current), \
+        with patch.object(release, 'branch_file', return_value=current), \
                 patch.object(release, 'publish_git_files') as publish, patch.object(release, 'credential_text') as credentials:
             release.publish_brew(self.work)
         publish.assert_not_called()
         credentials.assert_not_called()
 
     def test_missing_homebrew_formula_is_published_through_the_existing_local_gh_login(self):
-        with patch.object(release, 'fetch', return_value=None), \
+        with patch.object(release, 'branch_file', return_value=None), \
                 patch.object(release, 'api', return_value={}), patch.object(release, 'publish_git_files') as publish:
             release.publish_brew(self.work)
         args = publish.call_args.args
