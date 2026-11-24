@@ -6,7 +6,7 @@
 
 # Domino
 
-当前分支正在准备 **1.3.0，尚未发布**。新增功能以本分支代码和变更记录为准，安装已发布的旧版本不会自动获得这些修改。
+**[Domino v1.3.0](https://github.com/KJaebye/domino/releases/tag/v1.3.0) 已于 2026-11-24 正式发布**，可通过 PyPI、Homebrew 或签名 APT 软件源安装与升级。[查看发布说明](docs/RELEASE-1.3.0.md)。
 
 **捕获本机代理，一键部署到另一台电脑，让翻墙像 domino 一样简单。**
 
@@ -29,7 +29,7 @@ macOS 本机初始化还需要 Xcode Command Line Tools（缺少时运行 `xcode
 ### 1. 安装
 
 ```bash
-pip install domino-proxy && domino-install
+pip install --upgrade domino-proxy && domino-install
 ```
 
 如果不能直接使用 pip 安装，改用 venv：
@@ -55,6 +55,8 @@ venv 安装后再运行 `domino-install`，由它下载 Mihomo 并配置本机�
 
 macOS 也可直接 `brew install KJaebye/tap/domino`；Ubuntu 可使用[签名 APT 软件源](docs/DISTRIBUTION.md#用户安装命令)。
 
+已有安装可在原 Python 环境中运行 `python -m pip install --upgrade domino-proxy`，然后用 `domino --version` 确认版本为 `1.3.0`。包升级只更新管理命令，无需再次运行 `domino-install`，不会重启服务或切换配置。Homebrew / APT 用户按[原安装渠道升级](docs/DISTRIBUTION.md)。
+
 ### 2. 准备配置
 
 已有 Clash Verge 或其他兼容配置时：
@@ -65,7 +67,7 @@ domino list                  # 查看配置名称
 domino status                # 查看服务与系统代理状态
 ```
 
-界面支持中英文切换：`domino language en` / `domino language zh` 保存偏好；`domino --lang en list` 临时使用英文；交互界面输入 `/language` 选择。English: run `domino language en` to save English as the default.
+界面默认使用英文，保留已保存的语言偏好。支持中英文切换：`domino language en` / `domino language zh` 保存偏好；`domino --lang en list` 临时使用英文；交互界面输入 `/language` 选择。English: run `domino language en` to save English as the default.
 
 也可以用 `domino catch all` 一次捕获全部配置，重复内容自动跳过。捕获成功后自动启动服务并接通系统代理；已有 Domino 时保留当前配置和节点选择，需要切换时使用 `domino switch '配置名'`。
 
@@ -128,6 +130,8 @@ domino [USER@IP] COMMAND [ARGS] [options]
 
 | 用途 | 命令 |
 | --- | --- |
+| 只读诊断原生与代理连接 | `domino doctor` |
+| 切换界面语言 | `domino language en` / `domino language zh` |
 | 扫描外部配置与 Domino 配置库 | `domino scan` |
 | 捕获一个 / 全部配置 | `domino catch` / `domino catch all` |
 | 列出 / 添加 / 切换配置 | `domino list` / `domino add '名称'` / `domino switch '名称'` |

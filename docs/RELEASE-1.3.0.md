@@ -1,6 +1,6 @@
-# Domino 1.3.0 发布说明（候选）
+# Domino 1.3.0 发布说明
 
-本版本正在准备发布，尚未创建正式发行。PyPI 包名继续为 `domino-proxy`，CLI 版本为 `1.3.0`，发行许可证为 GPL-3.0-only。
+本版本已于 2026-11-24 正式发布，固定标签为 [v1.3.0](https://github.com/KJaebye/domino/releases/tag/v1.3.0)，源码提交为 `c3963b8`。GitHub Release、PyPI、Homebrew tap 和自建签名 APT 已更新，发布核验记录见[分发指南](DISTRIBUTION.md)。PyPI 包名继续为 `domino-proxy`，CLI 版本为 `1.3.0`，发行许可证为 GPL-3.0-only。
 
 ## 相比 1.2.3
 
@@ -17,7 +17,7 @@
 
 ## 安装与升级
 
-以下命令仅在正式发布并核验渠道后使用：
+在原安装环境中，按所用渠道升级：
 
 ```sh
 pip install --upgrade domino-proxy==1.3.0
@@ -29,6 +29,6 @@ Homebrew 与 APT 需要先配置已有 tap/签名源，见 [分发指南](DISTRI
 
 ## 验证边界
 
-2026-11-22 已完成 Mac 公司现场 DIRECT、证书校验与重启验收；这不是每个后续源码提交的全量证明。发布分支须另外记录固定提交的全量 CI 与产物校验结果。
+2026-11-22 已完成 Mac 公司现场 DIRECT、证书校验与重启验收；这不是每个后续源码提交的全量证明。固定发布源码的渠道校验和隔离安装结果见[分发指南](DISTRIBUTION.md)。
 
 自托管 CI 的 Ubuntu x86_64 容器测试不代表 Ubuntu 主机 systemd、GNOME 桌面或 ARM64 的真实安装通过。最新源码的 Ubuntu 真机验收仍待完成，不扩大平台支持声明。

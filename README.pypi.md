@@ -1,5 +1,7 @@
 # Domino
 
+**Domino 1.3.0 已于 2026-11-24 正式发布。** 支持默认英文与中英文切换，改进 macOS 本地网络访问、安装结果和连接诊断。[发布说明](https://github.com/KJaebye/domino/blob/main/docs/RELEASE-1.3.0.md)。
+
 捕获本机代理，一键部署到另一台电脑，让翻墙像 domino 一样简单。
 
 Domino 读取兼容的 Clash/Mihomo 配置，通过 SSH 把节点、规则和必要资源部署为独立服务。目标设备在源电脑关机后仍可使用，也能继续部署下一台。
@@ -11,7 +13,7 @@ Domino 读取兼容的 Clash/Mihomo 配置，通过 SSH 把节点、规则和必
 ## 安装
 
 ```bash
-pip install domino-proxy && domino-install
+pip install --upgrade domino-proxy && domino-install
 ```
 
 如果不能直接使用 pip 安装，改用 venv：
@@ -50,6 +52,8 @@ domino user@192.168.1.10
 domino user@192.168.1.10 status
 domino ui
 ```
+
+界面默认使用英文并保留已保存的语言偏好；`domino language zh` 切换中文，`domino language en` 切换英文。`domino doctor` 可对照原生与代理连接，辅助排查 DNS、路由和 HTTPS 问题。
 
 `ui` 提供交互式配置管理、节点选择与检测。`scan` 扫描可导入配置，`test` 并行检测配置的节点连通情况，`traffic` 显示动态流量面板。
 
