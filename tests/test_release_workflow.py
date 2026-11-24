@@ -250,21 +250,36 @@ class ReleaseWorkflowTests(DistributionFixture):
 
     def test_homebrew_downgrade_never_writes_a_repository(self):
         current = b'class Domino < Formula\n  version "1.0.0"\nend\n'
-        with patch.object(release, 'fetch', return_value=current), patch.object(release, 'publish_git_files') as publish:
+        with patch.object(release, 'branch_file', return_value=current), patch.object(release, 'publish_git_files') as publish:
             with self.assertRaisesRegex(ValueError, 'downgrade'):
                 release.publish_brew(self.work)
         publish.assert_not_called()
 
+    def test_channel_file_uses_fixed_commit_instead_of_cached_main_alias(self):
+        with patch.object(release, 'api', return_value={'object': {'sha': 'a' * 40}}), \
+             patch.object(release, 'fetch', return_value=b'formula') as fetch:
+            self.assertEqual(release.branch_file('KJaebye/homebrew-tap', 'Formula/domino.rb'), b'formula')
+        self.assertEqual(fetch.call_args.args[0], 'https://raw.githubusercontent.com/KJaebye/homebrew-tap/' + 'a' * 40 + '/Formula/domino.rb')
+
+    def test_apt_snapshot_pins_fetches_but_preserves_client_source_url(self):
+        plan = {**self.plan, 'apt_url': 'https://raw.githubusercontent.com/KJaebye/domino-apt/main/'}
+        with patch.object(release, 'api', return_value={'object': {'sha': 'a' * 40}}), \
+             patch.object(release, 'fetch', return_value=b'index') as fetch:
+            pinned = release.pinned_apt_plan(plan)
+            release.apt_fetch(pinned, 'channel.json')
+        self.assertEqual(pinned['apt_url'], plan['apt_url'])
+        self.assertIn('/' + 'a' * 40 + '/channel.json', fetch.call_args.args[0])
+
     def test_matching_homebrew_version_does_not_read_credentials_or_write(self):
         current = (self.work / 'channels/tap/Formula/domino.rb').read_bytes()
-        with patch.object(release, 'fetch', return_value=current), \
+        with patch.object(release, 'branch_file', return_value=current), \
                 patch.object(release, 'publish_git_files') as publish, patch.object(release, 'credential_text') as credentials:
             release.publish_brew(self.work)
         publish.assert_not_called()
         credentials.assert_not_called()
 
     def test_missing_homebrew_formula_is_published_through_the_existing_local_gh_login(self):
-        with patch.object(release, 'fetch', return_value=None), \
+        with patch.object(release, 'branch_file', return_value=None), \
                 patch.object(release, 'api', return_value={}), patch.object(release, 'publish_git_files') as publish:
             release.publish_brew(self.work)
         args = publish.call_args.args

@@ -430,11 +430,29 @@ def check_cli(executable, requested):
             raise ValueError('Installed CLI version differs or query modified HOME')
 
 
+def branch_snapshot(repository):
+    sha = api(f'repos/{repository}/git/ref/heads/main')['object']['sha']
+    if not re.fullmatch('[0-9a-f]{40}', sha):
+        raise ValueError('Public channel has no fixed main commit')
+    return sha
+
+
+def branch_file(repository, name, missing=False):
+    sha = branch_snapshot(repository)
+    return fetch(f'https://raw.githubusercontent.com/{repository}/{sha}/{name}', missing=missing)
+
+
+def pinned_apt_plan(plan):
+    repository = plan['apt_repository']
+    if plan['apt_url'] == f'https://raw.githubusercontent.com/{repository}/main/':
+        return dict(plan, _apt_snapshot_base=f'https://raw.githubusercontent.com/{repository}/{branch_snapshot(repository)}/')
+    return plan
+
+
 def publish_brew(work):
     plan = validate_inputs(work)
     expected = (work / 'channels/tap/Formula/domino.rb').read_bytes()
-    url = f'https://raw.githubusercontent.com/{plan["tap_repository"]}/main/Formula/domino.rb'
-    current = fetch(url + '?release_check=' + str(time.time_ns()), missing=True)
+    current = branch_file(plan['tap_repository'], 'Formula/domino.rb', missing=True)
     if current is not None:
         declared = re.findall(r'^  version "(' + VERSION + r')"$', current.decode(), re.M)
         if len(declared) != 1:
@@ -453,8 +471,7 @@ def publish_brew(work):
 
 def verify_brew(work, install=False):
     plan = validate_inputs(work)
-    raw = fetch(f'https://raw.githubusercontent.com/{plan["tap_repository"]}/main/Formula/domino.rb'
-                + '?release_check=' + str(time.time_ns()))
+    raw = branch_file(plan['tap_repository'], 'Formula/domino.rb')
     if raw != (work / 'channels/tap/Formula/domino.rb').read_bytes():
         raise ValueError('Public Homebrew formula differs from the verified release')
     subprocess.run(['ruby', '-c'], input=raw, check=True, capture_output=True)
@@ -467,7 +484,7 @@ def verify_brew(work, install=False):
 
 
 def apt_fetch(plan, name, missing=False):
-    url = plan['apt_url'] + name
+    url = plan.get('_apt_snapshot_base', plan['apt_url']) + name
     if prepare_channels.urlsplit(url).hostname == 'raw.githubusercontent.com':
         url += '?release_check=' + str(time.time_ns())
     return fetch(url, missing=missing)
@@ -495,7 +512,7 @@ def apt_fingerprint():
 
 
 def prepare_apt(work):
-    plan = validate_inputs(work)
+    plan = pinned_apt_plan(validate_inputs(work))
     key = apt_fingerprint()
     old = apt_state(plan)
     if old and old['signing_fingerprint'] != key:
@@ -565,7 +582,7 @@ def signing_home(private):
 
 
 def verify_apt(work, install=False):
-    plan = validate_inputs(work)
+    plan = pinned_apt_plan(validate_inputs(work))
     state = apt_state(plan)
     key = apt_fingerprint()
     if not state or state['version'] != plan['version'] or state['signing_fingerprint'] != key:
