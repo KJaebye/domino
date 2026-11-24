@@ -184,6 +184,9 @@ class ReleaseWorkflowTests(DistributionFixture):
             release.publish_github(self.work)
         self.assertEqual(api.call_args_list[-1].args[0], 'repos/KJaebye/domino/releases/43')
         self.assertEqual([call.args[0][2] for call in command.call_args_list], ['create', 'upload', 'edit'])
+        for call in (command.call_args_list[0], command.call_args_list[-1]):
+            args = call.args[0]
+            self.assertEqual(args[args.index('--title') + 1], 'Domino v0.16.0')
 
     def test_duplicate_drafts_do_not_upload_or_publish(self):
         draft = {'id': 42, 'tag_name': 'v0.16.0', 'draft': True, 'assets': []}

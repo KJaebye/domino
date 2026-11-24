@@ -53,6 +53,7 @@
 
 ## 分发与源码布局
 
+- GitHub Release 展示标题统一为 `Domino vX.Y.Z`，例如 `Domino v1.3.0`；标签仍为 `vX.Y.Z`。新建与恢复草稿时均使用该标题格式，既有发行包和标签不因标题维护而重建或替换。
 - 经明确发布授权后，统一从本机 `.venv/bin/python scripts/release_channels.py publish --version X.Y.Z --channels all` 执行；`--dry-run` 仅演练，`--channels pypi/brew/apt` 可补发指定渠道，不依赖 GitHub Actions 额度。
 - PyPI 使用 Twine 和维护者指定目录中的 Token TXT；Homebrew 沿用本机已有 gh 登录；APT 使用同目录 `gnupg/` 中的私钥及 `domino-apt-signing-passphrase.txt` 签名。分发凭据与主仓库认证分别管理，不上传私钥或解锁口令。
 - 维护者明确要求 Domino 发布凭据统一放在 OneDrive `oetree/domino/tokens`，默认 `~/OneDrive/oetree/domino/tokens`；不用苹果钥匙串保存或读取 PyPI Token、APT 签名口令或备份解密密码。`domino-apt-backup-password.txt` 专用于解密 `domino-apt-recovery-*.tar.gpg`，与签名口令不同。所有凭据留在仓库外，目录 0700、文件 0600；修改此流程时保留 TXT 读取方式，不擅自恢复钥匙串存储。
