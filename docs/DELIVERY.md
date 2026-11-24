@@ -4,17 +4,17 @@
 
 ## 1.3.0 当前里程碑（未发布）
 
-用户要求本轮功能与修复累计在 1.3.0，期间只提交普通 commit。`BUILD_CHANNEL` 保持 `development`；只有明确授权后才能标记 release、创建 tag 或发布，不因构建成功或测试通过自动发布。
+用户要求本轮功能与修复累计在 1.3.0。2026-11-24 发布源码已切换 `BUILD_CHANNEL=release` 并随 PR #19 合入 main，`v1.3.0` 标签固定于 `c3963b8`。正式发布仍须经过固定候选审核和维护者确认，不因构建成功或标签存在自动发布。
 
 已完成安装结果统一、状态语义、macOS/Linux 只读 doctor 与 TUI 入口、套餐新鲜度/到期、构建身份和恢复范围提示。CLI 首页推荐下一步，查询不自动初始化服务或修改启动文件。详细变化见变更记录。
 
-本轮本地验证：Mac 全量 788 项，0 失败、2 项环境跳过；修订后的系统 hosts 出站回归另行通过。隔离 Debian ARM64 全量 786 项，0 失败、33 项平台/可选 shell 等跳过，使用普通用户、Bash 和独立 Mihomo；包括独立 dconf/DBus 的代理应用与恢复。Linux 环境未安装 Zsh。wheel/runtime 和隔离 pip 安装、从 1.2.3 升级及卸载均已验证。测试环境使用 Debian 自带 Python；这是 Linux 补充检查，不作为 Ubuntu 真机安装验收。
+前一轮开发快照的本地验证：Mac 全量 788 项，0 失败、2 项环境跳过；修订后的系统 hosts 出站回归另行通过。隔离 Debian ARM64 全量 786 项，0 失败、33 项平台/可选 shell 等跳过，使用普通用户、Bash 和独立 Mihomo；包括独立 dconf/DBus 的代理应用与恢复。Linux 环境未安装 Zsh。wheel/runtime 和隔离 pip 安装、从 1.2.3 升级及卸载均已验证。测试环境使用 Debian 自带 Python；这是 Linux 补充检查，不作为 Ubuntu 真机安装验收。
 
 2026-11-22 公司现场技术验收：已安装的 1.3.0 开发构建 `4354eab5fa6b` 在正式 Mac 应用中完成两目标 DIRECT、证书校验及服务重启复测；独立真实 LAN 回归另行 1 项通过。内核、配置、手动节点和系统代理设置保持不变，用户已确认重启后 GitLab 和 data-eval 的浏览器页面均正常，Mac 公司现场验收完成。此次是现场专项验收，没有重新运行上述全量回归，详见 [macOS DIRECT 诊断记录](MACOS_DIRECT_DEBUG.md)。
 
 仍待完成：最新源码在 Ubuntu 真机上的 systemd、桌面代理、重启自启和 Bash 接入。公司外 OpenVPN + 既有系统 hosts 的浏览器访问已由用户确认，但不替代公司现场浏览器验收。Ubuntu 真机继续按用户要求留待之后。
 
-本轮详细报告保存在本机 `dist/v1.3.0-usability/`；这些报告不自动随源码分发，也不将模拟或跳过项目记为通过。公共 PyPI、Homebrew、APT 产物保持原样。
+本轮详细报告保存在本机 `dist/v1.3.0-usability/`；这些报告不自动随源码分发，也不将模拟或跳过项目记为通过。公共软件版本仍为 1.2.3，发行包保持原始字节；APT 签名身份更换和发布凭据存储调整另见[分发维护记录](DISTRIBUTION.md#分发维护记录)。
 
 ## 默认输出精简的产品决策
 
@@ -38,7 +38,7 @@
 | 3 结构化写操作 | 订阅、规则、节点、模式、系统代理、服务、provider、私有安装包、导出、上传与恢复；预检、修订校验、去重、操作记录与逐项批量结果 | 有界日志读取已开放；持续事件流仍待扩展，见 Agent 文档 |
 | 4 本机/SSH 一致性 | 同版应用服务随 SSH 调用传输；结果分帧排除登录横幅 | 临时真实 OpenSSH 验证写入、去重、私有包上传与目标预检；不是指定 Linux 目标的完整服务安装实测 |
 | 5 兼容配置导入 | 只读发现、扫描和导入 Clash/Mihomo 配置；支持 Verge 常见有效配置和只读 Unix socket 来源 | 管理操作仅针对 Domino 自有运行时；来源兼容性仍需验证 |
-| 6 冷启动分发 | wheel、`domino-install`、带 UI/YAML 依赖的运行包、Homebrew 模板、可配置 HTTPS 内核/Geo 源和摘要校验 | PyPI 已发布 `domino-proxy`；公共 runtime 地址、Homebrew tap 与 apt 源仍待上线，见 [分发指南](DISTRIBUTION.md)；项目许可证为 GPL-3.0-only |
+| 6 冷启动分发 | wheel、`domino-install`、带 UI/YAML 依赖的运行包、Homebrew 模板、可配置 HTTPS 内核/Geo 源和摘要校验 | PyPI、公开 runtime、Homebrew tap 与签名 APT 源已提供 1.2.3，当前入口和维护状态见 [分发指南](DISTRIBUTION.md)；项目许可证为 GPL-3.0-only |
 | 7 可靠性交付 | 安装/规则/模式失败恢复、独立操作记录、真实内核相邻复制回归、跨平台 CI 工作流 | 已验证 macOS ARM64；Linux ARM64/x86_64、macOS Intel 的真实安装与恢复矩阵尚未跑完 |
 
 所有测试在临时目录/进程中运行，不替换测试机正在使用的订阅、节点或系统代理。相邻复制回归在删除源配置和停止上一实例后验证下一实例仍能通过本地代理请求；不代表已完成真实机场的跨设备网络验收。

@@ -426,7 +426,7 @@ python3 -m venv .venv
 
 通过环境变量 `DOMINO_RESOURCE_BASE=https://你的公共资源域名/domino/`，或 `~/.config/domino/downloads.json` 的 `resource_base` 字段指定直连资源源。指定后，内核元数据、二进制与所需 Geo 数据从该源读取并校验 SHA-256，不自动回退 GitHub。未指定时继续使用官方 GitHub 内核源。用户订阅及其 provider 的下载位置由用户配置决定。
 
-本地发布工具、资源布局、Homebrew 模板与验收状态见 [交付说明](DELIVERY.md)，每次交付变更见 [变更记录](../CHANGELOG.md)。统一使用三段版本号 `0.x.y`；功能版本使用 `0.13.0`、`0.14.0`，小更新和 debug 修复使用 `0.13.1`。完成一批代码改动后同步 CLI / wheel 版本、记录变更、测试并构建；沿用旧目录规则：版本化 wheel 存于 `dist/`，完整发行产物平铺于 `dist/release/`；更新固定名称清单/Formula 前，将上一份发行产物归档到 `dist/release/history/<旧版本>/`，不覆盖旧版 wheel/runtime。构建清单记录源码摘要、构建时间和产物校验值，不代表字节级可复现构建。PyPI 已发布 `domino-proxy`，可通过 pip / pipx 安装；公共 runtime 下载地址、Homebrew tap 和 apt 源仍待上线，渠道状态见 [分发指南](DISTRIBUTION.md)。本地构建不会自动发布、同步安装版或重启服务。
+本地发布工具、资源布局、Homebrew 模板与验收状态见 [交付说明](DELIVERY.md)，每次交付变更见 [变更记录](../CHANGELOG.md)。统一使用三段版本号 `X.Y.Z`，版本与发布授权遵循 [AGENTS.md](../AGENTS.md) 和交付说明；纯分发维护不升软件版本、不重建已发布包。沿用目录规则：版本化 wheel 存于 `dist/`，完整发行产物平铺于 `dist/release/`；更新固定名称清单/Formula 前，将上一份发行产物归档到 `dist/release/history/<旧版本>/`，不覆盖旧版 wheel/runtime。构建清单记录源码摘要、构建时间和产物校验值，不代表字节级可复现构建。PyPI 已发布 `domino-proxy`，可通过 pip / pipx 安装；公共 runtime、Homebrew tap 和签名 APT 源也已上线，当前渠道版本与入口见 [分发指南](DISTRIBUTION.md)。本地构建不会自动发布、同步安装版或重启服务。
 
 ## 卸载与清理
 

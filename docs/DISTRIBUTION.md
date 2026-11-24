@@ -4,7 +4,7 @@
 
 三个渠道只安装管理命令。包安装、升级、卸载不会初始化本机服务、捕获配置、调整系统代理或改 shell 文件。需要本机代理时，以普通用户显式运行 `domino-install`；已有离线部署包时也可使用 `domino init --bundle /path/to/bundle.tar.gz`。仅管理远端设备则无需初始化本机服务。
 
-**PyPI、Homebrew 和签名 APT 源均已发布 1.2.3。** 可从 [PyPI 安装 domino-proxy](https://pypi.org/project/domino-proxy/)，可执行命令保持 `domino`。不要安装 PyPI 上的 `domino`：该名字属于另一个项目。发布在本机执行，凭据保存在钥匙串与仓库外；下文提供安装、签名验证和维护命令。
+**PyPI、Homebrew 和签名 APT 源均已发布 1.2.3。** 可从 [PyPI 安装 domino-proxy](https://pypi.org/project/domino-proxy/)，可执行命令保持 `domino`。不要安装 PyPI 上的 `domino`：该名字属于另一个项目。发布在维护者本机执行，凭据以 TXT 和 GPG 文件统一保存在仓库外的 OneDrive `oetree/domino/tokens`；下文提供安装、签名验证和维护命令。
 
 | 渠道 | 发行名称 | 管理命令 | 平台 |
 | --- | --- | --- | --- |
@@ -115,7 +115,7 @@ pipx ensurepath
 .venv/bin/python scripts/release_channels.py publish --version 1.2.3 --channels apt
 ```
 
-运行前本机应有 `gh`、Git / OpenSSH、GPG、Ruby，以及开发虚拟环境中的 build、twine、keyring。GitHub 操作沿用本机已有 `gh` / SSH 登录，不复制个人 GitHub 凭据到公开仓库。初次初始化的项目凭据位置见下表；正常发布不会创建仓库、密钥或提升软件版本。
+运行前本机应有 `gh`、Git / OpenSSH、GPG、Ruby，以及开发虚拟环境中的 build、twine。GitHub 操作沿用本机已有 `gh` / SSH 登录，不复制个人 GitHub 凭据到公开仓库。初次初始化的项目凭据位置见下表；正常发布不会创建仓库、密钥或提升软件版本。
 
 ```text
 固定标签提交 → 复用 / 构建并验证软件产物 → 核验 / 发布 GitHub Release
@@ -143,7 +143,7 @@ pipx ensurepath
   --candidate /path/to/private-ci-candidate --source /path/to/clean-pinned-source --smoke
 ```
 
-`doctor` 只检查凭据布局、公有签名指纹和钥匙串条目元数据，不读取密码、私钥正文或
+`doctor` 只检查公开配置、凭据 TXT 的元数据、目录权限和公有签名指纹，不读取密码、私钥正文或
 仓库内 token 文件。缺少凭据不会阻止候选包只读审核。
 
 日常 `development` 构建可以验收，但不能重贴稳定标签发布。只有维护者明确授权
@@ -206,6 +206,18 @@ APT 签名主公钥指纹：`61ADCFADCDBE96102419F2797501FC6C688FCF00`。公钥�
 APT 保留旧 pool 包和按摘要寻址的索引（By-Hash），避免客户端缓存不同步造成校验失败。推送前只允许公开 APT 文件进入仓库，拒绝私钥路径、符号链接和私钥正文。索引与签名可以更新，已经发布的同版本 `.deb` 不替换。
 
 网络请求有限重试。渠道失败后可以重新运行同一版本，或用 `--channels` 只补发失败渠道；已存在且摘要一致的文件跳过。版本冲突、降级、签名不匹配直接失败。原始软件变更仍需新的软件版本，发布工具修复则继续分发原始产物。
+
+### 分发维护记录
+
+以下是现有渠道维护，不新增软件版本，也不修改历史发行包：
+
+| 日期 | 对象 | 实际维护与验证 |
+| --- | --- | --- |
+| 2026-11-24 | 现有 1.2.3 签名 APT 源 | 原口令不可恢复，经维护者授权将签名指纹从 `8704BE99B201383E16246ED9099855D35D066EE8` 更换为 `61ADCFADCDBE96102419F2797501FC6C688FCF00`；保留全部原始 `.deb`、Release 正文、Packages 与 By-Hash 字节，只更换公钥、签名、源配置和维护说明。 |
+| 2026-11-24 | 发布凭据 | 按维护者要求改用上述 OneDrive 目录中的 TXT 文件，移除本流程原有的苹果钥匙串条目；签名私钥口令和加密备份包密码分别命名，文件读取签名与备份解密回验通过。 |
+| 2026-11-24 | 公开托管验收 | 下载域名上的 20 个 APT 公共文件摘要核对通过；隔离 Ubuntu 24.04 客户端使用新公钥完成 `apt update` 并下载原 1.2.3 包，摘要一致。这不是 Ubuntu 真机服务安装、启动或桌面代理验收。 |
+
+原 1.2.3 发布记录、原始包和摘要保留。1.3.0 仍为待正式发布的候选，不把密钥更换、工具演练或标签存在记作软件已发布。后续维护继续追加记录；机器生成的历史 `release-status.json` 保留原始结果，新尝试写新目录，不手工改成成功。当前公开源中的 `channel.json` 则随真实的签名和公开文件更新。
 
 ### 可选的隔离安装验收
 
