@@ -351,6 +351,7 @@ def publish_github(work):
     plan = validate_inputs(work)
     # A draft makes incomplete uploads visible without announcing them as a release.
     tag = 'v' + plan['version']
+    title = 'Domino ' + tag
     common = ['--repo', plan['repository']]
     existing = release_for_tag(plan['repository'], tag)
     remote = {item['name']: item.get('digest') for item in existing['assets']} if existing else {}
@@ -364,7 +365,7 @@ def publish_github(work):
         return
     if not existing:
         subprocess.run(['gh', 'release', 'create', tag, *common, '--verify-tag', '--draft',
-                        '--title', tag, '--generate-notes'], check=True)
+                        '--title', title, '--generate-notes'], check=True)
         existing = release_for_tag(plan['repository'], tag)
     if not existing or not isinstance(existing.get('id'), int):
         raise ValueError('Could not identify the GitHub draft; inspect it before resuming')
@@ -377,7 +378,7 @@ def publish_github(work):
     remote = {item['name']: item.get('digest') for item in uploaded['assets']}
     if any(remote.get(name) != 'sha256:' + digest for name, digest in plan['files'].items()):
         raise ValueError('Uploaded release checksums differ; draft retained for inspection')
-    subprocess.run(['gh', 'release', 'edit', tag, *common, '--draft=false'], check=True)
+    subprocess.run(['gh', 'release', 'edit', tag, *common, '--title', title, '--draft=false'], check=True)
 
 
 def pypi_missing(work):
