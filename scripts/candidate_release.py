@@ -192,7 +192,7 @@ def doctor(directory):
     layout = (config.is_file() and directory.is_dir() and not directory.stat().st_mode & 0o077
               and home.is_dir() and not home.is_symlink() and not home.stat().st_mode & 0o077)
     identity = False
-    expected = '8704BE99B201383E16246ED9099855D35D066EE8'
+    expected = '61ADCFADCDBE96102419F2797501FC6C688FCF00'
     if layout and state.get('apt_fingerprint') == expected and shutil.which('gpg'):
         listing = subprocess.run(['gpg', '--homedir', str(home), '--batch', '--with-colons',
                                   '--list-secret-keys', expected], capture_output=True, text=True, timeout=20)

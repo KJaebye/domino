@@ -202,7 +202,9 @@ wheel、runtime、sdist 与 `.deb` 原样导入，不重新构建或重压缩发
 | Homebrew | `KJaebye/homebrew-tap` 的 `main`，配方固定 runtime URL 和 SHA-256 |
 | APT | `KJaebye/domino-apt` 的 `main`，通过 `raw.githubusercontent.com` 提供静态文件，不需要 Pages 构建或部署任务 |
 
-APT 签名主公钥指纹：`8704BE99B201383E16246ED9099855D35D066EE8`。公钥和指纹用于验签，可以公开；私钥和口令不能公开。`domino.sources` 内嵌公钥，信任只作用于此源，不用 `apt-key` 或 `trusted=yes`。
+APT 签名主公钥指纹：`61ADCFADCDBE96102419F2797501FC6C688FCF00`。公钥和指纹用于验签，可以公开；私钥和口令不能公开。`domino.sources` 内嵌公钥，信任只作用于此源，不用 `apt-key` 或 `trusted=yes`。
+
+2026-11-24 因原签名口令不可恢复，经维护者授权更换上述签名身份；软件包字节保持不变。已安装旧 APT 源的用户需要重新执行下方源配置导入命令；新密钥不具备旧密钥的签名背书。新私钥及撤销证书留在本机并以受保护目录同步至维护者指定的 OneDrive 位置；另有包含口令的加密恢复包，恢复码单独保管，不与备份存放在同一位置。
 
 APT 保留旧 pool 包和按摘要寻址的索引（By-Hash），避免客户端缓存不同步造成校验失败。推送前只允许公开 APT 文件进入仓库，拒绝私钥路径、符号链接和私钥正文。索引与签名可以更新，已经发布的同版本 `.deb` 不替换。
 
