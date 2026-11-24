@@ -139,7 +139,7 @@ def api(path, *, missing=False, data=None, method=None):
                 problem = json.loads(result.stdout)
             except ValueError:
                 problem = {}
-            if missing and problem.get('status') == '404':
+            if missing and str(problem.get('status')) == '404':
                 return None
             raise RuntimeError('GitHub API request failed: ' + path)
         return json.loads(result.stdout)
@@ -147,6 +147,28 @@ def api(path, *, missing=False, data=None, method=None):
         raise ValueError('GitHub writes run locally through the existing gh login')
     data = fetch('https://api.github.com/' + path, authenticated=True, missing=missing)
     return json.loads(data) if data is not None else None
+
+
+def release_for_tag(repository, tag):
+    """Find published releases by tag, and owner-visible drafts by listing.
+
+    GitHub's by-tag endpoint returns published releases, so a draft can return
+    404 even after all assets uploaded successfully. Use its ID after discovery.
+    """
+    existing = api(f'repos/{repository}/releases/tags/{tag}', missing=True)
+    if existing is not None or os.environ.get('RELEASE_LOCAL_API') != '1':
+        return existing
+    matches = []
+    for page in range(1, 101):
+        releases = api(f'repos/{repository}/releases?per_page=100&page={page}')
+        if not isinstance(releases, list):
+            raise ValueError('GitHub release listing is not recognized')
+        matches.extend(item for item in releases if item.get('tag_name') == tag)
+        if len(matches) > 1:
+            raise ValueError('Multiple GitHub releases use the requested tag; inspect them before resuming')
+        if len(releases) < 100:
+            return matches[0] if matches else None
+    raise ValueError('GitHub release listing is incomplete; refusing to create another draft')
 
 
 def resolve(work, repo, requested, tap_repo=None, apt_url=None, apt_repo=None):
@@ -172,7 +194,7 @@ def resolve(work, repo, requested, tap_repo=None, apt_url=None, apt_repo=None):
         ref = api(f'repos/{repo}/git/tags/{ref["sha"]}')['object']
     if ref['type'] != 'commit' or not re.fullmatch('[a-f0-9]{40}', ref['sha']):
         raise ValueError('Release tag does not resolve to a commit')
-    existing = api(f'repos/{repo}/releases/tags/v{requested}', missing=True)
+    existing = release_for_tag(repo, 'v' + requested)
     if existing and (existing['draft'] or existing['prerelease']):
         raise ValueError('Resume only published stable releases; inspect the draft first')
     plan = {'schema': 1, 'version': requested, 'repository': repo, 'source_sha': ref['sha'],
@@ -330,7 +352,7 @@ def publish_github(work):
     # A draft makes incomplete uploads visible without announcing them as a release.
     tag = 'v' + plan['version']
     common = ['--repo', plan['repository']]
-    existing = api(f'repos/{plan["repository"]}/releases/tags/{tag}', missing=True)
+    existing = release_for_tag(plan['repository'], tag)
     remote = {item['name']: item.get('digest') for item in existing['assets']} if existing else {}
     for name, digest in plan['files'].items():
         if name in remote and remote[name] != 'sha256:' + digest:
@@ -343,10 +365,15 @@ def publish_github(work):
     if not existing:
         subprocess.run(['gh', 'release', 'create', tag, *common, '--verify-tag', '--draft',
                         '--title', tag, '--generate-notes'], check=True)
+        existing = release_for_tag(plan['repository'], tag)
+    if not existing or not isinstance(existing.get('id'), int):
+        raise ValueError('Could not identify the GitHub draft; inspect it before resuming')
     if missing:
         subprocess.run(['gh', 'release', 'upload', tag, *common,
                         *[str(work / 'release' / name) for name in missing]], check=True)
-    uploaded = api(f'repos/{plan["repository"]}/releases/tags/{tag}')
+    uploaded = api(f'repos/{plan["repository"]}/releases/{existing["id"]}')
+    if uploaded.get('tag_name') != tag:
+        raise ValueError('GitHub release ID belongs to a different tag')
     remote = {item['name']: item.get('digest') for item in uploaded['assets']}
     if any(remote.get(name) != 'sha256:' + digest for name, digest in plan['files'].items()):
         raise ValueError('Uploaded release checksums differ; draft retained for inspection')

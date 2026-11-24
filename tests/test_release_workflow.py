@@ -157,13 +157,42 @@ class ReleaseWorkflowTests(DistributionFixture):
 
     def test_github_resume_reuses_matching_draft_assets_without_clobbering(self):
         items = [{'name': name, 'digest': 'sha256:' + digest} for name, digest in self.plan['files'].items()]
-        with patch.object(release, 'api', side_effect=[{'draft': True, 'assets': items[:1]}, {'assets': items}]), \
+        with patch.object(release, 'api', side_effect=[{'id': 1, 'draft': True, 'assets': items[:1]}, {'tag_name': 'v0.16.0', 'assets': items}]), \
                 patch.object(release.subprocess, 'run') as command:
             release.publish_github(self.work)
         calls = [call.args[0] for call in command.call_args_list]
         self.assertEqual([args[2] for args in calls], ['upload', 'edit'])
         self.assertNotIn('--clobber', str(calls))
         self.assertNotIn(str(self.work / 'release' / items[0]['name']), calls[0])
+
+    def test_draft_tag_404_is_resolved_through_listing_then_verified_by_id(self):
+        items = [{'name': name, 'digest': 'sha256:' + digest} for name, digest in self.plan['files'].items()]
+        draft = {'id': 42, 'tag_name': 'v0.16.0', 'draft': True, 'assets': items[:1]}
+        with patch.dict(os.environ, {'RELEASE_LOCAL_API': '1'}), \
+             patch.object(release, 'api', side_effect=[None, [draft], {'tag_name': 'v0.16.0', 'assets': items}]) as api, \
+             patch.object(release.subprocess, 'run') as command:
+            release.publish_github(self.work)
+        self.assertEqual(api.call_args_list[-1].args[0], 'repos/KJaebye/domino/releases/42')
+        self.assertEqual([call.args[0][2] for call in command.call_args_list], ['upload', 'edit'])
+
+    def test_new_draft_remains_invisible_by_tag_after_upload(self):
+        items = [{'name': name, 'digest': 'sha256:' + digest} for name, digest in self.plan['files'].items()]
+        draft = {'id': 43, 'tag_name': 'v0.16.0', 'draft': True, 'assets': []}
+        with patch.dict(os.environ, {'RELEASE_LOCAL_API': '1'}), \
+             patch.object(release, 'api', side_effect=[None, [], None, [draft], {'tag_name': 'v0.16.0', 'assets': items}]) as api, \
+             patch.object(release.subprocess, 'run') as command:
+            release.publish_github(self.work)
+        self.assertEqual(api.call_args_list[-1].args[0], 'repos/KJaebye/domino/releases/43')
+        self.assertEqual([call.args[0][2] for call in command.call_args_list], ['create', 'upload', 'edit'])
+
+    def test_duplicate_drafts_do_not_upload_or_publish(self):
+        draft = {'id': 42, 'tag_name': 'v0.16.0', 'draft': True, 'assets': []}
+        with patch.dict(os.environ, {'RELEASE_LOCAL_API': '1'}), \
+             patch.object(release, 'api', side_effect=[None, [draft, {**draft, 'id': 43}]]), \
+             patch.object(release.subprocess, 'run') as command:
+            with self.assertRaisesRegex(ValueError, 'Multiple GitHub releases'):
+                release.publish_github(self.work)
+        command.assert_not_called()
 
     def test_github_release_conflict_never_writes_remote_files(self):
         name = next(iter(self.plan['files']))
