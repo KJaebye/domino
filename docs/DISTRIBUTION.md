@@ -173,26 +173,23 @@ wheel、runtime、sdist 与 `.deb` 原样导入，不重新构建或重压缩发
 跨项目的抓取、审核封存和交互式人工确认入口由 `oetree-infra/scripts/release.py`
 管理；本仓库维护具体包格式、分发与签名规则。准备成功、临时签名验收和正式发布分别报告。
 
-### 凭据存储：只留本机
+### 凭据存储：维护者指定的 TXT 文件
 
-| 内容 | 位置与使用方式 |
+维护者明确选择将 Domino 发布凭据统一存放在 OneDrive `oetree/domino/tokens`，不使用苹果钥匙串保存或读取本流程的 PyPI Token、APT 私钥口令和备份解密密码。默认入口为 `~/OneDrive/oetree/domino/tokens`；其他电脑可用 `--credentials-dir` 指定对应的仓库外目录。
+
+| 文件 | 用途 |
 | --- | --- |
-| 项目范围的 PyPI token | macOS 钥匙串：服务 `https://upload.pypi.org/legacy/`、账户 `__token__`；仅在确有缺失包时读取，临时交给 Twine 进程 |
-| Homebrew / APT 公开仓库写入凭据 | 沿用 `gh` 已有的 macOS 钥匙串登录；通过 GitHub Git API 提交公开文件，不额外生成部署私钥，也不导出个人 token |
-| APT GPG 私钥及撤销证书 | 仓库外 `~/.local/share/domino-release/gnupg/`，目录权限 0700；私钥本身有口令保护 |
-| APT 私钥解锁口令 | macOS 钥匙串：服务 `domino-release/apt`、账户 `signing-passphrase`；仅签名时通过 stdin 交给 GPG |
-| 指纹、目标仓库和钥匙串条目名称 | `~/.local/share/domino-release/state.json`，权限 0600，只含公开配置，不含私钥或 token |
-| GitHub 端 | 只保存公开产物、公钥、指纹、签名；不保存生产私钥、token 或解锁口令 |
+| `domino-proxy-pypi-upload.txt` | PyPI 项目上传 Token；仅确有缺失包需要上传时读取 |
+| `gnupg/` | 当前 APT 签名私钥、公钥和撤销证书 |
+| `domino-apt-signing-passphrase.txt` | 解锁 `gnupg/` 中私钥、签署 APT 索引时使用的口令 |
+| `domino-apt-backup-password.txt` | 解密 `domino-apt-recovery-*.tar.gpg` 加密备份包时使用的密码 |
+| `domino-apt-recovery-*.tar.gpg` | APT 密钥、签名口令和公开配置的加密备份包 |
+| `state.json` | 公开的签名指纹和凭据文件名称，不含密码或 Token |
+| `说明.txt` | 各文件用途说明，不含凭据值 |
 
-项目凭据目录 `~/.local/share/domino-release/` 权限为 0700，独立于 Domino 运行目录，普通软件卸载不会删除它。`--credentials-dir` 可指定另一个仓库外的受限目录。工具拒绝从仓库内或权限过宽的目录读取凭据，也不读取仓库内的 token 文件或 `.pypirc`，不为它们新增 `.gitignore` 规则。
+两份 APT 密码用途不同。文件夹权限为 0700，凭据文件为 0600；读取时拒绝仓库内路径、符号链接、权限过宽、过大或空文件。签名时在短路径临时目录复制 GPG 数据，避免在 OneDrive 中同步 agent socket 和锁文件；操作结束后停止临时 agent 并删除临时副本，不保留隐藏目录中的长期发布凭据。签名口令只通过 stdin 交给 GPG，PyPI Token 只临时交给 Twine 子进程，不进入命令参数、日志或报告。不读取仓库根目录的 `pypi-token` 或 `.pypirc`。
 
-首次配置 PyPI token 时使用隐藏输入，不把 token 写入命令或聊天：
-
-```bash
-.venv/bin/python -m keyring set https://upload.pypi.org/legacy/ __token__
-```
-
-前期 Actions 方案创建的独立 Homebrew 部署密钥已撤销，私钥条目和 GitHub Secret 副本均已移除。本机 gh 登录的凭据仍由系统钥匙串管理。备份 GPG 目录与钥匙串时使用加密备份，撤销证书按私钥同等保护。
+Homebrew 和 APT 公开仓库写入继续使用维护者已有的 `gh` 登录，不改动其账号认证配置。GitHub 端仅保存公开发行包、公钥和签名；CI/VPS 不接收发布凭据。正式发布确认要求保持不变。
 
 ### 发布目标与签名
 
@@ -204,7 +201,7 @@ wheel、runtime、sdist 与 `.deb` 原样导入，不重新构建或重压缩发
 
 APT 签名主公钥指纹：`61ADCFADCDBE96102419F2797501FC6C688FCF00`。公钥和指纹用于验签，可以公开；私钥和口令不能公开。`domino.sources` 内嵌公钥，信任只作用于此源，不用 `apt-key` 或 `trusted=yes`。
 
-2026-11-24 因原签名口令不可恢复，经维护者授权更换上述签名身份；软件包字节保持不变。已安装旧 APT 源的用户需要重新执行下方源配置导入命令；新密钥不具备旧密钥的签名背书。新私钥及撤销证书留在本机并以受保护目录同步至维护者指定的 OneDrive 位置；另有包含口令的加密恢复包，恢复码单独保管，不与备份存放在同一位置。
+2026-11-24 因原签名口令不可恢复，经维护者授权更换上述签名身份；软件包字节保持不变。已安装旧 APT 源的用户需要重新执行下方源配置导入命令；新密钥不具备旧密钥的签名背书。新私钥、签名口令 TXT、备份解密密码 TXT 及加密恢复包均按维护者明确要求集中保存在 OneDrive `oetree/domino/tokens`。
 
 APT 保留旧 pool 包和按摘要寻址的索引（By-Hash），避免客户端缓存不同步造成校验失败。推送前只允许公开 APT 文件进入仓库，拒绝私钥路径、符号链接和私钥正文。索引与签名可以更新，已经发布的同版本 `.deb` 不替换。
 

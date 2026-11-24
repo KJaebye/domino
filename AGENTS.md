@@ -54,7 +54,8 @@
 ## 分发与源码布局
 
 - 经明确发布授权后，统一从本机 `.venv/bin/python scripts/release_channels.py publish --version X.Y.Z --channels all` 执行；`--dry-run` 仅演练，`--channels pypi/brew/apt` 可补发指定渠道，不依赖 GitHub Actions 额度。
-- PyPI 使用 Twine 和本机钥匙串；Homebrew 使用本机 gh 的钥匙串认证；APT 使用仓库外的 GPG 私钥签名。分发凭据与主仓库认证分别管理，不上传私钥或解锁口令。
+- PyPI 使用 Twine 和维护者指定目录中的 Token TXT；Homebrew 沿用本机已有 gh 登录；APT 使用同目录 `gnupg/` 中的私钥及 `domino-apt-signing-passphrase.txt` 签名。分发凭据与主仓库认证分别管理，不上传私钥或解锁口令。
+- 维护者明确要求 Domino 发布凭据统一放在 OneDrive `oetree/domino/tokens`，默认 `~/OneDrive/oetree/domino/tokens`；不用苹果钥匙串保存或读取 PyPI Token、APT 签名口令或备份解密密码。`domino-apt-backup-password.txt` 专用于解密 `domino-apt-recovery-*.tar.gpg`，与签名口令不同。所有凭据留在仓库外，目录 0700、文件 0600；修改此流程时保留 TXT 读取方式，不擅自恢复钥匙串存储。
 - 维护已有版本先复用原始公开产物并核对摘要，仅恢复失败渠道；内容冲突或降级即停止，不移动软件标签、不覆盖已发布文件。`release-status.json` 的单渠道完成不代表全部渠道通过，公开摘要校验与真实安装验收分别记录。
 - `.github/workflows/release.yml` 等工作流仅提供可选测试/隔离验收，不发布软件、不读取生产私钥。
 - Python 实现放在 `src/`，维护工具放在 `scripts/`，根目录不新增实现模块。开发使用虚拟环境 editable 安装及 `.venv/bin/python ./domino COMMAND`；独立 runtime/部署包维持 `cli/` 模块布局，不将仓库的 `src/` 路径带到目标设备。
