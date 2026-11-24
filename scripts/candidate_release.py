@@ -176,37 +176,46 @@ def preflight():
 
 
 def doctor(directory):
-    """Inspect layout and Keychain item metadata; never retrieve secret values."""
-    directory = directory.expanduser()
+    """Inspect credential-file metadata and public keys without reading secrets."""
+    directory = directory.expanduser().resolve()
     config = directory / 'state.json'
     home = directory / 'gnupg'
-    state = json.loads(config.read_text()) if config.is_file() else {}
-    def item_visible(service, account):
-        if sys.platform != 'darwin' or not shutil.which('security'):
-            return None
-        return subprocess.run(['security', 'find-generic-password', '-s', service, '-a', account],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=15).returncode == 0
-    pypi = item_visible('https://upload.pypi.org/legacy/', '__token__')
-    apt = item_visible(state.get('keychain_service', 'domino-release/apt'),
-                       state.get('keychain_username', 'signing-passphrase'))
-    layout = (config.is_file() and directory.is_dir() and not directory.stat().st_mode & 0o077
-              and home.is_dir() and not home.is_symlink() and not home.stat().st_mode & 0o077)
+    state = {}
+    try:
+        state = json.loads(release_channels.credential_path(directory, 'state.json').read_text())
+        layout = home.is_dir() and not home.is_symlink() and not home.stat().st_mode & 0o077
+    except (OSError, ValueError):
+        layout = False
+    def file_ready(filename):
+        try:
+            release_channels.credential_path(directory, filename)
+            return True
+        except (OSError, ValueError):
+            return False
+    pypi = file_ready(release_channels.PYPI_TOKEN_FILE)
+    apt = file_ready(release_channels.APT_PASSPHRASE_FILE)
     identity = False
     expected = '61ADCFADCDBE96102419F2797501FC6C688FCF00'
     if layout and state.get('apt_fingerprint') == expected and shutil.which('gpg'):
-        listing = subprocess.run(['gpg', '--homedir', str(home), '--batch', '--with-colons',
-                                  '--list-secret-keys', expected], capture_output=True, text=True, timeout=20)
-        identity = listing.returncode == 0 and expected in listing.stdout
+        listing = subprocess.run(['gpg', '--homedir', str(home), '--batch', '--no-autostart',
+                                  '--no-auto-check-trustdb', '--with-colons', '--with-keygrip',
+                                  '--list-keys', expected], capture_output=True, text=True, timeout=20)
+        grips = [line.split(':')[9] for line in listing.stdout.splitlines() if line.startswith('grp:')]
+        private = home / 'private-keys-v1.d' / ((grips[0] if grips else '') + '.key')
+        identity = (listing.returncode == 0 and expected in listing.stdout and bool(grips)
+                    and private.is_file() and not private.is_symlink()
+                    and not private.stat().st_mode & 0o077)
     app = Path.home() / '.local/share/domino-agent/state.json'
     blockers = []
     if pypi is not True:
-        blockers.append('The project PyPI Keychain item is not visible; configure/unlock it locally')
+        blockers.append('The owner-only PyPI token TXT file is missing or invalid')
     if not layout or not identity:
         blockers.append('Restore the existing restricted APT signing directory and pinned signing identity')
     if apt is not True:
-        blockers.append('The APT signing-passphrase Keychain item is not visible')
+        blockers.append('The owner-only APT signing-passphrase TXT file is missing or invalid')
     return {'schema': 1, 'production_secrets_read': False, 'published': False,
-            'pypi_keychain_item_visible': pypi, 'apt_passphrase_item_visible': apt,
+            'credential_storage': 'text-files', 'credentials_dir': str(directory),
+            'pypi_token_file_ready': pypi, 'apt_passphrase_file_ready': apt,
             'apt_credentials_layout_valid': bool(layout), 'existing_apt_signing_identity_present': identity,
             'github_app_metadata_present': app.is_file(),
             'publication_credentials_ready': not blockers, 'blockers': blockers,
@@ -220,7 +229,7 @@ def main():
     parser.add_argument('--source', type=Path)
     parser.add_argument('--smoke', action='store_true')
     parser.add_argument('--output', type=Path)
-    parser.add_argument('--credentials-dir', type=Path, default=Path.home() / '.local/share/domino-release')
+    parser.add_argument('--credentials-dir', type=Path, default=release_channels.DEFAULT_CREDENTIALS_DIR)
     args = parser.parse_args()
     if args.operation == 'preflight':
         result = preflight()

@@ -4,7 +4,7 @@
 
 三个渠道只安装管理命令。包安装、升级、卸载不会初始化本机服务、捕获配置、调整系统代理或改 shell 文件。需要本机代理时，以普通用户显式运行 `domino-install`；已有离线部署包时也可使用 `domino init --bundle /path/to/bundle.tar.gz`。仅管理远端设备则无需初始化本机服务。
 
-**PyPI、Homebrew 和签名 APT 源均已发布 1.2.3。** 可从 [PyPI 安装 domino-proxy](https://pypi.org/project/domino-proxy/)，可执行命令保持 `domino`。不要安装 PyPI 上的 `domino`：该名字属于另一个项目。发布在本机执行，凭据保存在钥匙串与仓库外；下文提供安装、签名验证和维护命令。
+**PyPI、Homebrew 和签名 APT 源均已发布 1.2.3。** 可从 [PyPI 安装 domino-proxy](https://pypi.org/project/domino-proxy/)，可执行命令保持 `domino`。不要安装 PyPI 上的 `domino`：该名字属于另一个项目。发布在维护者本机执行，凭据以 TXT 和 GPG 文件统一保存在仓库外的 OneDrive `oetree/domino/tokens`；下文提供安装、签名验证和维护命令。
 
 | 渠道 | 发行名称 | 管理命令 | 平台 |
 | --- | --- | --- | --- |
@@ -115,7 +115,7 @@ pipx ensurepath
 .venv/bin/python scripts/release_channels.py publish --version 1.2.3 --channels apt
 ```
 
-运行前本机应有 `gh`、Git / OpenSSH、GPG、Ruby，以及开发虚拟环境中的 build、twine、keyring。GitHub 操作沿用本机已有 `gh` / SSH 登录，不复制个人 GitHub 凭据到公开仓库。初次初始化的项目凭据位置见下表；正常发布不会创建仓库、密钥或提升软件版本。
+运行前本机应有 `gh`、Git / OpenSSH、GPG、Ruby，以及开发虚拟环境中的 build、twine。GitHub 操作沿用本机已有 `gh` / SSH 登录，不复制个人 GitHub 凭据到公开仓库。初次初始化的项目凭据位置见下表；正常发布不会创建仓库、密钥或提升软件版本。
 
 ```text
 固定标签提交 → 复用 / 构建并验证软件产物 → 核验 / 发布 GitHub Release
@@ -143,7 +143,7 @@ pipx ensurepath
   --candidate /path/to/private-ci-candidate --source /path/to/clean-pinned-source --smoke
 ```
 
-`doctor` 只检查凭据布局、公有签名指纹和钥匙串条目元数据，不读取密码、私钥正文或
+`doctor` 只检查公开配置、凭据 TXT 的元数据、目录权限和公有签名指纹，不读取密码、私钥正文或
 仓库内 token 文件。缺少凭据不会阻止候选包只读审核。
 
 日常 `development` 构建可以验收，但不能重贴稳定标签发布。只有维护者明确授权
@@ -173,26 +173,23 @@ wheel、runtime、sdist 与 `.deb` 原样导入，不重新构建或重压缩发
 跨项目的抓取、审核封存和交互式人工确认入口由 `oetree-infra/scripts/release.py`
 管理；本仓库维护具体包格式、分发与签名规则。准备成功、临时签名验收和正式发布分别报告。
 
-### 凭据存储：只留本机
+### 凭据存储：维护者指定的 TXT 文件
 
-| 内容 | 位置与使用方式 |
+维护者明确选择将 Domino 发布凭据统一存放在 OneDrive `oetree/domino/tokens`，不使用苹果钥匙串保存或读取本流程的 PyPI Token、APT 私钥口令和备份解密密码。默认入口为 `~/OneDrive/oetree/domino/tokens`；其他电脑可用 `--credentials-dir` 指定对应的仓库外目录。
+
+| 文件 | 用途 |
 | --- | --- |
-| 项目范围的 PyPI token | macOS 钥匙串：服务 `https://upload.pypi.org/legacy/`、账户 `__token__`；仅在确有缺失包时读取，临时交给 Twine 进程 |
-| Homebrew / APT 公开仓库写入凭据 | 沿用 `gh` 已有的 macOS 钥匙串登录；通过 GitHub Git API 提交公开文件，不额外生成部署私钥，也不导出个人 token |
-| APT GPG 私钥及撤销证书 | 仓库外 `~/.local/share/domino-release/gnupg/`，目录权限 0700；私钥本身有口令保护 |
-| APT 私钥解锁口令 | macOS 钥匙串：服务 `domino-release/apt`、账户 `signing-passphrase`；仅签名时通过 stdin 交给 GPG |
-| 指纹、目标仓库和钥匙串条目名称 | `~/.local/share/domino-release/state.json`，权限 0600，只含公开配置，不含私钥或 token |
-| GitHub 端 | 只保存公开产物、公钥、指纹、签名；不保存生产私钥、token 或解锁口令 |
+| `domino-proxy-pypi-upload.txt` | PyPI 项目上传 Token；仅确有缺失包需要上传时读取 |
+| `gnupg/` | 当前 APT 签名私钥、公钥和撤销证书 |
+| `domino-apt-signing-passphrase.txt` | 解锁 `gnupg/` 中私钥、签署 APT 索引时使用的口令 |
+| `domino-apt-backup-password.txt` | 解密 `domino-apt-recovery-*.tar.gpg` 加密备份包时使用的密码 |
+| `domino-apt-recovery-*.tar.gpg` | APT 密钥、签名口令和公开配置的加密备份包 |
+| `state.json` | 公开的签名指纹和凭据文件名称，不含密码或 Token |
+| `说明.txt` | 各文件用途说明，不含凭据值 |
 
-项目凭据目录 `~/.local/share/domino-release/` 权限为 0700，独立于 Domino 运行目录，普通软件卸载不会删除它。`--credentials-dir` 可指定另一个仓库外的受限目录。工具拒绝从仓库内或权限过宽的目录读取凭据，也不读取仓库内的 token 文件或 `.pypirc`，不为它们新增 `.gitignore` 规则。
+两份 APT 密码用途不同。文件夹权限为 0700，凭据文件为 0600；读取时拒绝仓库内路径、符号链接、权限过宽、过大或空文件。签名时在短路径临时目录复制 GPG 数据，避免在 OneDrive 中同步 agent socket 和锁文件；操作结束后停止临时 agent 并删除临时副本，不保留隐藏目录中的长期发布凭据。签名口令只通过 stdin 交给 GPG，PyPI Token 只临时交给 Twine 子进程，不进入命令参数、日志或报告。不读取仓库根目录的 `pypi-token` 或 `.pypirc`。
 
-首次配置 PyPI token 时使用隐藏输入，不把 token 写入命令或聊天：
-
-```bash
-.venv/bin/python -m keyring set https://upload.pypi.org/legacy/ __token__
-```
-
-前期 Actions 方案创建的独立 Homebrew 部署密钥已撤销，私钥条目和 GitHub Secret 副本均已移除。本机 gh 登录的凭据仍由系统钥匙串管理。备份 GPG 目录与钥匙串时使用加密备份，撤销证书按私钥同等保护。
+Homebrew 和 APT 公开仓库写入继续使用维护者已有的 `gh` 登录，不改动其账号认证配置。GitHub 端仅保存公开发行包、公钥和签名；CI/VPS 不接收发布凭据。正式发布确认要求保持不变。
 
 ### 发布目标与签名
 
@@ -204,11 +201,23 @@ wheel、runtime、sdist 与 `.deb` 原样导入，不重新构建或重压缩发
 
 APT 签名主公钥指纹：`61ADCFADCDBE96102419F2797501FC6C688FCF00`。公钥和指纹用于验签，可以公开；私钥和口令不能公开。`domino.sources` 内嵌公钥，信任只作用于此源，不用 `apt-key` 或 `trusted=yes`。
 
-2026-11-24 因原签名口令不可恢复，经维护者授权更换上述签名身份；软件包字节保持不变。已安装旧 APT 源的用户需要重新执行下方源配置导入命令；新密钥不具备旧密钥的签名背书。新私钥及撤销证书留在本机并以受保护目录同步至维护者指定的 OneDrive 位置；另有包含口令的加密恢复包，恢复码单独保管，不与备份存放在同一位置。
+2026-11-24 因原签名口令不可恢复，经维护者授权更换上述签名身份；软件包字节保持不变。已安装旧 APT 源的用户需要重新执行下方源配置导入命令；新密钥不具备旧密钥的签名背书。新私钥、签名口令 TXT、备份解密密码 TXT 及加密恢复包均按维护者明确要求集中保存在 OneDrive `oetree/domino/tokens`。
 
 APT 保留旧 pool 包和按摘要寻址的索引（By-Hash），避免客户端缓存不同步造成校验失败。推送前只允许公开 APT 文件进入仓库，拒绝私钥路径、符号链接和私钥正文。索引与签名可以更新，已经发布的同版本 `.deb` 不替换。
 
 网络请求有限重试。渠道失败后可以重新运行同一版本，或用 `--channels` 只补发失败渠道；已存在且摘要一致的文件跳过。版本冲突、降级、签名不匹配直接失败。原始软件变更仍需新的软件版本，发布工具修复则继续分发原始产物。
+
+### 分发维护记录
+
+以下是现有渠道维护，不新增软件版本，也不修改历史发行包：
+
+| 日期 | 对象 | 实际维护与验证 |
+| --- | --- | --- |
+| 2026-11-24 | 现有 1.2.3 签名 APT 源 | 原口令不可恢复，经维护者授权将签名指纹从 `8704BE99B201383E16246ED9099855D35D066EE8` 更换为 `61ADCFADCDBE96102419F2797501FC6C688FCF00`；保留全部原始 `.deb`、Release 正文、Packages 与 By-Hash 字节，只更换公钥、签名、源配置和维护说明。 |
+| 2026-11-24 | 发布凭据 | 按维护者要求改用上述 OneDrive 目录中的 TXT 文件，移除本流程原有的苹果钥匙串条目；签名私钥口令和加密备份包密码分别命名，文件读取签名与备份解密回验通过。 |
+| 2026-11-24 | 公开托管验收 | 下载域名上的 20 个 APT 公共文件摘要核对通过；隔离 Ubuntu 24.04 客户端使用新公钥完成 `apt update` 并下载原 1.2.3 包，摘要一致。这不是 Ubuntu 真机服务安装、启动或桌面代理验收。 |
+
+原 1.2.3 发布记录、原始包和摘要保留。1.3.0 仍为待正式发布的候选，不把密钥更换、工具演练或标签存在记作软件已发布。后续维护继续追加记录；机器生成的历史 `release-status.json` 保留原始结果，新尝试写新目录，不手工改成成功。当前公开源中的 `channel.json` 则随真实的签名和公开文件更新。
 
 ### 可选的隔离安装验收
 

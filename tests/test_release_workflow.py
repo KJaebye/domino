@@ -72,7 +72,7 @@ class ReleaseWorkflowTests(DistributionFixture):
         missing = next(iter(self.packages))
         with patch.object(release, 'fetch', return_value=self.pypi_response(missing=[missing])), \
                 patch.object(release.subprocess, 'run') as command, patch.object(release, 'verify_pypi') as verify, \
-                patch.object(release, 'keychain_password', return_value='disposable-test-token'):
+                patch.object(release, 'credential_text', return_value='disposable-test-token'):
             release.publish_pypi_local(self.work)
         args = command.call_args.args[0]
         self.assertEqual(args[:4], [release.sys.executable, '-m', 'twine', 'upload'])
@@ -89,20 +89,24 @@ class ReleaseWorkflowTests(DistributionFixture):
             release.publish_pypi_local(self.work)
         command.assert_not_called()
 
-    def test_local_apt_credentials_use_keychain_and_restore_the_environment(self):
+    def test_local_apt_credentials_use_txt_and_restore_the_environment(self):
         directory = self.root / 'local-credentials'
         directory.mkdir(mode=0o700)
         (directory / 'gnupg').mkdir(mode=0o700)
-        release.write_json(directory / 'state.json', {'keychain_service': 'test-service',
-            'keychain_username': 'test-user', 'apt_fingerprint': 'A' * 40})
+        release.write_json(directory / 'state.json', {'apt_fingerprint': 'A' * 40})
+        (directory / 'state.json').chmod(0o600)
+        password = directory / release.APT_PASSPHRASE_FILE
+        password.write_text('disposable passphrase\n')
+        password.chmod(0o600)
         before = dict(os.environ)
-        with patch.object(release, 'keychain_password', return_value='disposable passphrase') as keychain, \
-                patch.object(release.subprocess, 'run'):
+        with patch.object(release.subprocess, 'run'):
             with release.local_credentials(directory, 'apt'):
-                self.assertEqual(Path(os.environ['GNUPGHOME']).resolve(), (directory / 'gnupg').resolve())
+                temporary_home = Path(os.environ['GNUPGHOME'])
+                self.assertTrue(temporary_home.is_dir())
+                self.assertNotEqual(temporary_home.resolve(), (directory / 'gnupg').resolve())
                 self.assertEqual(os.environ['APT_GPG_PASSPHRASE'], 'disposable passphrase')
                 self.assertNotIn('APT_GPG_PRIVATE_KEY', os.environ)
-            keychain.assert_called_once_with('test-service', 'test-user')
+            self.assertFalse(temporary_home.exists())
         self.assertEqual(dict(os.environ), before)
 
     def test_local_credentials_reject_a_directory_readable_by_other_users(self):
@@ -225,10 +229,10 @@ class ReleaseWorkflowTests(DistributionFixture):
     def test_matching_homebrew_version_does_not_read_credentials_or_write(self):
         current = (self.work / 'channels/tap/Formula/domino.rb').read_bytes()
         with patch.object(release, 'fetch', return_value=current), \
-                patch.object(release, 'publish_git_files') as publish, patch.object(release, 'keychain_password') as keychain:
+                patch.object(release, 'publish_git_files') as publish, patch.object(release, 'credential_text') as credentials:
             release.publish_brew(self.work)
         publish.assert_not_called()
-        keychain.assert_not_called()
+        credentials.assert_not_called()
 
     def test_missing_homebrew_formula_is_published_through_the_existing_local_gh_login(self):
         with patch.object(release, 'fetch', return_value=None), \

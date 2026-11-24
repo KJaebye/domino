@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Local multi-channel publishing, with optional read-only installation checks.
 
-Credentials stay in macOS Keychain and a restricted directory outside the
+Credentials stay in owner-managed text files and a restricted directory outside the
 repository. Never reads repository token files, initializes Domino, creates
 repositories, uploads private keys, or generates production keys.
 """
@@ -15,6 +15,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -31,6 +32,46 @@ except ModuleNotFoundError:
 
 VERSION = r'(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)'
 PROJECT = 'domino-proxy'
+DEFAULT_CREDENTIALS_DIR = Path.home() / 'OneDrive/oetree/domino/tokens'
+PYPI_TOKEN_FILE = 'domino-proxy-pypi-upload.txt'
+APT_PASSPHRASE_FILE = 'domino-apt-signing-passphrase.txt'
+
+
+def credential_directory(directory=None):
+    directory = Path(directory or DEFAULT_CREDENTIALS_DIR).expanduser().resolve()
+    info = directory.stat()
+    if (directory.is_relative_to(prepare_channels.ROOT) or not stat.S_ISDIR(info.st_mode)
+            or info.st_mode & 0o077 or info.st_uid != os.getuid()):
+        raise ValueError('Credentials must be outside the repository in an owner-only 0700 directory')
+    return directory
+
+
+def credential_path(directory, filename):
+    if filename not in (PYPI_TOKEN_FILE, APT_PASSPHRASE_FILE, 'state.json'):
+        raise ValueError('Unrecognized credential filename')
+    path = credential_directory(directory) / filename
+    info = path.lstat()
+    if (not stat.S_ISREG(info.st_mode) or info.st_mode & 0o077
+            or info.st_uid != os.getuid() or not 0 < info.st_size <= 65536):
+        raise ValueError('Credential files must be nonempty owner-only 0600 regular files')
+    return path
+
+
+def credential_text(directory, filename):
+    try:
+        value = credential_path(directory, filename).read_text().rstrip('\r\n')
+    except (OSError, UnicodeError):
+        raise ValueError('The requested credential file cannot be read') from None
+    if not value:
+        raise ValueError('The requested credential file is empty')
+    if filename == PYPI_TOKEN_FILE:
+        tokens = set(re.findall(r'(?<![A-Za-z0-9_-])pypi-[A-Za-z0-9_-]+', value))
+        if len(tokens) != 1:
+            raise ValueError('The PyPI token file must contain exactly one token')
+        return tokens.pop()
+    if '\n' in value or '\r' in value or '\x00' in value:
+        raise ValueError('The signing passphrase file must contain one line')
+    return value
 
 
 def version(value):
@@ -455,7 +496,7 @@ def prepare_apt(work):
     private = os.environ.get('APT_GPG_PRIVATE_KEY')
     local = os.environ.get('RELEASE_LOCAL_SIGNING') == '1'
     if not local and not private:
-        raise ValueError('Configure the local GPG key and Keychain passphrase')
+        raise ValueError('Configure the local GPG key and signing passphrase file')
     with nullcontext() if local else signing_home(private):
         report = prepare_channels.prepare(work / 'release', work / 'apt-signed', release_repo=plan['repository'],
             tap_repo=plan['tap_repository'], apt_repo=plan['repository'], apt_url=plan['apt_url'],
@@ -612,12 +653,10 @@ def publish_git_files(repository, files, message):
     return new_commit['sha']
 
 
-def publish_pypi_local(work):
+def publish_pypi_local(work, credentials=None):
     missing = stage_pypi(work)
     if missing:
-        token = keychain_password('https://upload.pypi.org/legacy/', '__token__')
-        if not token:
-            raise ValueError('Configure the project PyPI token in macOS Keychain')
+        token = credential_text(credentials, PYPI_TOKEN_FILE)
         env = {name: value for name, value in os.environ.items() if not name.startswith('TWINE_')}
         env.update(TWINE_USERNAME='__token__', TWINE_PASSWORD=token)
         # Only the Twine subprocess receives the password; no .pypirc or
@@ -633,35 +672,33 @@ def publish_pypi_local(work):
 def local_credentials(directory, channel):
     if channel != 'apt':
         raise ValueError('Only APT signing uses separate local GPG credentials')
-    directory = directory.expanduser().resolve()
-    if directory.is_relative_to(prepare_channels.ROOT) or directory.stat().st_mode & 0o077:
-        raise ValueError('Credentials must be outside the repository in a 0700 directory')
+    directory = credential_directory(directory)
+    state = json.loads(credential_path(directory, 'state.json').read_text())
+    password = credential_text(directory, APT_PASSPHRASE_FILE)
+    home = directory / 'gnupg'
+    if home.is_symlink() or not home.is_dir() or home.stat().st_mode & 0o077:
+        raise ValueError('GPG HOME must be a regular 0700 directory')
+    for path in home.rglob('*'):
+        info = path.lstat()
+        if not (stat.S_ISDIR(info.st_mode) or stat.S_ISREG(info.st_mode)) or info.st_mode & 0o077:
+            raise ValueError('GPG backup must contain only owner-only regular files and directories')
     saved = dict(os.environ)
-    try:
-        if channel == 'apt':
-            state = json.loads((directory / 'state.json').read_text())
-            password = keychain_password(state['keychain_service'], state['keychain_username'])
-            if password is None:
-                raise ValueError('APT signing passphrase is missing from macOS Keychain')
-            home = directory / 'gnupg'
-            if home.is_symlink() or home.stat().st_mode & 0o077:
-                raise ValueError('GPG HOME must be a regular 0700 directory')
-            os.environ.update(GNUPGHOME=str(home), APT_GPG_FINGERPRINT=state['apt_fingerprint'],
+    # Keep GPG sockets, locks and agent state out of the synced credential folder.
+    with tempfile.TemporaryDirectory(prefix='domino-apt-') as temporary:
+        signing_home = Path(temporary) / 'gnupg'
+        shutil.copytree(home, signing_home)
+        try:
+            os.environ.update(GNUPGHOME=str(signing_home), APT_GPG_FINGERPRINT=state['apt_fingerprint'],
                               APT_GPG_PASSPHRASE=password, RELEASE_LOCAL_SIGNING='1')
             os.environ.pop('APT_GPG_PRIVATE_KEY', None)
-        yield
-    finally:
-        if channel == 'apt':
-            subprocess.run(['gpgconf', '--homedir', str(directory / 'gnupg'), '--kill', 'gpg-agent'],
-                           capture_output=True)
-        os.environ.clear()
-        os.environ.update(saved)
-
-
-def keychain_password(service, username):
-    # Select the native backend explicitly; never fall back to a plaintext file.
-    from keyring.backends.macOS import Keyring
-    return Keyring().get_password(service, username)
+            yield
+        finally:
+            try:
+                subprocess.run(['gpgconf', '--homedir', str(signing_home), '--kill', 'gpg-agent'],
+                               capture_output=True, timeout=15)
+            finally:
+                os.environ.clear()
+                os.environ.update(saved)
 
 
 def publish_local(work, repo, requested, selected, credentials, dry_run=False, candidate=None):
@@ -695,7 +732,7 @@ def publish_local(work, repo, requested, selected, credentials, dry_run=False, c
         for channel in selected_channels:
             try:
                 if channel == 'pypi':
-                    publish_pypi_local(work)
+                    publish_pypi_local(work, credentials)
                 elif channel == 'brew':
                     publish_brew(work)
                     verify_brew(work)
@@ -776,7 +813,7 @@ def main():
     parser.add_argument('--channels', choices=['all', 'pypi', 'brew', 'apt'], default='all')
     parser.add_argument('--dry-run', action='store_true')
     parser.add_argument('--candidate', type=Path, help='Import an exact, fully checked stable CI candidate; never relabel a development build')
-    parser.add_argument('--credentials-dir', type=Path, default=Path.home() / '.local/share/domino-release')
+    parser.add_argument('--credentials-dir', type=Path, default=DEFAULT_CREDENTIALS_DIR)
     args = parser.parse_args()
     operation = args.operation
     if operation == 'publish':
