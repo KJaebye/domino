@@ -1,0 +1,27 @@
+# Install this entry point as .github/workflows/main-ci.yml in KJaebye/domino.
+# Controller implementation and deployment belong to oetree-infra.
+name: Main CI
+on:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+concurrency:
+  group: domino-main-${{ github.sha }}
+  cancel-in-progress: false
+jobs:
+  full:
+    if: github.repository == 'KJaebye/domino' && github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, linux, x64, oetree-domino-ci]
+    timeout-minutes: 45
+    steps:
+      - name: Test and build the pushed main commit
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          marker="$(cat /proc/sys/kernel/random/uuid)"
+          echo "::stop-commands::$marker"
+          trap 'echo "::$marker::"' EXIT
+          python3 /opt/oetree/infra/scripts/ci.py --project domino --ref "$SOURCE_SHA" --profile full --skip-unchanged
