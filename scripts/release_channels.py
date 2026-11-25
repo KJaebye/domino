@@ -179,7 +179,8 @@ def resolve(work, repo, requested, tap_repo=None, apt_url=None, apt_repo=None):
         raise ValueError('Tap repository name must start with homebrew-')
     owner, name = repo.split('/')
     apt_repo = prepare_channels.repository_name(apt_repo or owner + '/domino-apt')
-    apt_url = apt_url or f'https://raw.githubusercontent.com/{apt_repo}/main/'
+    apt_url = apt_url or (prepare_channels.DEFAULT_APT_URL if apt_repo == prepare_channels.DEFAULT_APT_REPO
+                          else f'https://raw.githubusercontent.com/{apt_repo}/main/')
     # Use the same validation as channel generation without touching an output.
     parsed = prepare_channels.urlsplit(apt_url)
     if (parsed.scheme != 'https' or not parsed.hostname or parsed.username or parsed.password
@@ -445,7 +446,11 @@ def branch_file(repository, name, missing=False):
 
 def pinned_apt_plan(plan):
     repository = plan['apt_repository']
-    if plan['apt_url'] == f'https://raw.githubusercontent.com/{repository}/main/':
+    # Publishing reads the authoritative Git snapshot, independent of mirror lag.
+    # apt_url remains the client-facing URL embedded in domino.sources.
+    if (plan['apt_url'] == f'https://raw.githubusercontent.com/{repository}/main/'
+            or (repository == prepare_channels.DEFAULT_APT_REPO
+                and plan['apt_url'] == prepare_channels.DEFAULT_APT_URL)):
         return dict(plan, _apt_snapshot_base=f'https://raw.githubusercontent.com/{repository}/{branch_snapshot(repository)}/')
     return plan
 

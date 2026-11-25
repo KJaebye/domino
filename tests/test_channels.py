@@ -53,9 +53,10 @@ class ChannelTests(DistributionFixture):
             report = channels.prepare(self.release, self.output, sign_key=key)
         site = self.output / 'apt-site'
         sources = (site / 'domino.sources').read_text()
+        self.assertIn('curl -fsSL https://downloads.oetree.cc/domino/domino.sources ', (site / 'README.md').read_text())
         self.assertTrue(report['apt_signed'])
         self.assertEqual(report['signing_fingerprint'], key)
-        self.assertIn('URIs: https://kjaebye.github.io/domino-apt/\n', sources)
+        self.assertIn('URIs: https://downloads.oetree.cc/domino/apt/\n', sources)
         self.assertIn('\nSigned-By:\n -----BEGIN PGP PUBLIC KEY BLOCK-----\n .\n', sources)
         self.assertNotIn('PRIVATE KEY', sources)
         verifier = self.root / 'verifier'

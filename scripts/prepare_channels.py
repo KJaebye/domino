@@ -20,6 +20,8 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_RELEASE_REPO = 'KJaebye/domino'
 DEFAULT_TAP_REPO = 'KJaebye/homebrew-tap'
 DEFAULT_APT_REPO = 'KJaebye/domino-apt'
+DEFAULT_APT_URL = 'https://downloads.oetree.cc/domino/apt/'
+DEFAULT_APT_SOURCES_URL = 'https://downloads.oetree.cc/domino/domino.sources'
 
 
 def repository_name(value):
@@ -60,7 +62,8 @@ def prepare(release, output, *, release_repo=DEFAULT_RELEASE_REPO, tap_repo=DEFA
     entry = next(item for item in manifest['files'] if item['name'] == runtime)
     release_url = f'https://github.com/{release_repo}/releases/download/v{version}'
     owner, name = apt_repo.split('/')
-    apt_url = apt_url or f'https://{owner.lower()}.github.io/{name}/'
+    apt_url = apt_url or (DEFAULT_APT_URL if apt_repo == DEFAULT_APT_REPO
+                          else f'https://{owner.lower()}.github.io/{name}/')
     parsed = urlsplit(apt_url)
     if (parsed.scheme != 'https' or not parsed.hostname or parsed.username or parsed.password
             or parsed.query or parsed.fragment or any(char.isspace() for char in apt_url)):
@@ -94,7 +97,8 @@ def prepare(release, output, *, release_repo=DEFAULT_RELEASE_REPO, tap_repo=DEFA
             if not armored.startswith('-----BEGIN PGP PUBLIC KEY BLOCK-----'):
                 raise ValueError('Public key export is invalid')
             (site / 'domino.sources').write_text(sources_text(apt_url, armored))
-            install = (f'```sh\ncurl -fsSL {apt_url}domino.sources '
+            sources_url = DEFAULT_APT_SOURCES_URL if apt_url == DEFAULT_APT_URL else apt_url + 'domino.sources'
+            install = (f'```sh\ncurl -fsSL {sources_url} '
                        '| sudo tee /etc/apt/sources.list.d/domino.sources >/dev/null\n'
                        'sudo apt update\nsudo apt install domino-proxy\n```\n\n'
                        f'Signing key fingerprint: `{signing_fingerprint}`\n')
@@ -119,7 +123,7 @@ def main():
     parser.add_argument('--release-repo', default=DEFAULT_RELEASE_REPO)
     parser.add_argument('--tap-repo', default=DEFAULT_TAP_REPO)
     parser.add_argument('--apt-repo', default=DEFAULT_APT_REPO)
-    parser.add_argument('--apt-url', help='Override the apt HTTPS directory, e.g. the project Pages /apt/ directory')
+    parser.add_argument('--apt-url', help='Override the apt HTTPS directory, default: downloads.oetree.cc/domino/apt/ for Domino')
     parser.add_argument('--sign-key')
     parser.add_argument('--previous-repo', type=Path)
     parser.add_argument('--existing-deb', type=Path)

@@ -197,7 +197,9 @@ Homebrew 和 APT 公开仓库写入继续使用维护者已有的 `gh` 登录，
 | --- | --- |
 | PyPI | `domino-proxy`；Twine 直传，不使用 Actions OIDC 发布 |
 | Homebrew | `KJaebye/homebrew-tap` 的 `main`，配方固定 runtime URL 和 SHA-256 |
-| APT | `KJaebye/domino-apt` 的 `main`，通过 `raw.githubusercontent.com` 提供静态文件，不需要 Pages 构建或部署任务 |
+| APT | `KJaebye/domino-apt` 的 `main` 保存签名索引和原始包；infra 核验后同步到 `https://downloads.oetree.cc/domino/apt/` 供用户下载，不需要 Pages 构建任务 |
+
+发布工具从 APT 仓库的固定 Git 提交校验和复用原始包，客户端安装地址保持下载中心域名；公共镜像同步与可用性由 infra 单独核验。旧 GitHub Raw 源用户可重新执行下方导入命令切换到下载中心，无需卸载软件。
 
 APT 签名主公钥指纹：`61ADCFADCDBE96102419F2797501FC6C688FCF00`。公钥和指纹用于验签，可以公开；私钥和口令不能公开。`domino.sources` 内嵌公钥，信任只作用于此源，不用 `apt-key` 或 `trusted=yes`。
 
@@ -237,7 +239,7 @@ gh workflow run release.yml --repo KJaebye/domino --ref main -f version=1.2.3
 brew install KJaebye/tap/domino
 
 # Ubuntu 22.04+，amd64 / arm64
-curl -fsSL https://raw.githubusercontent.com/KJaebye/domino-apt/main/domino.sources \
+curl -fsSL https://downloads.oetree.cc/domino/domino.sources \
   | sudo tee /etc/apt/sources.list.d/domino.sources >/dev/null
 sudo apt update
 sudo apt install domino-proxy
