@@ -12,6 +12,23 @@ setUpModule, tearDownModule = chinese_ui()
 
 
 class TuiModelTests(unittest.TestCase):
+    def test_workspace_refresh_event_is_created_inside_application_loop(self):
+        from prompt_toolkit.input import create_pipe_input
+        from prompt_toolkit.output import DummyOutput
+        async def execute(*args, **kwargs):
+            return '{}'
+        with create_pipe_input() as pipe:
+            workspace = ui.Workspace('localhost', execute, 'test', input=pipe, output=DummyOutput())
+            self.assertIsNone(workspace._refresh)
+            async def finish():
+                # Let poll reach its Event.wait before checking loop ownership.
+                await asyncio.sleep(.1)
+                self.assertIsNotNone(workspace._refresh)
+                self.assertIs(workspace.refresh._loop, asyncio.get_running_loop())
+                workspace.app.exit()
+            with patch.object(workspace, 'animate', finish):
+                workspace.run()
+
     def test_captured_command_colors_and_emphasis_reach_transcript_fragments(self):
         state=ui.State('localhost')
         state.append('info','\x1b[1;36mDomino\x1b[0m\n\x1b[2m入口出网\x1b[0m  \x1b[32m可用\x1b[0m\n\x1b[31m失败\x1b[0m',ansi=True)

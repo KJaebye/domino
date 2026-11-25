@@ -7,6 +7,8 @@ import importlib.metadata
 from pathlib import Path
 import tarfile
 import tempfile
+import subprocess
+import sys
 import unittest
 from unittest.mock import patch
 
@@ -177,6 +179,19 @@ class BootstrapTests(unittest.TestCase):
         self.assertIn('GitHub API',str(caught.exception))
         self.assertIn('HTTP 403',str(caught.exception))
         self.assertNotIn('PRIVATE',str(caught.exception))
+
+    def test_bundled_toolkit_imports_without_site_packages_after_offline_refresh(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            tool.copy_cli(root)
+            command = [sys.executable, '-I', '-S', '-c',
+                       'import sys;sys.path.insert(0,sys.argv[1]);import prompt_toolkit;'
+                       'from prompt_toolkit.input import DummyInput;'
+                       'assert prompt_toolkit.__version__', str(root/'cli/_vendor')]
+            subprocess.run(command, check=True, capture_output=True, text=True)
+            with patch.object(tool.importlib.util, 'find_spec', return_value=None):
+                tool.copy_cli(root)
+            subprocess.run(command, check=True, capture_output=True, text=True)
 
     def test_offline_ui_dependencies_survive_cli_refresh_without_pip(self):
         with tempfile.TemporaryDirectory() as directory:

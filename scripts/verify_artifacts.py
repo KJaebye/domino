@@ -39,6 +39,14 @@ def verify(release):
                 assert (docs/name).read_bytes()==(ROOT/name).read_bytes(),name
             if (ROOT/'LICENSE').is_file():assert (docs/'LICENSE').read_bytes()==(ROOT/'LICENSE').read_bytes()
             env={**os.environ,'HOME':str(home),'TERM':'dumb','NO_COLOR':'1'}
+            if (location/'_vendor').is_dir():
+                result = subprocess.run(
+                    [sys.executable, '-I', '-S', '-c',
+                     'import sys;sys.path.insert(0,sys.argv[1]);import prompt_toolkit,yaml,wcwidth;'
+                     'from prompt_toolkit.input import DummyInput;assert prompt_toolkit.__version__',
+                     str(location/'_vendor')], env=env, cwd=work, capture_output=True, text=True, timeout=15)
+                assert result.returncode == 0, result.stderr
+
             for name in list(env):
                 if name.startswith('DOMINO_') or name.startswith('_DOMINO'):env.pop(name)
             bootstrap='import sys,runpy;from pathlib import Path;p=Path(sys.argv.pop(1));sys.path[:0]=[str(p),str(p/"_vendor")];sys.argv[0]="domino";runpy.run_module("domino_cli",run_name="__main__")'
