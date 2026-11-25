@@ -100,7 +100,7 @@ class LanguageTests(unittest.TestCase):
         with patch.dict(os.environ, {**self.environment, 'DOMINO_LANG': 'zh'}):
             workspace = object.__new__(ui.Workspace)
             workspace.state = ui.State('localhost')
-            workspace.refresh = Mock()
+            workspace._refresh = Mock()
             workspace.app = Mock()
             workspace.dispatch('/language en')
             workspace.help()
