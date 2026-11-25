@@ -276,7 +276,7 @@ class Workspace:
         from prompt_toolkit.widgets import TextArea
 
         self.state, self.execute, self.version = State(target), execute, version
-        self.job, self.last_interrupt, self.refresh = None, 0, asyncio.Event()
+        self.job, self.last_interrupt, self._refresh = None, 0, None
         self.job_mutates = False
         self.config_view,self.config_form,self.config_keep=None,None,None
         self.config_focus,self.config_index='list',0
@@ -1191,8 +1191,16 @@ class Workspace:
         self.queue(_t('保存配置'),'configs' if action=='snapshot' else action,*options,reload_configs=True)
         return False
 
+    @property
+    def refresh(self):
+        if self._refresh is None:
+            self._refresh = asyncio.Event()
+        return self._refresh
+
     def run(self):
         def start():
+            # Python 3.9 binds Event to the loop active at construction.
+            self._refresh = asyncio.Event()
             self.app.create_background_task(self.poll())
             self.app.create_background_task(self.animate())
         try:

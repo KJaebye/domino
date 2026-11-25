@@ -33,7 +33,7 @@ from urllib.parse import urlsplit
 from urllib.request import getproxies
 from domino_model import DomainError
 
-VERSION = '1.3.0'
+VERSION = '1.3.1'
 BUILD_CHANNEL = 'release'
 PACKAGE_MANAGED = False
 DESCRIPTION = '捕获本机代理，并一键部署到指定 IP 的设备上，让翻墙像 domino 一样简单。'
@@ -1079,6 +1079,9 @@ def copy_cli(bundle):
             previous = cli / '_vendor' / name
             if previous.is_dir():
                 shutil.copytree(previous, saved / name)
+        for metadata in (cli / '_vendor').glob('*.dist-info'):
+            if metadata.is_dir() and metadata.name.split('-', 1)[0].lower() in {'prompt_toolkit', 'wcwidth', 'pyyaml'}:
+                shutil.copytree(metadata, saved / metadata.name)
         previous_licenses = cli / '_vendor/licenses'
         if previous_licenses.is_dir():
             shutil.copytree(previous_licenses, saved / 'licenses')
@@ -1107,6 +1110,12 @@ def copy_cli(bundle):
                 target = cli / '_vendor' / name
                 target.parent.mkdir(mode=0o700, exist_ok=True)
                 shutil.copytree(source, target, ignore=shutil.ignore_patterns('__pycache__', '*.pyc', '*.so', '*.dylib'))
+                # Modern dependencies resolve their version through importlib.metadata.
+                # Keep metadata beside the package, including offline refreshes.
+                distribution_name = 'pyyaml' if name == 'yaml' else name
+                for metadata in source.parent.glob('*.dist-info'):
+                    if metadata.is_dir() and metadata.name.split('-', 1)[0].lower() == distribution_name:
+                        shutil.copytree(metadata, target.parent / metadata.name, dirs_exist_ok=True)
                 licenses = target.parent / 'licenses'
                 licenses.mkdir(exist_ok=True)
                 for directory in [saved / 'licenses', source.parent / 'licenses']:
