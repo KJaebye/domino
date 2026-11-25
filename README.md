@@ -53,7 +53,16 @@ venv 安装后再运行 `domino-install`，由它下载 Mihomo 并配置本机�
 
 完整安装会按平台默认设置补全：macOS 使用 Zsh，Ubuntu 使用 Bash；新开终端后，`domino sw` + Tab 即可补成 `domino switch`。安装前已打开的窗口需重开或加载一次。
 
-macOS 也可直接 `brew install KJaebye/tap/domino`；Ubuntu 可使用[签名 APT 软件源](docs/DISTRIBUTION.md#用户安装命令)。
+macOS 也可直接 `brew install KJaebye/tap/domino`；Ubuntu 22.04+（amd64 / arm64）可通过下载中心的签名 APT 源安装：
+
+```bash
+curl -fsSL https://downloads.oetree.cc/domino/domino.sources \
+  | sudo tee /etc/apt/sources.list.d/domino.sources >/dev/null
+sudo apt update
+sudo apt install domino-proxy
+```
+
+已使用 GitHub APT 源时，重新执行以上命令即可切换到下载中心。APT 安装后，需要本机代理时再以普通用户运行 `domino-install`。
 
 ### 2. 准备配置
 
