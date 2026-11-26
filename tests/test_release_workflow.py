@@ -218,6 +218,7 @@ class ReleaseWorkflowTests(DistributionFixture):
                    {'object': {'type': 'commit', 'sha': 'a' * 40}}, None]
         with patch.object(release, 'api', side_effect=replies):
             plan = release.resolve(target, 'KJaebye/domino', '1.2.3')
+            self.assertEqual(plan['apt_url'], prepare_channels.DEFAULT_APT_URL)
         self.assertEqual(plan['source_sha'], 'a' * 40)
         self.assertFalse(plan['existing_release'])
         with patch.object(release, 'api') as remote:
@@ -272,6 +273,16 @@ class ReleaseWorkflowTests(DistributionFixture):
             release.apt_fetch(pinned, 'channel.json')
         self.assertEqual(pinned['apt_url'], plan['apt_url'])
         self.assertIn('/' + 'a' * 40 + '/channel.json', fetch.call_args.args[0])
+
+    def test_downloads_apt_snapshot_uses_origin_without_changing_client_url(self):
+        plan = {**self.plan, 'apt_url': prepare_channels.DEFAULT_APT_URL}
+        with patch.object(release, 'branch_snapshot', return_value='b' * 40), \
+             patch.object(release, 'fetch', return_value=b'index') as fetch:
+            pinned = release.pinned_apt_plan(plan)
+            release.apt_fetch(pinned, 'channel.json')
+        self.assertEqual(pinned['apt_url'], prepare_channels.DEFAULT_APT_URL)
+        self.assertTrue(fetch.call_args.args[0].startswith(
+            'https://raw.githubusercontent.com/KJaebye/domino-apt/' + 'b' * 40 + '/channel.json'))
 
     def test_matching_homebrew_version_does_not_read_credentials_or_write(self):
         current = (self.work / 'channels/tap/Formula/domino.rb').read_bytes()
